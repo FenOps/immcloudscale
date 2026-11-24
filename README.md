@@ -97,7 +97,7 @@ ICS_E2E_SERVER=http://<nas>:8790 ICS_E2E_CODE=<code> ./gradlew :app:testDebugUni
 ```
 
 Min SDK 26 (Android 8.0), target SDK 35. GitHub Actions builds the APK and runs all tests on every push and pull request
-(artifact: `immcloudscale-debug-apk`). Pushing a tag `v<version>` publishes a release with the APK and the server packages.
+(artifact: `immcloudscale-debug-apk`). To publish a release with the APK and the server packages, open **Actions → CI → Run workflow** and enter a version (e.g. `0.2.0`), or push a tag `v<version>`.
 
 ### Stable signing for published APKs (maintainers)
 

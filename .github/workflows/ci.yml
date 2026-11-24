@@ -5,6 +5,12 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Actions tab → CI → "Run workflow": build, test and publish a release (creates the tag) without using git.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0 (leave empty to only build and test)"
+        required: false
 
 jobs:
   android:
@@ -58,12 +64,14 @@ jobs:
           path: server/dist/*.deb
 
   release:
-    # Tag v<version> (e.g. v0.1.0) to publish the APK and the server packages together.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Tag v<version> (e.g. v0.1.0), or run the workflow by hand with a version, to publish the APK and server packages.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
     needs: [android, server]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -74,10 +82,12 @@ jobs:
           name: immcloudscale-debug-apk
           path: dist
       - name: Name the APK
-        run: mv dist/app-debug.apk "dist/ImmCloudScale-${GITHUB_REF_NAME#v}.apk"
+        run: mv dist/app-debug.apk "dist/ImmCloudScale-${TAG#v}.apk"
       - uses: softprops/action-gh-release@v2
         with:
-          name: ImmCloudScale ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ImmCloudScale ${{ env.TAG }}
           generate_release_notes: true
           files: |
             dist/*.deb

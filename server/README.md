@@ -129,7 +129,7 @@ go build ./cmd/ics-server
 ./deploy/build-deb.sh         # dist/immcloudscale-server_<version>_{amd64,arm64}.deb
 ```
 
-Tagging `v<version>` (e.g. `v0.1.0`) makes GitHub Actions publish the APK and `.deb` files as a release, which `install.sh` downloads.
+A release (Actions → CI → **Run workflow** with a version, or a pushed `v<version>` tag) publishes the APK and `.deb` files, which `install.sh` downloads.
 
 Layout: `cmd/ics-server` (CLI), `internal/core` (setup, people, pairing, revoke),
 `internal/stack` (compose bundle), `internal/wg` (keys, config, peers), `internal/immich` and
