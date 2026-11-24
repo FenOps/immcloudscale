@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ImmCloudScale Server</title>
+<style>
+:root {
+  --bg: #f8fafd; --surface: #ffffff; --container: #f0f4f9; --container-hi: #e9eef6;
+  --on: #1f1f1f; --on-var: #444746; --outline: #c4c7c5; --primary: #0b57d0; --on-primary: #fff;
+  --primary-c: #d3e3fd; --on-primary-c: #041e49; --ok: #146c2e; --ok-c: #c4eed0; --warn: #b3261e; --warn-c: #f9dedc;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #131314; --surface: #1e1f20; --container: #282a2c; --container-hi: #333537; --on: #e3e3e3; --on-var: #c4c7c5;
+    --outline: #444746; --primary: #a8c7fa; --on-primary: #062e6f; --primary-c: #0842a0; --on-primary-c: #d3e3fd;
+    --ok: #6dd58c; --ok-c: #0f5223; --warn: #f2b8b5; --warn-c: #8c1d18; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--on); font: 14px/1.45 Roboto, "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--outline); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 20px; font-weight: 400; margin: 0; flex: 1; }
+header .host { color: var(--on-var); }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 20px; }
+.card { background: var(--surface); border-radius: 24px; padding: 20px 24px; border: 1px solid var(--outline); }
+.card h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 .grow { flex: 1; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tile { background: var(--container); border-radius: 16px; padding: 14px 16px; }
+.tile .label { color: var(--on-var); font-size: 12px; }
+.tile .value { font-size: 18px; margin-top: 2px; word-break: break-all; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: var(--container-hi); color: var(--on-var); }
+.pill.ok { background: var(--ok-c); color: var(--ok); }
+.pill.bad { background: var(--warn-c); color: var(--warn); }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--outline); vertical-align: middle; }
+th { color: var(--on-var); font-weight: 500; font-size: 12px; }
+tr:last-child td { border-bottom: 0; }
+.mono { font-family: ui-monospace, "Roboto Mono", monospace; font-size: 13px; }
+.muted { color: var(--on-var); }
+button { font: inherit; font-weight: 500; border: 0; border-radius: 999px; padding: 9px 18px; cursor: pointer; background: var(--primary); color: var(--on-primary); }
+button.tonal { background: var(--primary-c); color: var(--on-primary-c); }
+button.text { background: transparent; color: var(--primary); padding: 6px 10px; }
+button.danger { background: transparent; color: var(--warn); padding: 6px 10px; }
+button:disabled { opacity: .5; cursor: default; }
+input { font: inherit; color: var(--on); background: var(--surface); border: 1px solid var(--outline); border-radius: 8px; padding: 9px 12px; min-width: 0; }
+form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+dialog { border: 0; border-radius: 28px; padding: 24px; background: var(--surface); color: var(--on); max-width: 420px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
+.qr { display: block; margin: 16px auto; width: 240px; height: 240px; border-radius: 16px; background: #fff; padding: 8px; }
+.code { text-align: center; font-size: 28px; letter-spacing: 3px; font-weight: 500; }
+.steps { padding-left: 18px; color: var(--on-var); }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.err { color: var(--warn); min-height: 1.4em; }
+.scroll { overflow-x: auto; }
+.logo { width: 28px; height: 28px; }
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#EA4335" d="M24 24V2a11 11 0 0 1 11 11v11z"/><path fill="#FBBC04" d="M24 24h22a11 11 0 0 1-11 11H24z"/>
+    <path fill="#34A853" d="M24 24v22a11 11 0 0 1-11-11V24z"/><path fill="#4285F4" d="M24 24H2a11 11 0 0 1 11-11h11z"/>
+  </svg>
+  <h1>ImmCloudScale <span class="host" id="host"></span></h1>
+  <span class="pill" id="overall">Loading…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>Services</h2>
+    <div class="tiles" id="services"></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="grow">People</span></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th>Web sign-in</th><th>Phones</th><th></th></tr></thead>
+      <tbody id="users"></tbody>
+    </table></div>
+    <form class="inline" id="addUser">
+      <input name="name" placeholder="New person (e.g. alex)" required pattern="[a-z][a-z0-9._-]{1,31}">
+      <input name="email" type="email" placeholder="Email (optional)">
+      <button class="tonal">Add person</button>
+    </form>
+    <div class="err" id="userErr"></div>
+  </section>
+
+  <section class="card">
+    <h2>Phones</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Phone</th><th>Person</th><th>VPN address</th><th>Status</th><th>Traffic</th><th></th></tr></thead>
+      <tbody id="devices"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="grow">Network &amp; storage</span><button class="text" id="update">Update services</button></h2>
+    <div class="tiles" id="network"></div>
+    <p class="muted" id="portHint"></p>
+  </section>
+</main>
+
+<dialog id="pairDlg">
+  <h3>Pair a phone</h3>
+  <ol class="steps">
+    <li>Install the ImmCloudScale app on the phone and connect it to this home Wi-Fi.</li>
+    <li>Scan this code with the phone's camera, or tap <b>Pair with server</b> in the app and type the code.</li>
+  </ol>
+  <img class="qr" id="qr" alt="Pairing QR code">
+  <div class="code mono" id="code"></div>
+  <p class="muted" style="text-align:center" id="expires"></p>
+  <p class="muted mono" style="text-align:center;font-size:12px" id="serverUrl"></p>
+  <div class="actions"><button class="text" onclick="pairDlg.close()">Done</button></div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const bytes = (n) => { if (!n) return "0 B"; const u = ["B","KB","MB","GB","TB"]; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
+const ago = (t) => { if (!t || t.startsWith("0001")) return "never"; const s = (Date.now() - new Date(t)) / 1000; return s < 60 ? "just now" : s < 3600 ? Math.round(s/60) + " min ago" : s < 86400 ? Math.round(s/3600) + " h ago" : Math.round(s/86400) + " d ago"; };
+const pill = (ok, yes, no) => `<span class="pill ${ok ? "ok" : "bad"}">${esc(ok ? yes : no)}</span>`;
+const off = (label) => `<span class="pill">${esc(label)}</span>`;
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: body ? {"Content-Type": "application/json"} : {}, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 204) return null;
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+async function refresh() {
+  let s;
+  try { s = await api("GET", "/api/admin/status"); } catch (e) { $("overall").textContent = e.message; $("overall").className = "pill bad"; return; }
+  $("host").textContent = "· " + s.hostname;
+  const all = s.immichReady && s.nextcloudReady && (s.vpnUp || !s.config.vpnEnabled);
+  $("overall").textContent = !s.setUp ? "Not set up" : all ? "All systems running" : "Needs attention";
+  $("overall").className = "pill " + (all ? "ok" : "bad");
+
+  const svc = (name) => (s.services || []).find((x) => x.name === name);
+  const tile = (label, ok, sub) => `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${ok}</div><div class="muted">${esc(sub || "")}</div></div>`;
+  const c = s.config;
+  $("services").innerHTML = [
+    tile("Photos · Immich", pill(s.immichReady, "Running", "Down"), `http://${c.lanAddress}:${c.immichPort}`),
+    tile("Files · Nextcloud", pill(s.nextcloudReady, "Running", "Down"), `http://${c.lanAddress}:${c.nextcloudPort}`),
+    tile("Home VPN · WireGuard", c.vpnEnabled ? pill(s.vpnUp, "Running", "Down") : off("Off"), `UDP ${c.wgPort} · ${c.wgSubnet}`),
+    tile("Database & cache", pill(["database","redis"].every((n) => svc(n)?.state === "running"), "Running", "Down"), "PostgreSQL · Valkey"),
+    tile("Smart search", c.machineLearning ? pill(svc("immich-machine-learning")?.state === "running", "Running", "Down") : off("Off"), "Immich machine learning"),
+  ].join("");
+
+  $("users").innerHTML = (s.users || []).map((u) => `<tr>
+    <td><b>${esc(u.name)}</b>${u.isAdmin ? ' <span class="pill">owner</span>' : ""}<div class="muted">${esc(u.email)}</div></td>
+    <td><span class="mono">${esc(u.email)}</span><br><span class="mono muted">${esc(u.password)}</span></td>
+    <td>${u.devices}</td>
+    <td style="text-align:right"><button class="tonal" data-pair="${esc(u.name)}">Pair a phone</button>
+      ${u.isAdmin ? "" : `<button class="danger" data-deluser="${esc(u.name)}">Remove</button>`}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">No people yet.</td></tr>`;
+
+  $("devices").innerHTML = (s.devices || []).map((d) => `<tr>
+    <td>${esc(d.name)}<div class="muted">paired ${esc(ago(d.created))}</div></td><td>${esc(d.user)}</td>
+    <td class="mono">${esc(d.address || "—")}</td>
+    <td>${d.address ? pill(d.online, "Online", ago(d.lastHandshake) === "never" ? "Not connected yet" : "Last seen " + ago(d.lastHandshake)) : '<span class="pill">No VPN</span>'}</td>
+    <td class="muted">↓ ${bytes(d.txBytes)} ↑ ${bytes(d.rxBytes)}</td>
+    <td style="text-align:right"><button class="danger" data-revoke="${esc(d.id)}">Revoke</button></td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">No phones paired yet. Use “Pair a phone” next to a person.</td></tr>`;
+
+  $("network").innerHTML = [
+    tile("NAS address", esc(c.lanAddress), c.lanSubnet),
+    tile("VPN endpoint", esc(c.endpoint + ":" + c.wgPort), "what phones dial from outside"),
+    tile("Data folder", esc(c.dataDir), "photos, files, database"),
+    s.storage ? tile("Disk", esc(`${s.storage.diskUse} of ${s.storage.diskSize}`), `${s.storage.diskUsagePercentage.toFixed(1)}% used`) : "",
+  ].join("");
+  $("portHint").textContent = `To use the apps away from home, forward UDP port ${c.wgPort} on your router to ${c.lanAddress}. If your home IP changes, set a dynamic DNS name and run: ics-server config --endpoint your.name.example`;
+}
+
+document.addEventListener("click", async (e) => {
+  const t = e.target.closest("button"); if (!t) return;
+  try {
+    if (t.dataset.pair) {
+      const p = await api("POST", "/api/admin/pairings", { user: t.dataset.pair });
+      $("qr").src = "/api/admin/qr?code=" + encodeURIComponent(p.code);
+      $("code").textContent = p.code;
+      $("serverUrl").textContent = "Server: " + p.server;
+      $("expires").textContent = "Valid for 15 minutes, one phone";
+      $("pairDlg").showModal();
+    } else if (t.dataset.revoke && confirm("Revoke this phone? It loses access to photos, files and the VPN.")) {
+      await api("DELETE", "/api/admin/devices/" + encodeURIComponent(t.dataset.revoke)); refresh();
+    } else if (t.dataset.deluser && confirm(`Remove ${t.dataset.deluser}? Their Immich and Nextcloud accounts are deleted.`)) {
+      await api("DELETE", "/api/admin/users/" + encodeURIComponent(t.dataset.deluser)); refresh();
+    } else if (t.id === "update" && confirm("Download and apply updates for Immich and Nextcloud now?")) {
+      await api("POST", "/api/admin/update"); t.textContent = "Updating…"; t.disabled = true;
+    }
+  } catch (err) { alert(err.message); }
+});
+
+$("addUser").addEventListener("submit", async (e) => {
+  e.preventDefault(); $("userErr").textContent = "";
+  const f = new FormData(e.target);
+  const b = e.target.querySelector("button"); b.disabled = true;
+  try { await api("POST", "/api/admin/users", { name: f.get("name"), email: f.get("email") }); e.target.reset(); refresh(); }
+  catch (err) { $("userErr").textContent = err.message; }
+  b.disabled = false;
+});
+
+refresh(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>

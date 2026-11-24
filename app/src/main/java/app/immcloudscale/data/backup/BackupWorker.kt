@@ -1,0 +1,210 @@
+package app.immcloudscale.data.backup
+
+import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ContentUris
+import android.content.Context
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import android.provider.Settings
+import androidx.core.app.NotificationCompat
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import app.immcloudscale.ImmApp
+import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.immich.BulkCheckItem
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody
+import okio.BufferedSink
+import okio.source
+import java.security.MessageDigest
+import java.time.Instant
+import java.util.concurrent.TimeUnit
+
+/** A photo or video on the phone, from MediaStore. */
+data class LocalMedia(
+    val id: Long,
+    val uri: Uri,
+    val name: String,
+    val mime: String,
+    val size: Long,
+    val dateAdded: Long,
+    val dateTaken: Long,
+    val dateModified: Long,
+    val bucket: String,
+)
+
+object LocalMediaSource {
+    @SuppressLint("InlinedApi")
+    fun query(context: Context, sinceSeconds: Long, videos: Boolean, folders: Set<String>): List<LocalMedia> {
+        val uris = buildList {
+            add(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            if (videos) add(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+        }
+        val proj = arrayOf(
+            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+        )
+        val out = mutableListOf<LocalMedia>()
+        for (base in uris) {
+            context.contentResolver.query(
+                base, proj, "${MediaStore.MediaColumns.DATE_ADDED} > ?", arrayOf(sinceSeconds.toString()),
+                "${MediaStore.MediaColumns.DATE_ADDED} ASC",
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val bucket = c.getString(7) ?: ""
+                    if (folders.isNotEmpty() && bucket !in folders) continue
+                    val id = c.getLong(0)
+                    val added = c.getLong(4)
+                    out += LocalMedia(
+                        id = id, uri = ContentUris.withAppendedId(base, id), name = c.getString(1) ?: "$id",
+                        mime = c.getString(2) ?: "application/octet-stream", size = c.getLong(3), dateAdded = added,
+                        dateTaken = c.getLong(6).takeIf { it > 0 } ?: (added * 1000), dateModified = c.getLong(5) * 1000,
+                        bucket = bucket,
+                    )
+                }
+            }
+        }
+        return out.sortedBy { it.dateAdded }
+    }
+
+    fun folders(context: Context): List<String> {
+        val set = sortedSetOf<String>()
+        for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
+            runCatching {
+                context.contentResolver.query(base, arrayOf(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME), null, null, null)?.use { c ->
+                    while (c.moveToNext()) c.getString(0)?.let(set::add)
+                }
+            }
+        }
+        return set.toList()
+    }
+}
+
+/**
+ * Immich-style backup: finds new photos/videos, asks the server which it already has (by SHA-1),
+ * then uploads the rest. Runs periodically and on demand ("Back up now").
+ */
+class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    private val app get() = applicationContext as ImmApp
+
+    override suspend fun doWork(): Result {
+        val s = app.graph.settings.current()
+        if (!s.immichConfigured) return Result.success()
+        val media = LocalMediaSource.query(applicationContext, s.backupSince, s.backupVideos, s.backupFolders)
+        if (media.isEmpty()) {
+            app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis()) }
+            return Result.success(workDataOf(KEY_UPLOADED to 0))
+        }
+        runCatching { setForeground(foreground(0, media.size)) }
+        val deviceId = "immcloudscale-" + (Settings.Secure.getString(applicationContext.contentResolver, Settings.Secure.ANDROID_ID) ?: "android")
+        var uploaded = 0
+        var done = 0
+        try {
+            for (batch in media.chunked(30)) {
+                val sums = batch.associateWith { sha1(it) }
+                val results = app.graph.immich.bulkUploadCheck(sums.map { (m, sum) -> BulkCheckItem(m.id.toString(), sum) })
+                    .associateBy { it.id }
+                for (m in batch) {
+                    if (isStopped) return Result.retry()
+                    val accept = results[m.id.toString()]?.action != "reject"
+                    if (accept) {
+                        app.graph.immich.upload(
+                            file = contentBody(m), fileName = m.name, deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
+                            createdAt = Instant.ofEpochMilli(m.dateTaken), modifiedAt = Instant.ofEpochMilli(m.dateModified.takeIf { it > 0 } ?: m.dateTaken),
+                            checksum = sums[m],
+                        )
+                        uploaded++
+                    }
+                    done++
+                    // Remember progress after every file so an interrupted run resumes where it stopped.
+                    app.graph.settings.update { it.copy(backupSince = maxOf(it.backupSince, m.dateAdded)) }
+                    setProgress(workDataOf(KEY_DONE to done, KEY_TOTAL to media.size))
+                    runCatching { setForeground(foreground(done, media.size)) }
+                }
+            }
+        } catch (e: Exception) {
+            return if (runAttemptCount < 5) Result.retry() else Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Backup failed")))
+        }
+        app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis()) }
+        return Result.success(workDataOf(KEY_UPLOADED to uploaded))
+    }
+
+    private fun sha1(m: LocalMedia): String {
+        val md = MessageDigest.getInstance("SHA-1")
+        applicationContext.contentResolver.openInputStream(m.uri)?.use { input ->
+            val buf = ByteArray(256 * 1024)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun contentBody(m: LocalMedia) = object : RequestBody() {
+        override fun contentType() = m.mime.toMediaTypeOrNull()
+        override fun contentLength() = m.size
+        override fun writeTo(sink: BufferedSink) {
+            applicationContext.contentResolver.openInputStream(m.uri)!!.source().use { sink.writeAll(it) }
+        }
+    }
+
+    private fun foreground(done: Int, total: Int): ForegroundInfo {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Backup", NotificationManager.IMPORTANCE_LOW))
+        val n = NotificationCompat.Builder(applicationContext, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle("Backing up photos")
+            .setContentText("$done of $total")
+            .setProgress(total, done, false)
+            .setOngoing(true)
+            .build()
+        return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(42, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(42, n)
+    }
+
+    companion object {
+        const val KEY_DONE = "done"
+        const val KEY_TOTAL = "total"
+        const val KEY_UPLOADED = "uploaded"
+        const val KEY_ERROR = "error"
+        const val NOW = "backup-now"
+        private const val PERIODIC = "backup-periodic"
+        private const val CHANNEL = "backup"
+
+        private fun constraints(s: AppSettings) = Constraints.Builder()
+            .setRequiredNetworkType(if (s.backupWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+            .setRequiresCharging(s.backupChargingOnly)
+            .build()
+
+        fun schedule(context: Context, s: AppSettings) {
+            val wm = WorkManager.getInstance(context)
+            if (!s.backupEnabled || !s.immichConfigured) {
+                wm.cancelUniqueWork(PERIODIC)
+                return
+            }
+            wm.enqueueUniquePeriodicWork(
+                PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
+                PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS).setConstraints(constraints(s)).build(),
+            )
+        }
+
+        fun runNow(context: Context, s: AppSettings) {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                NOW, ExistingWorkPolicy.KEEP,
+                OneTimeWorkRequestBuilder<BackupWorker>()
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build(),
+            )
+        }
+    }
+}

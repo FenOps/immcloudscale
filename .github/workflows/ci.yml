@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit, smoke and screenshot tests, build APK
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immcloudscale-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+      - name: Build .deb packages (amd64, arm64)
+        run: ./deploy/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immcloudscale-server-debs
+          path: server/dist/*.deb
+
+  release:
+    # Tag v<version> (e.g. v0.1.0) to publish the APK and the server packages together.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: immcloudscale-server-debs
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: immcloudscale-debug-apk
+          path: dist
+      - name: Name the APK
+        run: mv dist/app-debug.apk "dist/ImmCloudScale-${GITHUB_REF_NAME#v}.apk"
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ImmCloudScale ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.deb
+            dist/*.apk
