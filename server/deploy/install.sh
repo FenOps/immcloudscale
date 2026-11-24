@@ -72,8 +72,13 @@ if [ -z "$DEB" ] && [ "${ICS_FROM_SOURCE:-}" != 1 ]; then
   TMP=$(mktemp -d)
   URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
     | grep -o "https://[^\"]*immcloudscale-server_[^\"]*_${ARCH}.deb" | head -1 || true)
-  if [ -n "$URL" ]; then curl -fsSL -o "$TMP/ics.deb" "$URL" && DEB="$TMP/ics.deb"; fi
-  [ -n "$DEB" ] || echo "   no release yet; building from source instead"
+  if [ -z "$URL" ]; then
+    echo "   no release found; building from source instead"
+  elif curl -fsSL --retry 3 -o "$TMP/ics.deb" "$URL"; then
+    DEB="$TMP/ics.deb"
+  else
+    echo "   couldn't download $URL; building from source instead"
+  fi
 fi
 if [ -z "$DEB" ]; then
   say "Building ics-server from the latest source"
