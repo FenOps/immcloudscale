@@ -32,3 +32,15 @@ Licensed AGPL-3.0-only (see LICENSE).
   release, use the latest `immcloudscale-debug-apk` CI artifact or build it with `./gradlew :app:assembleDebug`.
 - Pairing: `tools/phone-setup.sh --apk <apk> --server <nas-ip> --code <code>`; the person taps "Pair" once.
   Codes come from the admin console (`http://<nas>:8790`, user `admin`) or `sudo ics-server pair <person>`; they expire after 15 minutes.
+
+## Quality checks (required before saying a task is done)
+1. Run the `qa-tester` subagent. Fix every failure and run it again until it passes.
+2. Run the `code-reviewer` subagent on the changes and fix all "must fix" items.
+3. If the UI changed, run the `ui-reviewer` subagent and apply its quick wins where they fit.
+4. Run the `code-polisher` subagent on the changed files, then commit.
+5. In the final message, give one short line per check with its result. Never say something works without having run it.
+
+## Code and commit style
+- Write code the way the existing codebase is written: same naming, formatting and amount of commenting.
+- Don't mention AI, Claude or assistants in code, comments, docs, commit messages or pull request descriptions. No emoji in code, logs or commits.
+- Commit messages: a short, plain, imperative subject line (for example "Fix invoice total rounding"), plus a body only when it adds something.
