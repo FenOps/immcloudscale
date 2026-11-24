@@ -10,3 +10,12 @@ func TestDefaultRouteIface(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestMemAndDisk(t *testing.T) {
+	if got := parseMemTotal("MemTotal:        3906240 kB\nMemFree: 1 kB\n"); got < 3.7 || got > 3.8 {
+		t.Fatal(got)
+	}
+	if FreeGB("/definitely/not/here/yet") <= 0 {
+		t.Fatal("free space should come from the nearest existing parent")
+	}
+}

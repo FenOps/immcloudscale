@@ -155,25 +155,59 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	fs.IntVar(&o.WGPort, "vpn-port", 0, "WireGuard UDP port (default 51820)")
 	fs.StringVar(&o.FirstUser, "user", "", "the owner's user name (asked if missing)")
 	fs.StringVar(&o.FirstEmail, "email", "", "the owner's email (optional)")
-	noML := fs.Bool("no-ml", false, "skip Immich machine learning (smart search, faces) on low-power NAS")
+	noML := fs.Bool("no-ml", false, "skip Immich machine learning (smart search, faces); automatic below 6 GB RAM")
+	forceML := fs.Bool("ml", false, "turn on machine learning even below 6 GB RAM")
 	fs.BoolVar(&o.SkipVPN, "no-vpn", false, "don't set up WireGuard")
 	noPublic := fs.Bool("no-public-ip-lookup", false, "don't ask api.ipify.org for the public IP")
+	allowSleep := fs.Bool("allow-sleep", false, "don't stop this machine from suspending (it must stay on to serve phones)")
 	check(fs.Parse(args))
-	o.MachineLearning = !*noML
 
 	if os.Geteuid() != 0 {
 		fail("setup needs root: sudo ics-server setup")
 	}
-	for _, bin := range []string{"docker"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			fail("%s is not installed (the installer adds it: see README)", bin)
+	if _, err := exec.LookPath("docker"); err != nil {
+		fail("Docker is not installed. Run the installer (see INSTALL.md), or: sudo apt install docker.io docker-compose-v2")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		_ = exec.Command("systemctl", "start", "docker").Run()
+		if err := exec.Command("docker", "info").Run(); err != nil {
+			fail("Docker is installed but not running. Start it with: sudo systemctl start docker")
 		}
+	}
+	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
+		fail("Docker Compose v2 is missing: sudo apt install docker-compose-v2")
 	}
 	if !o.SkipVPN {
 		if _, err := exec.LookPath("wg-quick"); err != nil {
 			fail("wireguard-tools is not installed: sudo apt install wireguard-tools")
 		}
 	}
+
+	// Smart search and face recognition need memory; small machines run better without them.
+	ramGB := netinfo.MemTotalGB()
+	switch {
+	case *noML:
+		o.MachineLearning = false
+	case *forceML:
+		o.MachineLearning = true
+	case ramGB > 0 && ramGB < 6:
+		o.MachineLearning = false
+		fmt.Printf("ℹ️  This machine has %.1f GB of RAM, so smart search and face recognition are turned off (use --ml to force them on).\n", ramGB)
+	default:
+		o.MachineLearning = true
+	}
+
+	dataDir := o.DataDir
+	if dataDir == "" {
+		dataDir = s.Store.Read().Config.DataDir
+	}
+	if dataDir == "" {
+		dataDir = "/srv/immcloudscale"
+	}
+	if free := netinfo.FreeGB(dataDir); free > 0 && free < 20 {
+		fmt.Printf("⚠️  Only %.0f GB free where photos and files will be stored (%s). The apps need about 10 GB, plus room for your photos.\n   Choose a bigger disk with --data-dir /path/on/big/disk if you have one.\n", free, dataDir)
+	}
+
 	if lan, err := netinfo.DetectLAN(); err == nil {
 		if o.LANAddress == "" {
 			o.LANAddress = lan.Address
@@ -184,16 +218,21 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 		o.Endpoint = netinfo.PublicIP(ctx)
 	}
 	if o.FirstUser == "" && len(s.Store.Read().Users) == 0 {
-		fmt.Print("Your user name (lowercase, e.g. alex): ")
-		_, _ = fmt.Scanln(&o.FirstUser)
+		for !validName(o.FirstUser) {
+			fmt.Print("\nChoose your user name (lowercase letters, e.g. alex): ")
+			if _, err := fmt.Scanln(&o.FirstUser); err != nil && o.FirstUser == "" {
+				fail("no user name given: run again with --user yourname")
+			}
+			o.FirstUser = strings.ToLower(strings.TrimSpace(o.FirstUser))
+		}
 	}
 
 	check(s.Setup(ctx, o))
 	openFirewall(s)
-	if _, err := os.Stat("/etc/systemd/system/ics-server.service"); err == nil {
-		_ = exec.Command("systemctl", "enable", "--now", "ics-server").Run()
-		_ = exec.Command("systemctl", "restart", "ics-server").Run()
+	if !*allowSleep {
+		keepAwake()
 	}
+	startPairingService(s)
 
 	c := s.Store.Read().Config
 	fmt.Printf("\n✅ ImmCloudScale is running.\n\n")
@@ -201,8 +240,14 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	fmt.Printf("  Photos (web):   http://%s:%d\n", c.LANAddress, c.ImmichPort)
 	fmt.Printf("  Files (web):    http://%s:%d\n", c.LANAddress, c.NextcloudPort)
 	if !o.SkipVPN {
-		fmt.Printf("  VPN:            forward UDP %d on your router to %s (endpoint: %s)\n", c.WGPort, c.LANAddress, c.Endpoint)
+		if c.Endpoint == "" || c.Endpoint == c.LANAddress {
+			fmt.Printf("  VPN:            ⚠️  no public address found, so the VPN only works at home for now.\n")
+			fmt.Printf("                  Fix it later with: sudo ics-server config --endpoint <your public IP or DuckDNS name>\n")
+		} else {
+			fmt.Printf("  VPN:            to use the apps away from home, forward UDP %d on your router to %s\n", c.WGPort, c.LANAddress)
+		}
 	}
+	fmt.Printf("\n  Keep this machine's address fixed: in your router, reserve %s for it (\"DHCP reservation\").\n", c.LANAddress)
 	st := s.Store.Read()
 	for _, u := range st.Users {
 		if u.IsAdmin {
@@ -210,6 +255,57 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 			printPairing(s, u.Name)
 			break
 		}
+	}
+	fmt.Println("  Write these passwords down. Show them again any time with: sudo ics-server admin-password / sudo ics-server user list")
+}
+
+func validName(n string) bool {
+	if len(n) < 2 || len(n) > 32 || n[0] < 'a' || n[0] > 'z' {
+		return false
+	}
+	for _, r := range n {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return n != "ics-admin"
+}
+
+// startPairingService runs the console/pairing service: via systemd when available (it then also starts at boot),
+// otherwise (containers, WSL without systemd) as a background process.
+func startPairingService(s *core.Server) {
+	port := s.Store.Read().Config.AdminPort
+	if exec.Command("systemctl", "cat", "ics-server").Run() == nil {
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "enable", "ics-server").Run()
+		_ = exec.Command("systemctl", "restart", "ics-server").Run()
+	} else if !serving(port) {
+		self, _ := os.Executable()
+		logf, _ := os.OpenFile("/var/log/ics-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+		cmd := exec.Command(self, "--state", s.Store.Path(), "serve")
+		cmd.Stdout, cmd.Stderr = logf, logf
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err == nil {
+			fmt.Println("  (systemd isn't available, so the pairing service runs in the background until the next reboot;")
+			fmt.Println("   after a reboot start it with: sudo ics-server serve &)")
+		}
+	}
+	for i := 0; i < 30 && !serving(port); i++ {
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// keepAwake stops suspend/hibernate: a server that sleeps can't back up phones or answer the VPN.
+func keepAwake() {
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		return
+	}
+	out, _ := exec.Command("systemctl", "is-enabled", "suspend.target").Output()
+	if strings.TrimSpace(string(out)) == "masked" {
+		return
+	}
+	if exec.Command("systemctl", "mask", "sleep.target", "suspend.target", "hibernate.target", "hybrid-sleep.target").Run() == nil {
+		fmt.Println("  This machine will no longer go to sleep, so phones can always reach it (undo: sudo systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target).")
 	}
 }
 
@@ -225,7 +321,7 @@ func printPairing(s *core.Server, user string) {
 	fmt.Print(q.ToSmallString(false))
 	fmt.Printf("  Server: %s\n  Code:   %s   (valid 15 minutes, one phone)\n\n", server, p.Code)
 	if !serving(c.AdminPort) {
-		fmt.Println("  Note: the pairing service isn't running. Start it with: sudo systemctl start ics-server")
+		fmt.Println("  ⚠️  The pairing service isn't answering, so the phone can't pair yet. Start it with: sudo systemctl restart ics-server")
 	}
 }
 
@@ -278,7 +374,11 @@ func status(ctx context.Context, s *core.Server) {
 	fmt.Printf("ImmCloudScale %s on %s\n\n", st.Version, st.Hostname)
 	fmt.Printf("  Photos (Immich)     %s   http://%s:%d\n", mark(st.Immich), st.Config.LANAddress, st.Config.ImmichPort)
 	fmt.Printf("  Files (Nextcloud)   %s   http://%s:%d\n", mark(st.Nextcloud), st.Config.LANAddress, st.Config.NextcloudPort)
-	fmt.Printf("  VPN (WireGuard)     %s   %s:%d\n", mark(st.VPNUp), st.Config.Endpoint, st.Config.WGPort)
+	if st.Config.VPNEnabled {
+		fmt.Printf("  VPN (WireGuard)     %s   %s:%d\n", mark(st.VPNUp), st.Config.Endpoint, st.Config.WGPort)
+	} else {
+		fmt.Printf("  VPN (WireGuard)     off (set up without the VPN)\n")
+	}
 	if st.Storage != nil {
 		fmt.Printf("  Disk                %s of %s used\n", st.Storage.DiskUse, st.Storage.DiskSize)
 	}

@@ -79,7 +79,20 @@ object Pairing {
             val body = json.encodeToString(PairRequest.serializer(), PairRequest(normalizeCode(code), deviceName, wgPublicKey))
             val req = Request.Builder().url(normalizeServer(server) + "/api/v1/pair")
                 .post(body.toRequestBody("application/json".toMediaType())).build()
-            http.newCall(req).execute().use { r ->
+            val call = runCatching { http.newCall(req).execute() }.getOrElse { e ->
+                val host = normalizeServer(server).substringAfter("://")
+                throw HttpException(
+                    0,
+                    when (e) {
+                        is java.net.UnknownHostException -> "Can't find the server \"$host\". Check the address."
+                        is java.net.SocketTimeoutException, is java.net.ConnectException, is java.net.NoRouteToHostException ->
+                            "Can't reach the server at $host. Make sure this phone is on the same Wi-Fi as the server, " +
+                                "and that the server is switched on."
+                        else -> e.message ?: "Couldn't connect to the server"
+                    },
+                )
+            }
+            call.use { r ->
                 val text = r.body?.string().orEmpty()
                 if (!r.isSuccessful) {
                     val msg = runCatching { json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content }.getOrNull()

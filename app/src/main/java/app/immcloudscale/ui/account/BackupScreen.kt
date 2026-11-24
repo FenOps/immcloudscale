@@ -58,9 +58,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val mediaPermissions = if (Build.VERSION.SDK_INT >= 33)
-    arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.POST_NOTIFICATIONS)
-else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+private val mediaPermissions = when {
+    Build.VERSION.SDK_INT >= 34 -> arrayOf(
+        Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
+        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED, Manifest.permission.POST_NOTIFICATIONS,
+    )
+    Build.VERSION.SDK_INT >= 33 ->
+        arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.POST_NOTIFICATIONS)
+    else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+}
 
 /** Google Photos' "Backup" settings page, driving the Immich backup worker. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -78,13 +84,30 @@ fun BackupScreen(onBack: () -> Unit) {
     fun update(block: (AppSettings) -> AppSettings) = scope.launch { g.settings.update(block) }
     suspend fun loadFolders() { folders = withContext(Dispatchers.IO) { runCatching { LocalMediaSource.folders(ctx) }.getOrDefault(emptyList()) } }
 
+    // Android 14+: "Select photos" grants access to only some photos, and backup would silently miss the rest.
+    var limitedAccess by remember { mutableStateOf(false) }
+    var denied by remember { mutableStateOf(false) }
     val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result.entries.filter { it.key != Manifest.permission.POST_NOTIFICATIONS }.all { it.value }) {
+        // Full access, or Android 14's "Select photos" (then a warning explains how to allow all).
+        val photos = result[Manifest.permission.READ_MEDIA_IMAGES] == true || result[Manifest.permission.READ_EXTERNAL_STORAGE] == true ||
+            result[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
+        if (photos) {
             update { it.copy(backupEnabled = true) }
             scope.launch { loadFolders() }
+            limitedAccess = hasLimitedPhotoAccess(ctx)
+        } else {
+            denied = true
         }
     }
     LaunchedEffect(Unit) { loadFolders() }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycle, s.backupEnabled) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) limitedAccess = s.backupEnabled && hasLimitedPhotoAccess(ctx)
+        }
+        lifecycle.lifecycle.addObserver(obs)
+        onDispose { lifecycle.lifecycle.removeObserver(obs) }
+    }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -130,6 +153,34 @@ fun BackupScreen(onBack: () -> Unit) {
                 }
             }
 
+            if (denied && !s.backupEnabled) {
+                Text(
+                    "Backup needs permission to see your photos. Tap the switch again and choose \"Allow all\", or allow it in Settings → Apps → ImmCloudScale → Permissions.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+            if (limitedAccess) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Only some photos can be backed up", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "This app was allowed to see selected photos only. To back up everything, open Settings → Permissions → Photos and videos → Allow all.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        androidx.compose.material3.TextButton(onClick = {
+                            ctx.startActivity(
+                                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                                    .setData(android.net.Uri.fromParts("package", ctx.packageName, null)),
+                            )
+                        }) { Text("Open settings") }
+                    }
+                }
+            }
+
             SectionHeader("When to back up")
             Toggle(Icons.Outlined.Wifi, "Only on Wi-Fi", "Don't use mobile data", s.backupWifiOnly) { v -> update { it.copy(backupWifiOnly = v) } }
             Toggle(Icons.Outlined.BatteryChargingFull, "Only while charging", "Save battery", s.backupChargingOnly) { v -> update { it.copy(backupChargingOnly = v) } }
@@ -170,4 +221,11 @@ private fun Toggle(icon: ImageVector, title: String, body: String, checked: Bool
         supportingContent = { Text(body) },
         trailingContent = { Switch(checked, onChange) },
     )
+}
+
+/** True when Android 14+ granted only "selected photos" access instead of the whole library. */
+fun hasLimitedPhotoAccess(ctx: android.content.Context): Boolean {
+    if (Build.VERSION.SDK_INT < 34) return false
+    fun granted(p: String) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, p) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    return !granted(Manifest.permission.READ_MEDIA_IMAGES) && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
 }

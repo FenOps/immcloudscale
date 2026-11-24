@@ -99,6 +99,20 @@ ICS_E2E_SERVER=http://<nas>:8790 ICS_E2E_CODE=<code> ./gradlew :app:testDebugUni
 Min SDK 26 (Android 8.0), target SDK 35. GitHub Actions builds the APK and runs all tests on every push and pull request
 (artifact: `immcloudscale-debug-apk`). Pushing a tag `v<version>` publishes a release with the APK and the server packages.
 
+### Stable signing for published APKs (maintainers)
+
+Android only installs an update over an existing app when both are signed with the same key. Without a key, CI signs each
+build with a temporary key, so people would have to uninstall before updating. To publish updatable APKs, create a key once:
+
+```bash
+keytool -genkeypair -keystore immcloudscale.jks -alias immcloudscale -keyalg RSA -keysize 4096 -validity 36500
+base64 -w0 immcloudscale.jks > immcloudscale.jks.b64     # macOS: base64 -i immcloudscale.jks -o immcloudscale.jks.b64
+```
+
+Then in GitHub → **Settings → Secrets and variables → Actions**, add `ICS_KEYSTORE_B64` (the contents of the `.b64` file),
+`ICS_KEYSTORE_PASSWORD` and `ICS_KEY_ALIAS` (`immcloudscale`). Keep the `.jks` file and password safe and private: if you lose
+them, existing installs can't be updated, and anyone who has them can publish updates.
+
 ### Signed release
 Create `keystore.properties` next to this README (git-ignored):
 

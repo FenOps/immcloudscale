@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -71,4 +72,45 @@ func PublicIP(ctx context.Context) string {
 		return ""
 	}
 	return ip.String()
+}
+
+// MemTotalGB is the machine's RAM in GB (0 if unknown).
+func MemTotalGB() float64 {
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	return parseMemTotal(string(b))
+}
+
+func parseMemTotal(meminfo string) float64 {
+	for _, line := range strings.Split(meminfo, "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "MemTotal:" {
+			kb, _ := strconv.ParseFloat(f[1], 64)
+			return kb / 1024 / 1024
+		}
+	}
+	return 0
+}
+
+// FreeGB is the free space on the file system holding path, or its nearest existing parent (0 if unknown).
+func FreeGB(path string) float64 {
+	for p := path; p != ""; p = parentDir(p) {
+		var st syscall.Statfs_t
+		if syscall.Statfs(p, &st) == nil {
+			return float64(st.Bavail) * float64(st.Bsize) / 1e9
+		}
+		if p == "/" {
+			break
+		}
+	}
+	return 0
+}
+
+func parentDir(p string) string {
+	i := strings.LastIndex(strings.TrimRight(p, "/"), "/")
+	if i <= 0 {
+		return "/"
+	}
+	return p[:i]
 }

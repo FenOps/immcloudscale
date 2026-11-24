@@ -207,13 +207,33 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                 .onFailure { Toast.makeText(ctx, it.message, Toast.LENGTH_LONG).show() }
         }
     }
+    // Right after pairing: offer to turn on photo backup, the one thing pairing can't switch on by itself.
+    var lastPaired by remember { mutableStateOf(settings.pairedServer) }
+    var welcome by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(settings.pairedServer) {
+        if (settings.pairedServer.isNotBlank() && lastPaired.isBlank() && !settings.backupEnabled) welcome = true
+        lastPaired = settings.pairedServer
+    }
+    if (welcome) AlertDialog(
+        onDismissRequest = { welcome = false },
+        icon = { Icon(Icons.Filled.PhotoLibrary, null) },
+        title = { Text("You're all set") },
+        text = {
+            Text(
+                "Your photos, files and home VPN are connected to ${settings.pairedServerName.ifBlank { "your server" }}.\n\n" +
+                    "Turn on backup so the photos and videos on this phone are copied to your server automatically?",
+            )
+        },
+        confirmButton = { TextButton(onClick = { welcome = false; tab = Tab.Photos; nav.navigate("backup") }) { Text("Turn on backup") } },
+        dismissButton = { TextButton(onClick = { welcome = false }) { Text("Not now") } },
+    )
+
     if (sharedUris.isNotEmpty()) SharedUploadDialog(sharedUris, onSharedHandled)
     if (pairLink != null) PairLinkDialog(pairLink) { paired ->
         onPairLinkHandled()
         if (paired) {
             tab = Tab.Photos
             nav.navigate("main") { popUpTo(0) { inclusive = true } }
-            Toast.makeText(ctx, "Paired. Photos, files and the home VPN are ready.", Toast.LENGTH_LONG).show()
         }
     }
 }

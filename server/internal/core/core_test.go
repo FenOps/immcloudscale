@@ -346,3 +346,16 @@ func TestHostOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestBusyPortsAreSkipped(t *testing.T) {
+	s := &Server{Log: log.New(io.Discard, "", 0), PortFree: func(p int, udp bool) bool { return p != 8080 && p != 8081 }}
+	if got := s.freePort(8080, false, nil); got != 8082 {
+		t.Fatalf("got %d", got)
+	}
+	if got := s.freePort(2283, false, map[int]bool{2283: true}); got != 2284 {
+		t.Fatalf("already-chosen ports must be skipped, got %d", got)
+	}
+	if !PortFree(0, false) {
+		t.Fatal("port 0 (any) should always bind")
+	}
+}

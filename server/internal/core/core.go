@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/mail"
 	"os"
 	"regexp"
@@ -34,6 +35,8 @@ type Server struct {
 	Now          func() time.Time
 	Log          *log.Logger
 	WaitTimeout  time.Duration
+	// PortFree checks ports on first setup; nil means "assume free" (tests).
+	PortFree func(port int, udp bool) bool
 }
 
 func New(st *state.Store) *Server {
@@ -46,6 +49,7 @@ func New(st *state.Store) *Server {
 		Now:          time.Now,
 		Log:          log.New(os.Stderr, "", log.LstdFlags),
 		WaitTimeout:  20 * time.Minute,
+		PortFree:     PortFree,
 	}
 }
 
@@ -91,17 +95,20 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		if o.WGPort != 0 {
 			c.WGPort = o.WGPort
 		} else if c.WGPort == 0 {
-			c.WGPort = 51820
+			c.WGPort = s.freePort(51820, true, nil)
 		}
-		if c.ImmichPort == 0 {
-			c.ImmichPort = 2283
+		// First setup: use the usual ports, or the next free ones if another program already has them
+		// (8080 especially is often taken on home servers). Phones learn the ports when they pair.
+		taken := map[int]bool{}
+		pick := func(cur *int, def int, udp bool) {
+			if *cur == 0 {
+				*cur = s.freePort(def, udp, taken)
+			}
+			taken[*cur] = true
 		}
-		if c.NextcloudPort == 0 {
-			c.NextcloudPort = 8080
-		}
-		if c.AdminPort == 0 {
-			c.AdminPort = 8790
-		}
+		pick(&c.ImmichPort, 2283, false)
+		pick(&c.NextcloudPort, 8080, false)
+		pick(&c.AdminPort, 8790, false)
 		c.MachineLearning = o.MachineLearning
 		c.VPNEnabled = !o.SkipVPN
 		set(&c.DBPassword, "", state.Secret(32))
@@ -138,7 +145,11 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 	if err := stack.Write(c.StackDir, params); err != nil {
 		return err
 	}
-	s.Log.Printf("Starting Immich, Nextcloud, PostgreSQL and Valkey (the first start downloads a few GB)…")
+	s.Log.Printf("Downloading Immich, Nextcloud, PostgreSQL and Valkey (about 5 GB the first time; this can take a while)…")
+	if err := s.Docker.Pull(c.StackDir); err != nil {
+		return fmt.Errorf("downloading the apps failed (check the internet connection, then run setup again): %w", err)
+	}
+	s.Log.Printf("Starting the apps…")
 	if err := s.Docker.Up(c.StackDir); err != nil {
 		return err
 	}
@@ -167,6 +178,41 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		}
 	}
 	return nil
+}
+
+// freePort returns def if nothing listens on it, else the next free port above it.
+func (s *Server) freePort(def int, udp bool, skip map[int]bool) int {
+	if s.PortFree == nil {
+		return def
+	}
+	for p := def; p < def+100; p++ {
+		if !skip[p] && s.PortFree(p, udp) {
+			if p != def {
+				s.Log.Printf("Port %d is already used by another program; using %d instead", def, p)
+			}
+			return p
+		}
+	}
+	return def
+}
+
+// PortFree reports whether a TCP (or UDP) port can be bound on this machine.
+func PortFree(port int, udp bool) bool {
+	addr := fmt.Sprintf(":%d", port)
+	if udp {
+		c, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return false
+		}
+		c.Close()
+		return true
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	l.Close()
+	return true
 }
 
 func (s *Server) waitReady(ctx context.Context, c state.Config) error {

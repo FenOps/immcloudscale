@@ -58,6 +58,9 @@ services:
 {{if .MachineLearning}}
   immich-machine-learning:
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION}
+    environment:
+      # Listen on IPv4 too: the default (IPv6 "::") crashes on machines with IPv6 turned off.
+      IMMICH_HOST: 0.0.0.0
     volumes:
       - model-cache:/cache
     restart: always
@@ -221,7 +224,16 @@ func (d Docker) Up(dir string) error {
 	_, err := d.run(dir, "up", "-d", "--remove-orphans")
 	return err
 }
-func (d Docker) Pull(dir string) error { _, err := d.run(dir, "pull"); return err }
+
+// Pull downloads the images, showing Docker's progress (setup's slowest step on a slow connection).
+func (d Docker) Pull(dir string) error {
+	cmd := d.compose(dir, "pull")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose pull: %w", err)
+	}
+	return nil
+}
 
 func (d Docker) Exec(dir, service string, args ...string) (string, error) {
 	return d.run(dir, append([]string{"exec", "-T", service}, args...)...)

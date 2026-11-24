@@ -12,7 +12,7 @@ func TestComposeWithAndWithoutML(t *testing.T) {
 	on, _ := Compose(p)
 	p.MachineLearning = false
 	off, _ := Compose(p)
-	if !strings.Contains(on, "immich-machine-learning:") || !strings.Contains(on, "model-cache:") {
+	if !strings.Contains(on, "immich-machine-learning:") || !strings.Contains(on, "model-cache:") || !strings.Contains(on, "IMMICH_HOST: 0.0.0.0") {
 		t.Fatal("ML service missing")
 	}
 	if strings.Contains(off, "immich-machine-learning:") || !strings.Contains(off, `IMMICH_MACHINE_LEARNING_ENABLED: "false"`) {

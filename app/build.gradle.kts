@@ -27,6 +27,15 @@ android {
         if (f.exists()) f.inputStream().use { load(it) }
     }
     signingConfigs {
+        // CI: a stable key from repository secrets, so each published APK installs over the previous one.
+        System.getenv("ICS_KEYSTORE_FILE")?.takeIf { file(it).exists() }?.let { ks ->
+            create("stable") {
+                storeFile = file(ks)
+                storePassword = System.getenv("ICS_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ICS_KEY_ALIAS")
+                keyPassword = System.getenv("ICS_KEY_PASSWORD") ?: System.getenv("ICS_KEYSTORE_PASSWORD")
+            }
+        }
         if (keystoreProps.getProperty("storeFile") != null) {
             create("release") {
                 storeFile = file(keystoreProps.getProperty("storeFile"))
@@ -38,8 +47,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfigs.findByName("stable")?.let { signingConfig = it }
+        }
         release {
-            signingConfigs.findByName("release")?.let { signingConfig = it }
+            (signingConfigs.findByName("release") ?: signingConfigs.findByName("stable"))?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

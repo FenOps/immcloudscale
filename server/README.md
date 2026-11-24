@@ -29,8 +29,13 @@ release, or built from source before the first release), then runs `ics-server s
 The first start downloads about 5 GB of container images.
 
 Options go after `bash -s --`, for example `| sudo bash -s -- --user alex --data-dir /mnt/tank/immcloudscale --no-ml`:
-`--data-dir` (where photos and files go), `--no-ml` (skip smart search on a small NAS), `--endpoint myhome.duckdns.org`
-(VPN address for phones away from home).
+`--data-dir` (where photos and files go), `--no-ml` / `--ml` (smart search and faces; off automatically below 6 GB RAM),
+`--endpoint myhome.duckdns.org` (VPN address for phones away from home), `--allow-sleep` (setup otherwise turns off
+suspend, because a sleeping server can't serve phones).
+
+Setup checks Docker, Compose and WireGuard, the RAM and free disk space, picks free ports, turns on IP forwarding for
+the VPN, downloads the images with progress (no timeout on slow connections), starts everything, and only shows the
+pairing QR code once the pairing service answers.
 
 Other ways: `sudo apt install ./immcloudscale-server_<version>_<arch>.deb && sudo ics-server setup` with a package from
 [Releases](https://github.com/FenOps/immcloudscale/releases), or `sudo ./server/deploy/install.sh` from a clone.
@@ -94,7 +99,8 @@ The web console does the same things: add or remove people, pair phones, revoke 
 | `/etc/wireguard/ics0.conf` | VPN interface (10.8.0.1/24), managed by `ics-server` |
 | `/var/lib/immcloudscale/state.json` | settings, people, phones and generated secrets (root only, 0600) |
 
-Ports on the LAN: Immich `2283`, Nextcloud `8080`, console and pairing `8790`, VPN `51820/udp`.
+Ports on the LAN: Immich `2283`, Nextcloud `8080`, console and pairing `8790`, VPN `51820/udp`. If one is already used by
+another program on first setup, the next free port is chosen and printed (phones learn it when they pair).
 If `ufw` is active, setup allows them from your LAN and the VPN only.
 
 **Back up** `/srv/immcloudscale` and `/var/lib/immcloudscale/state.json`. Use `pg_dump` for consistent database copies, or stop the stack first.

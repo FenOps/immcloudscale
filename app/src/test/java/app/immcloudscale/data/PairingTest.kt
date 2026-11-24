@@ -99,7 +99,7 @@ class PairingTest {
         immich.assets(AssetQuery.Timeline, 1)
         val nc = NextcloudClient(http, { settings.ncUrl }, { settings.ncUser })
         assertTrue(nc.list("/").isNotEmpty())
-        assertNull(VpnManager.validate(settings.vpnConfig))
+        if (r.wireguard != null) assertNull(VpnManager.validate(settings.vpnConfig)) // absent when the server runs without the VPN
         println("LIVE OK: ${r.user.name} ${r.immich.url} ${r.nextcloud.url} vpn=${r.wireguard?.address}")
     }
 }

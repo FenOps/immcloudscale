@@ -180,6 +180,10 @@ func (m HostManager) Apply(cfg ServerConfig) error {
 	if err := os.MkdirAll(m.Dir, 0o700); err != nil {
 		return err
 	}
+	// Phones reach other home devices and the internet (exit node) through this machine: forwarding must be on,
+	// now and after reboots. (Docker usually turns it on too, but don't depend on that.)
+	_ = os.WriteFile("/etc/sysctl.d/99-immcloudscale.conf", []byte("# ImmCloudScale home VPN\nnet.ipv4.ip_forward = 1\n"), 0o644)
+	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0o644)
 	path := filepath.Join(m.Dir, cfg.Interface+".conf")
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		return err

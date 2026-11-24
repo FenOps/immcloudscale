@@ -1,208 +1,353 @@
-# Installing ImmCloudScale
+# Installing ImmCloudScale: step by step
 
-This guide takes you from a **fresh server** and a **new Android phone** to working photos, files and a home VPN.
-Every part has two ways to do it:
+By the end of this guide you'll have:
 
-* 🤖 **Let Claude do it.** [Claude Code](https://claude.com/claude-code) runs the commands, checks the results and fixes problems.
-  You answer a few questions and do the things only a person can: taps on the phone and router settings.
-* 🧑 **Do it yourself.** Usually one command for the server and one download for the phone.
+* **your own server at home** that stores your photos, videos and files (instead of Google Photos and Google Drive), and
+* **the ImmCloudScale app on your Android phone**, backing up your photos and reaching your server from anywhere.
 
-Expect about **30 minutes**. Most of that is the server downloading about 5 GB of software.
+No experience needed: follow the steps in order. Each step says what to do, what you'll see, and how long it takes.
+Wherever you see 🤖, you can let **Claude** do that step for you instead.
+
+**Time:** about 1 hour the first time, mostly waiting for downloads.
 
 ---
 
-## Before you start
+## Words you'll meet
 
-| You need | Notes |
+| Word | What it means here |
 |---|---|
-| **A server**: a NAS, mini PC or old laptop | **Ubuntu 22.04 / 24.04** or **Debian 12**, 64-bit (amd64 or arm64, Raspberry Pi 4/5 included). At least 4 GB RAM (8 GB with smart search), plus disk space for your photos and files. Plugged into your router by cable if possible. |
-| **An Android phone** | Android 8 or newer. |
-| **Your router's admin page** | Only for using the apps away from home (Part 3). |
-| **Claude Code** *(only for the 🤖 paths)* | Needs a Claude Pro/Max subscription or an Anthropic API account. |
+| **Server** | The computer that stays on at home and keeps your photos and files. An old PC, a mini PC or a Raspberry Pi works. |
+| **Ubuntu** | A free operating system (like Windows), which the server runs. |
+| **Terminal** | A window where you type commands. On a Mac it's the *Terminal* app; on Windows it's *Terminal* or *PowerShell*. |
+| **SSH** | Controlling the server from your own computer's terminal, so the server doesn't need its own screen and keyboard. |
+| **IP address** | The server's address on your home network, for example `192.168.1.50`. |
+| **Router** | Your home internet box, which makes the Wi-Fi. |
+| **APK** | An Android app file you install yourself, without the Play Store. |
+| **VPN** | A secure tunnel from your phone to your home, so the app works when you're away. |
 
 ---
 
-## Part 1: the server
+## What you need
 
-### 🧑 Option A: one command
+- [ ] **A computer to be the server** with at least **4 GB of RAM**, ideally 8 GB, and enough disk space for your photos.
+      It will be **erased** if you install Ubuntu on it, so back up anything on it first.
+- [ ] **A USB stick** of 8 GB or more, only if the server doesn't have Ubuntu yet.
+- [ ] **An Android phone**, Android 8 or newer.
+- [ ] **A network cable** from the server to your router (recommended; Wi-Fi works too).
+- [ ] **Your router's admin login**, only needed for Step 6 (using the app away from home). It's often printed on a sticker on the router.
+- [ ] *(Optional, for 🤖 steps)* **[Claude Code](https://claude.com/claude-code)**, which needs a Claude Pro or Max subscription or an Anthropic API account.
 
-On the server (with a keyboard and screen, or over `ssh yourname@<server-ip>` from your computer):
+---
+
+## Step 1: Put Ubuntu on the server (about 20 minutes)
+
+**Skip this step** if the server already runs Ubuntu 22.04, Ubuntu 24.04 or Debian 12.
+
+<details>
+<summary><b>On a PC, laptop or mini PC</b></summary>
+
+1. On your everyday computer, download **Ubuntu Server 24.04 LTS** from [ubuntu.com/download/server](https://ubuntu.com/download/server).
+2. Write it to the USB stick with [balenaEtcher](https://etcher.balena.io) (Windows, Mac or Linux): choose the downloaded file, choose the USB stick, then click **Flash**.
+3. Plug the USB stick into the server and turn it on. Open the boot menu (usually by pressing **F12**, **F10**, **F2** or **Esc** right after power-on) and pick the USB stick.
+4. Follow the installer. Accept the defaults, except:
+   * **Storage:** "Use an entire disk" erases that disk. Pick the disk you want to use.
+   * **Profile:** choose your name, a server name (e.g. `homeserver`), a **username** and a **password**. Write them down.
+   * **SSH:** tick **"Install OpenSSH server"**. This lets you control the server from your computer.
+   * **Featured snaps:** don't tick anything; ImmCloudScale installs what it needs.
+5. When it says **"Reboot now"**, remove the USB stick and press Enter.
+
+</details>
+
+<details>
+<summary><b>On a Raspberry Pi 4 or 5</b></summary>
+
+1. On your computer, install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and insert the Pi's SD card (or SSD).
+2. Choose your Pi model, then **Other general-purpose OS → Ubuntu → Ubuntu Server 24.04 LTS (64-bit)**, then the card.
+3. When asked to apply OS customisation, choose **Edit settings**: set a **username** and **password**, and on the **Services** tab tick **Enable SSH**. Save, then write.
+4. Put the card in the Pi, connect the network cable, and power it on. Wait 3 minutes for the first start.
+
+</details>
+
+### Find the server's IP address
+
+* **If the server has a screen:** after it starts, log in. The welcome text shows a line like `IPv4 address for eth0: 192.168.1.50`.
+  Or type `hostname -I`; the first number is the address.
+* **Otherwise:** open your router's admin page and look at the list of connected devices for the server's name.
+
+### Give it a fixed address (important)
+
+In your router's admin page, find **"DHCP reservation"**, **"Address reservation"** or **"Static lease"**, and reserve the server's address
+so it never changes. Phones reach your photos at this address. (🤖 Ask Claude "How do I reserve an IP address on my *router brand and model*?")
+
+---
+
+## Step 2: Connect to the server from your computer (2 minutes)
+
+You can also do everything directly on the server with its own keyboard and screen. Then skip to Step 3.
+
+1. Open a terminal on your computer:
+   * **Windows:** press Start, type **Terminal** (or **PowerShell**), and open it.
+   * **Mac:** press ⌘ + Space, type **Terminal**, and press Enter.
+2. Type this, using your server's username and address, then press Enter:
+   ```bash
+   ssh yourname@192.168.1.50
+   ```
+3. The first time, it asks *"Are you sure you want to continue connecting?"*. Type `yes` and press Enter.
+4. Type your server password and press Enter. **Nothing shows on screen while you type a password; that's normal.**
+
+You're in when the line starts with something like `yourname@homeserver:~$`. Commands you type now run on the server.
+
+---
+
+## Step 3: Install ImmCloudScale on the server (15–40 minutes)
+
+Pick **one** of the two options.
+
+### Option A: one command
+
+Copy this line, paste it into the terminal (right-click → Paste, or Ctrl+Shift+V), and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash
 ```
 
-It installs Docker, Docker Compose and WireGuard, then the ImmCloudScale server, and asks for your user name.
-To set options up front, put them after `bash -s --`:
+**What happens:**
+
+1. It asks for your **password** (the server's). Type it and press Enter (again, nothing shows while you type).
+2. It installs everything ImmCloudScale needs:
+   * **Docker**, which runs the apps,
+   * **WireGuard**, the VPN,
+   * **Immich**, for your photos,
+   * **Nextcloud**, for your files,
+   * a database.
+   You'll see progress bars while it downloads about 5 GB. **Leave it running; on a slow connection this can take half an hour.**
+3. It asks: **"Choose your user name"**. Type a short lowercase name such as `alex` and press Enter.
+4. When it's finished you'll see a box like this:
+
+```
+✅ ImmCloudScale is running.
+
+  Admin console:  http://192.168.1.50:8790   (user: admin, password: Xy7kPq2mWv9cRt4B)
+  Photos (web):   http://192.168.1.50:2283
+  Files (web):    http://192.168.1.50:8080
+  VPN:            to use the apps away from home, forward UDP 51820 on your router to 192.168.1.50
+
+  Your web sign-in: alex@immcloudscale.local / Mn3bVx8LqZ2wTr5K
+
+Pair alex's phone: scan this with the camera, or open ImmCloudScale → Pair with server.
+█████████████████████
+██ ▄▄▄▄▄ █▀▄█ ▄▄▄▄▄ █      ← a QR code for your phone
+...
+  Server: http://192.168.1.50:8790
+  Code:   K7QX-M2PA   (valid 15 minutes, one phone)
+```
+
+📝 **Write down** the admin console password and your web sign-in. (Forgot them? On the server, `sudo ics-server admin-password`
+shows the console password and `sudo ics-server user list` shows the sign-ins.)
+
+ImmCloudScale also makes sure the server stays on: it turns off sleep mode, and everything starts again by itself after a power cut or reboot.
+
+<details>
+<summary>Options for this command</summary>
+
+Add options after `bash -s --`, for example:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh \
   | sudo bash -s -- --user alex --email alex@example.com --data-dir /mnt/bigdisk/immcloudscale
-#   --no-ml           skip smart search / face recognition on small machines (under 8 GB RAM)
-#   --endpoint NAME   a DuckDNS or other name for using the VPN away from home (see Part 3)
 ```
 
-When setup finishes it prints:
+| Option | What it does |
+|---|---|
+| `--user alex` | your user name, so it doesn't ask |
+| `--email you@example.com` | your email, used to sign in on the web |
+| `--data-dir /path` | where photos and files are stored, for example a second, bigger disk (default `/srv/immcloudscale`) |
+| `--no-ml` / `--ml` | turn smart search and face recognition off or on. They're switched off automatically on machines with less than 6 GB of RAM. |
+| `--endpoint myhome.duckdns.org` | your home's internet name, for using the app away from home (Step 6) |
+| `--allow-sleep` | don't turn off sleep mode |
 
-```
-✅ ImmCloudScale is running.
-  Admin console:  http://192.168.1.50:8790   (user: admin, password: …)
-  Photos (web):   http://192.168.1.50:2283
-  Files (web):    http://192.168.1.50:8080
-  Your web sign-in: alex@example.com / …
-Pair alex's phone: [QR code]   Code: K7QX-M2PA
-```
-
-**Write the passwords down.** You can show them again later with `sudo ics-server admin-password` and `sudo ics-server user list`.
-
-**Give the server a fixed address.** In your router, reserve the server's IP address (often called "DHCP reservation" or
-"static lease"). Phones reach Photos and Files at that address, so it must not change.
-
-<details>
-<summary>Other ways to install the server</summary>
-
-* **From a release package:** download `immcloudscale-server_<version>_amd64.deb` (or `_arm64` for Raspberry Pi) from the
-  [Releases page](https://github.com/FenOps/immcloudscale/releases), then
-  `sudo apt install ./immcloudscale-server_*.deb && sudo ics-server setup`.
-* **From source:** `git clone https://github.com/FenOps/immcloudscale && sudo ./immcloudscale/server/deploy/install.sh`
-  (it builds `ics-server`, downloading Go if needed).
+Other ways to install: a `.deb` package from [Releases](https://github.com/FenOps/immcloudscale/releases)
+(`sudo apt install ./immcloudscale-server_*.deb && sudo ics-server setup`), or from source
+(`git clone https://github.com/FenOps/immcloudscale && sudo ./immcloudscale/server/deploy/install.sh`).
 </details>
 
-### 🤖 Option B: let Claude install it
+### Option B: 🤖 let Claude install it
 
-**1. Open a terminal on the server** (keyboard and screen, or `ssh yourname@<server-ip>`).
+Claude checks your machine, asks you a few questions, runs the installation, checks that everything works, and fixes problems as they come up.
 
-**2. Give Claude temporary admin rights.** Claude's commands can't type your `sudo` password, so allow passwordless `sudo` for the
-install. Claude removes this at the end, and you can remove it yourself any time with `sudo rm /etc/sudoers.d/90-claude-install`.
+**1. Give Claude permission to install software.** Claude can't type your password, so run this once
+(it asks for your password one last time). Claude removes this permission when it's done.
 ```bash
 echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-claude-install
 ```
 
-**3. Install and start Claude Code:**
+**2. Install Claude Code and start it:**
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash
-exec $SHELL -l          # reload the shell so `claude` is found
+exec $SHELL -l
 mkdir -p ~/immcloudscale-setup && cd ~/immcloudscale-setup
-claude                  # sign in when asked
+claude
 ```
+The first time, Claude Code shows a link to sign in to your Claude account. Open it on any device and follow it.
 
-**4. Paste this prompt** (change the name and email first):
+**3. Copy this message into Claude.** Change the name and email first, then press Enter:
 
 ```text
 Install the ImmCloudScale home server on this machine, from https://github.com/FenOps/immcloudscale.
-Read its INSTALL.md (Part 1), CLAUDE.md and server/README.md first.
+Read its INSTALL.md (Step 3), CLAUDE.md and server/README.md first. I'm a beginner: explain what you're doing in plain words.
 My user name: alex   My email: alex@example.com
 
 1. Check the system: Ubuntu 22.04+/Debian 12, amd64 or arm64, RAM, and free disk space. Tell me the LAN IP address
    and remind me to reserve it in my router (DHCP reservation) so it never changes.
-2. Ask me where to keep photos and files (default /srv/immcloudscale; list the disks and their free space so I can pick)
-   and whether to turn on smart search / face recognition (needs about 4 GB more RAM; skip it on small machines).
+2. Ask me where to keep photos and files (default /srv/immcloudscale; list the disks and their free space so I can pick).
 3. Run the installer:
-   curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash -s -- --user <name> --email <email> [--data-dir …] [--no-ml]
+   curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash -s -- --user <name> --email <email> [--data-dir …]
    Run it in the background and check on it until it finishes (the first run downloads about 5 GB).
-4. Verify: `sudo ics-server status` shows everything running; http://<lan-ip>:2283, :8080 and :8790 respond;
-   `sudo wg show ics0` lists the VPN. If something fails, read the logs, fix it, and explain what you changed.
+4. Verify: `sudo ics-server status` shows everything running, and http://<lan-ip>:2283, :8080 and :8790 respond
+   (setup may pick other ports if those were busy; it prints them). `sudo wg show ics0` lists the VPN.
+   If something fails, read the logs, fix it, and explain what you changed.
 5. Show me, clearly, in one summary: the admin console address and password, my web sign-in for Photos and Files,
    and a fresh pairing code (`sudo ics-server pair <name>`). Save the same summary to ~/immcloudscale-setup/README-mine.txt (chmod 600).
-6. Tell me exactly what to set on my router for remote access (forward UDP 51820 to this machine), and ask whether
-   I want a free DuckDNS name in case my home IP changes. If yes, I'll give you the DuckDNS token; set up the updater
-   (cron) and run `sudo ics-server config --endpoint <name>.duckdns.org`.
+6. Explain how to set up remote access on my router (forward UDP 51820 to this machine). Ask whether I want a free DuckDNS
+   name in case my home IP changes. If yes, I'll give you the DuckDNS token; set up the updater (cron) and run
+   `sudo ics-server config --endpoint <name>.duckdns.org`.
 7. When everything works, remove /etc/sudoers.d/90-claude-install.
 
 Ask before deleting anything, formatting disks, or changing firewall rules beyond what the installer does.
 ```
 
-**5. While it works:** approve the commands Claude asks to run and answer its questions. At the end you'll have the admin console address and password, your web sign-in, and a pairing code.
-
-> **Prefer to run Claude on your computer instead?** Start `claude` on your computer, and in the prompt replace
-> "on this machine" with "on my server over SSH: `ssh yourname@192.168.1.50`". Claude runs each command through `ssh`.
-> Do step 2 on the server first, and set up an SSH key (`ssh-copy-id yourname@192.168.1.50`) so Claude isn't asked for a password.
+**4. While Claude works:** it asks before running commands. Read what it wants to do and approve.
+At the end, it shows you the same box as Option A.
 
 ---
 
-## Part 2: the phone
+## Step 4: Check the admin console (2 minutes)
 
-You need a pairing code. If the one from setup has expired (they last 15 minutes), open the **admin console**
-(`http://<server>:8790`, user `admin`) → **People** → **Pair a phone**, or run `sudo ics-server pair alex` on the server.
+On your computer (or phone) connected to your home Wi-Fi, open a web browser and go to the **admin console** address from Step 3,
+for example **`http://192.168.1.50:8790`**.
 
-### 🧑 Option A: download and scan
+* Sign in with user **`admin`** and the **admin console password**.
+* You should see **Photos**, **Files** and **Home VPN** marked **Running**.
+* This is where you'll add family members, pair phones, and see which phones are connected.
 
-1. **On the phone, open [github.com/FenOps/immcloudscale/releases/latest](https://github.com/FenOps/immcloudscale/releases/latest)**
-   and download **`ImmCloudScale-<version>.apk`**.
-2. **Install it.** Open the download and allow "Install unknown apps" for your browser when Android asks.
-   Google Play Protect may warn that the app is unknown, because it isn't from the Play Store. Choose **Install anyway**.
-3. **Pair.** Connect the phone to your home Wi-Fi, open ImmCloudScale → **Scan QR code**, and point it at the QR code on the
-   server screen or in the admin console. Or scan the QR code with the phone's camera app, or type the server address
-   (`192.168.1.50`) and the code by hand.
-4. **Allow** the VPN request and photo access when the app asks.
+---
 
-### 🤖 Option B: let Claude install and pair it (from your computer)
+## Step 5: Install the app on your phone (5–10 minutes)
 
-**1. On the phone, turn on developer mode:** Settings → About phone → tap **Build number** seven times.
-Then Settings → System → **Developer options**:
-* Android 11 or newer: turn on **Wireless debugging** (phone and computer on the same Wi-Fi), then tap it to see its details.
-* Older phones: turn on **USB debugging** and plug the phone into the computer.
+**Connect the phone to your home Wi-Fi first.** Pairing only works at home.
 
-**2. On your computer:** [install Claude Code](https://claude.com/claude-code), open a terminal in an empty folder, run `claude`, and paste:
+Pick **one** option.
+
+### Option A: download and scan
+
+**1. Download the app.** On the phone, open this page in Chrome:
+**[github.com/FenOps/immcloudscale/releases/latest](https://github.com/FenOps/immcloudscale/releases/latest)**.
+Scroll to **Assets** and tap **`ImmCloudScale-….apk`** to download it.
+
+**2. Install it.** Tap the download when it finishes (or find it in your **Files** / **Downloads** app). Android protects you
+from apps outside the Play Store, so you'll see a couple of warnings. This is expected:
+
+| You see | Tap |
+|---|---|
+| *"For your security, your phone is not allowed to install unknown apps from this source"* | **Settings**, switch on **Allow from this source**, then go back |
+| *"Do you want to install this app?"* | **Install** |
+| *"Unsafe app blocked"* / *"App scan recommended"* (Google Play Protect) | **More details**, then **Install anyway** (or **Install without scanning**) |
+
+**3. Pair it with your server.** Open **ImmCloudScale**. On the first screen, under **ImmCloudScale Server**, tap **Scan QR code**
+and point the phone at the QR code, either on the server's terminal or in the admin console (**People → Pair a phone**).
+Then tap **Pair** if asked.
+
+* No QR code handy? Type the **Server address** (e.g. `192.168.1.50`) and the **Pairing code** (e.g. `K7QX-M2PA`), then tap **Pair**.
+* "Code wrong or expired"? Codes last 15 minutes and work once. Make a new one in the admin console with **Pair a phone**.
+
+**4. Turn on backup.** After pairing, the app asks **"Turn on backup?"**. Tap **Turn on backup** and switch on **Back up to Immich**.
+When Android asks about photos and videos, choose **Allow all**, not "Select photos". Also allow notifications, so you can see backup progress.
+
+That's it: your photos start copying to your server. The first backup of a full phone can take a few hours. Leave the phone on Wi-Fi and charging overnight.
+
+### Option B: 🤖 let Claude install and pair it (from your computer)
+
+Good if you're setting up several phones, or don't want to change install settings on the phone.
+
+**1. Turn on developer options on the phone (one time):**
+* Settings → **About phone** → tap **Build number** seven times, until it says "You are now a developer". On Samsung: About phone → Software information → Build number.
+* Settings → **System** → **Developer options** (Samsung: Settings → Developer options):
+  * Android 11 or newer: switch on **Wireless debugging**. Phone and computer must be on the same Wi-Fi.
+  * Older phones: switch on **USB debugging** and connect the phone to the computer with a USB cable.
+
+**2. On your computer**, [install Claude Code](https://claude.com/claude-code), open a terminal, type `claude`, press Enter, and paste this message
+(use your server's address):
 
 ```text
-Install the ImmCloudScale Android app on my phone and pair it with my home server.
-Project: https://github.com/FenOps/immcloudscale. Read its INSTALL.md (Part 2) and CLAUDE.md first.
+Install the ImmCloudScale Android app on my phone and pair it with my home server. I'm a beginner.
+Project: https://github.com/FenOps/immcloudscale. Read its INSTALL.md (Step 5) and CLAUDE.md first.
 My server's address is 192.168.1.50.
 
-1. Install adb (Android platform tools) if missing.
+1. Install adb (Android platform tools) on this computer if it's missing.
 2. Download the newest ImmCloudScale-*.apk from https://github.com/FenOps/immcloudscale/releases/latest,
    and tools/phone-setup.sh from the repository (or clone it with --depth 1).
-3. Connect to the phone. For Wireless debugging, ask me for the IP:port and 6-digit code under
-   "Pair device with pairing code", run `adb pair`, then `adb connect` to the IP:port shown on the Wireless debugging
-   screen. For USB, check `adb devices` and tell me to accept the prompt on the phone.
-4. Ask me for the pairing code from the admin console, then run:
+3. Connect to the phone. For Wireless debugging: tell me to tap "Pair device with pairing code" on the phone, ask me for
+   the IP address:port and 6-digit code it shows, run `adb pair`, then `adb connect` to the IP address:port shown on the
+   main Wireless debugging screen. For USB: run `adb devices` and tell me to tap "Allow" on the phone.
+4. Ask me for a pairing code from the admin console (People → Pair a phone), then run:
    ./phone-setup.sh --apk <apk> --server 192.168.1.50 --code <code>
    and tell me when to tap "Pair" on the phone.
-5. Tell me the last taps to do (turn on backup), and remind me I can turn Wireless debugging off again.
+5. Tell me how to turn on backup, and remind me to switch Wireless debugging off when we're done.
 ```
 
-**3. What you do:** read out the Wireless debugging pairing code and the server's pairing code, then tap **Pair** on the phone when Claude says.
-The script installs the app with its permissions already granted, pre-approves the VPN, and opens the pairing screen.
-
-> Running it yourself: `./tools/phone-setup.sh --apk ImmCloudScale.apk --server 192.168.1.50 --code K7QX-M2PA`.
-> With SSH access to the server and passwordless sudo, `--nas yourname@192.168.1.50 --person alex` fetches the code by itself
-> and waits until the phone shows up as paired.
-
-### Finish on the phone (both options)
-
-* **Photos** tab → cloud icon (top right) → turn on **Back up to Immich**. Choose Wi-Fi only, charging only and which folders to include.
-* **Network** tab → flip the switch to check the VPN connects. Optionally turn on **Auto-connect away from home**, then
-  **Add current Wi-Fi as trusted** while you're at home.
+**3. What you do:** read out the codes the phone shows, then tap **Pair** on the phone when Claude asks. Claude installs the app with
+its permissions already allowed, and pairs it.
 
 ---
 
-## Part 3: use it away from home
+## Step 6: Use it away from home (10 minutes)
 
-Photos and Files already work on your home Wi-Fi. For everywhere else:
+At home everything already works. To use the app from anywhere, your router has to let the VPN in.
 
-1. **Forward a port on your router:** UDP **51820** → your server's IP (for example 192.168.1.50).
-   Look for "Port forwarding", "Virtual server" or "NAT" in the router's admin page. Forward only this one port; never forward
-   2283, 8080 or 8790.
-   * 🤖 Claude can't log in to your router, but it can walk you through it: tell it your router's brand and model.
-     If you use the Claude in Chrome browser extension, Claude can also click through the router's web page with you watching.
-2. **If your home IP address changes** (most home connections): get a free name at [duckdns.org](https://www.duckdns.org)
-   and tell the server: `sudo ics-server config --endpoint yourname.duckdns.org`. Then pair phones again from the console
-   so they get the new address. 🤖 Step 6 of the server prompt sets this up for you, including the updater that keeps the name current.
-3. **Test:** on the phone, turn Wi-Fi off, open **Network** and switch the VPN on, then open **Photos**.
-   The Network tab shows "Connected to home", and both servers show a response time.
+**1. Forward one port on your router.** Open the router's admin page (often `http://192.168.1.1` or `http://192.168.0.1`; the address is on the
+router's sticker) and find **Port forwarding**. It's sometimes called "Virtual server", "NAT" or "Port mapping". Add a rule:
 
-> **Behind CGNAT?** Some mobile-broadband and fibre providers don't give you a public IP address, so forwarding can't work.
-> Ask your provider for a public IPv4 address, or run the VPN endpoint on a small cloud server. Claude can help you check:
-> "Is my home connection behind CGNAT?"
+| Setting | Value |
+|---|---|
+| Name | `ImmCloudScale` |
+| Protocol | **UDP** |
+| External port | **51820** |
+| Internal IP address | your server's address, e.g. **192.168.1.50** |
+| Internal port | **51820** |
+
+Save. Forward **only** this one port; never the 2283, 8080 or 8790 ports.
+🤖 Not sure where it is? Ask Claude: *"How do I set up port forwarding on my (router brand and model)?"*
+
+**2. If your home internet address changes** (true for most home connections), give your home a free name that follows it:
+1. Go to [duckdns.org](https://www.duckdns.org), sign in, and create a name, e.g. `alexhome` (giving you `alexhome.duckdns.org`).
+2. On the server, run `sudo ics-server config --endpoint alexhome.duckdns.org`.
+3. Set up the DuckDNS updater by following duckdns.org's **install → linux cron** instructions, or 🤖 ask Claude on the server:
+   *"Set up the DuckDNS updater for alexhome with token <your token>"*.
+4. Pair your phones again (admin console → **Pair a phone**) so they learn the new name.
+
+**3. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data. Open ImmCloudScale → **Network** tab → switch it **on**.
+It should say **Connected to home**. Then open the **Photos** tab: your photos load.
+
+**4. Make it automatic (recommended).** On the **Network** tab, switch on **Auto-connect away from home**. Then, while you're at home on Wi-Fi,
+tap **Add current Wi-Fi as trusted**. The phone now connects to home by itself whenever you leave, and disconnects when you're back.
+
+> **Still not connecting?** Some internet providers (especially mobile-broadband and some fibre providers) don't give your home a public address
+> ("CGNAT"), and then port forwarding can't work. Ask your provider for a "public IPv4 address", or ask Claude: *"Is my home connection behind CGNAT?"*
 
 ---
+
+## Everyday use
+
+* **Photos** and **Collections** work like Google Photos. Backup runs on its own (by default only on Wi-Fi).
+* **Files** works like Google Drive: tap **New** to upload or make a folder; **⋮** on a file to share a link, star it or keep it offline.
+* **Network** shows whether you're connected to home.
+* On a computer, use **Photos (web)** and **Files (web)** from Step 3 in a browser, signing in with your web sign-in.
 
 ## Add family members
 
-* Admin console → **People** → type a name → **Add person**, or `sudo ics-server user add sam --email sam@example.com`.
-* Each person gets their own photo library and files, with one password for both web apps (shown in the console).
-* Pair their phone with **Pair a phone** next to their name (Part 2). A lost phone? **Revoke** it in the console.
+1. Admin console → **People** → type a name → **Add person**. Their web sign-in appears in the list.
+2. Next to their name, tap **Pair a phone**, and on their phone follow **Step 5**.
+3. Lost a phone? Admin console → **Phones** → **Revoke**. It loses access immediately.
 
 ---
 
@@ -210,25 +355,29 @@ Photos and Files already work on your home Wi-Fi. For everywhere else:
 
 | Problem | What to do |
 |---|---|
-| Setup "timed out waiting for services" | Usually a slow download or too little RAM. Run `sudo ics-server setup` again (it's safe), and see logs with `sudo docker compose -f /opt/immcloudscale/docker-compose.yml logs --tail 50`. On machines with 4 GB or less, add `--no-ml`. |
-| Phone: "That pairing code is wrong or has expired" | Codes work once, for 15 minutes. Make a new one in the console. |
-| Phone can't reach the server while pairing | Phone and server must be on the same network. Check `http://<server>:8790` opens in the phone's browser; if `ufw` is on, `sudo ics-server setup` adds the rules. |
-| VPN connects but no photos away from home | Check the port forward is **UDP** 51820 to the right IP, and the endpoint is right (`sudo ics-server status`). If your home IP changed, see Part 3, step 2. |
-| "Install blocked" on the phone | Allow "Install unknown apps" for that app, or use the 🤖 adb path. |
-| `adb pair` fails | The pairing code and port change every time you open "Pair device with pairing code". Read them again. |
-| Forgot a password | `sudo ics-server admin-password` (console) and `sudo ics-server user list` (web sign-ins). |
+| `ssh: connect to host … Connection refused` | OpenSSH isn't installed on the server. On the server itself, run `sudo apt install -y openssh-server`. |
+| The installer stopped with an error | Run the same command again: it's safe and continues where it left off. Still stuck? Copy the last 20 lines and ask Claude. |
+| "timed out waiting for services" | Usually a slow download or too little memory. Run the command again. On a machine with 4 GB of RAM, add `--no-ml` (see options). |
+| The admin console page doesn't open | Use `http://` (not https) and the port from the box, e.g. `:8790`. Your computer must be on the same Wi-Fi. On the server, `sudo ics-server status` shows what's running. |
+| Phone: "Can't reach the server" | The phone must be on your **home Wi-Fi** to pair, and the server must be on. Check the address and port. |
+| Phone: "That pairing code is wrong or has expired" | Make a new code in the admin console (**Pair a phone**). Codes last 15 minutes. |
+| Phone: "App not installed" | An older ImmCloudScale build is on the phone. Uninstall it first, then install again. |
+| Backup says "Only some photos can be backed up" | Tap **Open settings** → Permissions → Photos and videos → **Allow all**. |
+| Works at home but not away | Check Step 6: the rule must be **UDP** 51820 to the right address. If your home address changed, set up DuckDNS. |
 
-**Ask Claude.** Run `claude` on the server and describe the problem, for example: *"ImmCloudScale Photos says it can't reach the server. Diagnose it."*
-The commands it needs are in [server/README.md](server/README.md).
+**Ask Claude for help.** On the server, run `claude` and describe the problem, for example:
+*"ImmCloudScale on this server isn't working: the Photos app can't connect. Diagnose and fix it."*
+
+**Report a bug:** [github.com/FenOps/immcloudscale/issues](https://github.com/FenOps/immcloudscale/issues).
 
 ---
 
-## What Claude can and can't do here
+## What Claude can and can't do for you
 
-| Claude can | Only you can |
+| 🤖 Claude can | 🧑 Only you can |
 |---|---|
-| Check the system, install everything and verify every service | Sign in to Claude and DuckDNS |
-| Watch setup, read logs and fix problems | Approve `sudo` once (step 2 of Part 1, Option B) and the commands Claude asks to run |
-| Make people and pairing codes, set up DuckDNS, change the endpoint | Turn on Developer options / Wireless debugging and read out codes from the phone |
-| Install the APK with permissions, pre-approve the VPN and open pairing | Tap **Pair** on the phone, and allow anything Android insists on asking |
-| Explain your router's port-forwarding screen | Change router settings (unless you let Claude in Chrome do it with you watching) |
+| Check the server, install everything, verify it and fix problems | Install Ubuntu on the server (Step 1) and plug it in |
+| Explain every step in plain words | Sign in to your Claude, router and DuckDNS accounts |
+| Create people, pairing codes and the DuckDNS updater | Allow Claude to install software (Step 3 B, one command) |
+| Install the app on your phone and start pairing | Turn on developer options on the phone and tap **Pair** |
+| Tell you exactly what to change on your router | Change the router settings |

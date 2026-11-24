@@ -1,6 +1,6 @@
 # ImmCloudScale: notes for Claude
 
-People often ask Claude Code to **install** this project on their server or phone. Follow `INSTALL.md`; this file adds the rules.
+People often ask Claude Code to **install** this project on their server or phone. Follow `INSTALL.md` (written for beginners: explain in plain words); this file adds the rules.
 
 ## Layout
 Licensed AGPL-3.0-only (see LICENSE).
@@ -14,9 +14,10 @@ Licensed AGPL-3.0-only (see LICENSE).
 - Install with `curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash -s -- <setup options>`,
   or `sudo ./server/deploy/install.sh` from a clone of https://github.com/FenOps/immcloudscale.
 - Your shell can't answer sudo password prompts. If `sudo -n true` fails, ask the person to create
-  `/etc/sudoers.d/90-claude-install` (INSTALL.md, Part 1 step 2) and remove it when you finish.
+  `/etc/sudoers.d/90-claude-install` (INSTALL.md, Step 3, Option B) and remove it when you finish.
 - `install.sh` and `ics-server setup` are safe to re-run; prefer re-running over hand-editing `/opt/immcloudscale` or `/etc/wireguard/ics0.conf`
   (both are generated, and `ics-server` overwrites them).
+- Setup may choose other ports than 2283/8080/8790 when those are busy; read them from its output or `sudo ics-server status`.
 - Setup takes 5–20 minutes on first run. Run it in the background and check its output; don't start a second copy.
 - Verify with `sudo ics-server status`, `sudo wg show ics0`, and `curl -s http://127.0.0.1:2283/api/server/ping`.
   Logs: `sudo docker compose -f /opt/immcloudscale/docker-compose.yml logs --tail 100 <service>`.
