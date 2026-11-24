@@ -164,11 +164,8 @@ class VpnManager(private val context: Context, private val settings: SettingsSto
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build()
-        val cb = object : ConnectivityManager.NetworkCallback(
-            if (Build.VERSION.SDK_INT >= 31) FLAG_INCLUDE_LOCATION_INFO else 0,
-        ) {
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+        val onChange: (NetworkCapabilities) -> Unit = { caps ->
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
                 val name = when {
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> ssid(caps) ?: "Wi-Fi"
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile data"
@@ -178,6 +175,16 @@ class VpnManager(private val context: Context, private val settings: SettingsSto
                 val onWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                 _state.value = _state.value.copy(network = name)
                 scope.launch { onNetworkChanged(name.takeIf { onWifi }) }
+            }
+        }
+        // NetworkCallback(flags) only exists on Android 12+; calling it on older phones crashes the app at start.
+        val cb = if (Build.VERSION.SDK_INT >= 31) {
+            object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(caps)
+            }
+        } else {
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(caps)
             }
         }
         runCatching { cm.registerNetworkCallback(request, cb) }
@@ -196,7 +203,7 @@ class VpnManager(private val context: Context, private val settings: SettingsSto
     private fun ssid(caps: NetworkCapabilities): String? {
         val info = (if (Build.VERSION.SDK_INT >= 29) caps.transportInfo as? WifiInfo else null)
             ?: @Suppress("DEPRECATION") context.applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo
-        return info?.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != WifiManager.UNKNOWN_SSID.trim('<', '>') && it != "<unknown ssid>" }
+        return info?.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != "<unknown ssid>" && it != "unknown ssid" }
     }
 
     @SuppressLint("MissingPermission")

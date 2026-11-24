@@ -33,11 +33,11 @@ jobs:
           else
             echo "::warning::No ICS_KEYSTORE_B64 secret: the APK is signed with a temporary key, so later versions can't install over it."
           fi
-      - name: Unit, smoke and screenshot tests, build APK
+      - name: Unit, smoke and screenshot tests, lint, build APK
         env:
           ICS_KEYSTORE_PASSWORD: ${{ secrets.ICS_KEYSTORE_PASSWORD }}
           ICS_KEY_ALIAS: ${{ secrets.ICS_KEY_ALIAS }}
-        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:assembleDebug
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: immcloudscale-debug-apk
