@@ -24,12 +24,13 @@ fun RemoteImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     contentDescription: String? = null,
+    background: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
 ) {
     if (LocalInspectionMode.current || url == null) {
         Box(modifier.background(placeholderBrush(key)))
         return
     }
-    Box(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
+    Box(modifier.background(background)) {
         AsyncImage(model = url, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())
     }
 }

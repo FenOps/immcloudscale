@@ -32,6 +32,16 @@ live in Immich, everything else in Nextcloud, and the VPN makes both reachable a
 
 Already running Immich and Nextcloud yourself? The app also connects to existing servers (see "Setting up your servers" below).
 
+## Screenshots
+
+| Photos | Viewer | Files | Network |
+|---|---|---|---|
+| <img src="docs/screenshots/02-photos.png" width="200" alt="Photos"> | <img src="docs/screenshots/03-viewer.png" width="200" alt="Viewer"> | <img src="docs/screenshots/08-files.png" width="200" alt="Files"> | <img src="docs/screenshots/10-network.png" width="200" alt="Network"> |
+| Collections | Backup | Pairing | Dark theme |
+| <img src="docs/screenshots/06-collections.png" width="200" alt="Collections"> | <img src="docs/screenshots/12-backup-settings.png" width="200" alt="Backup"> | <img src="docs/screenshots/01-welcome-and-pairing.png" width="200" alt="Pairing"> | <img src="docs/screenshots/13-photos-dark.png" width="200" alt="Dark theme"> |
+
+All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered from the real app by `./gradlew :app:testDebugUnitTest --tests '*AppGuiTest*' -Pgui` (output in `app/build/gui`).
+
 ## Features
 
 ### Photos (Immich)

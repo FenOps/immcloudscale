@@ -70,8 +70,8 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
         _ui.update { it.copy(services = results) }
     }
 
-    fun connect() = viewModelScope.launch { g.vpn.connect() }
-    fun disconnect() = viewModelScope.launch { g.vpn.disconnect() }
+    fun connect() = viewModelScope.launch { g.vpn.connectByUser() }
+    fun disconnect() = viewModelScope.launch { g.vpn.disconnectByUser() }
 
     private fun save(reapply: Boolean = true, block: (app.immcloudscale.data.AppSettings) -> app.immcloudscale.data.AppSettings) =
         viewModelScope.launch { g.settings.update(block); if (reapply) g.vpn.reapply() }

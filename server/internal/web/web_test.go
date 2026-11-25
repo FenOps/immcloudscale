@@ -34,6 +34,10 @@ func newHandler(t *testing.T) http.Handler {
 func do(h http.Handler, method, path, body string, auth bool) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.RemoteAddr = "192.168.1.20:5000"
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	r.Header.Set("X-ICS-Request", "1")
 	if auth {
 		r.SetBasicAuth("admin", "pw")
 	}
@@ -83,4 +87,48 @@ func TestPairLink(t *testing.T) {
 		t.Fatal(u)
 	}
 	_ = time.Second
+}
+
+func TestCrossSiteRequestsAreRefused(t *testing.T) {
+	h := newHandler(t)
+	// A form post from another site: right password (sent by the browser), but no console header.
+	r := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(`{"name":"evil"}`))
+	r.SetBasicAuth("admin", "pw")
+	r.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatalf("cross-site form must be refused, got %d", w.Code)
+	}
+	r = httptest.NewRequest("GET", "/api/admin/status", nil)
+	r.SetBasicAuth("admin", "pw")
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatalf("cross-site read must be refused, got %d", w.Code)
+	}
+	// The public pair endpoint only takes JSON.
+	r = httptest.NewRequest("POST", "/api/v1/pair", strings.NewReader(`{"code":"x"}`))
+	r.Header.Set("Content-Type", "text/plain")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 415 {
+		t.Fatalf("got %d", w.Code)
+	}
+}
+
+func TestInfoIsCheapAndHasServerID(t *testing.T) {
+	h := newHandler(t)
+	w := do(h, "GET", "/api/v1/info", "", false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+func TestBadKeyIsAClientError(t *testing.T) {
+	h := newHandler(t)
+	if w := do(h, "POST", "/api/v1/pair", `{"code":"ABCD-EFGH","wgPublicKey":"not-a-key"}`, false); w.Code != 400 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
 }

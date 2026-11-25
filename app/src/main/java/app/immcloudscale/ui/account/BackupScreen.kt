@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -28,11 +29,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -109,7 +114,8 @@ fun BackupScreen(onBack: () -> Unit) {
         onDispose { lifecycle.lifecycle.removeObserver(obs) }
     }
 
-    Scaffold(topBar = {
+    val snack = remember { SnackbarHostState() }
+    Scaffold(snackbarHost = { SnackbarHost(snack) }, topBar = {
         TopAppBar(
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             title = { Text("Backup") },
@@ -122,7 +128,7 @@ fun BackupScreen(onBack: () -> Unit) {
             ) {
                 Column(Modifier.padding(4.dp)) {
                     ListItem(
-                        colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                         headlineContent = { Text("Back up to Immich", style = MaterialTheme.typography.titleMedium) },
                         supportingContent = {
                             Text(
@@ -150,6 +156,11 @@ fun BackupScreen(onBack: () -> Unit) {
                         }
                     }
                     failed?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    if (s.backupSkipped > 0 && running == null) Text(
+                        "${s.backupSkipped} item${if (s.backupSkipped == 1) "" else "s"} couldn't be backed up (unsupported file type or unreadable). Everything else is safe.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    )
                 }
             }
 
@@ -171,7 +182,7 @@ fun BackupScreen(onBack: () -> Unit) {
                             "This app was allowed to see selected photos only. To back up everything, open Settings → Permissions → Photos and videos → Allow all.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        androidx.compose.material3.TextButton(onClick = {
+                        TextButton(onClick = {
                             ctx.startActivity(
                                 android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                                     .setData(android.net.Uri.fromParts("package", ctx.packageName, null)),
@@ -201,10 +212,17 @@ fun BackupScreen(onBack: () -> Unit) {
                         label = { Text(f) },
                     )
                 }
-                if (folders.isEmpty()) Text("Allow access to photos to see your folders", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (folders.isEmpty()) TextButton(onClick = { perms.launch(mediaPermissions) }) {
+                    Text("Allow access to photos to choose folders")
+                }
             }
             ListItem(
-                modifier = Modifier.clickable { update { it.copy(backupSince = 0) } },
+                modifier = Modifier.clickable {
+                    update { it.copy(backupSince = 0) }
+                    if (s.backupEnabled) BackupWorker.runNow(ctx, s)
+                    scope.launch { snack.showSnackbar(if (s.backupEnabled) "Checking all photos again" else "All photos will be checked when backup is on") }
+                },
+                leadingContent = { Icon(Icons.Outlined.Sync, null) },
                 headlineContent = { Text("Re-check everything") },
                 supportingContent = { Text("Compare all photos on this phone with the server again. Already-uploaded ones are skipped.") },
             )

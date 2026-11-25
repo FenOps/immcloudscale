@@ -44,6 +44,7 @@ type Config struct {
 	DataDir         string `json:"dataDir"`    // photos, files, database live here
 	StackDir        string `json:"stackDir"`   // generated docker-compose.yml and .env
 	LANAddress      string `json:"lanAddress"` // the NAS's LAN IP, used in service URLs
+	LANManual       bool   `json:"lanManual"`  // set by hand (--lan-ip): not replaced by the detected address
 	LANSubnet       string `json:"lanSubnet"`  // e.g. 192.168.1.0/24, routed through the VPN
 	Endpoint        string `json:"endpoint"`   // public host or IP the phones dial
 	WGPort          int    `json:"wgPort"`
@@ -64,6 +65,7 @@ type Config struct {
 	ImmichAdminEmail string `json:"immichAdminEmail"`
 	ImmichAdminPass  string `json:"immichAdminPassword"`
 	AdminPassword    string `json:"adminPassword"` // for the ics-server web console
+	ServerID         string `json:"serverId"`      // random, stable; lets phones recognise this server
 }
 
 type State struct {

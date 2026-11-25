@@ -26,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -46,10 +48,13 @@ fun Pinwheel(size: Dp = 24.dp, modifier: Modifier = Modifier) {
 
 /** Google-style coloured initial avatar. */
 @Composable
-fun LetterAvatar(name: String, size: Dp = 32.dp, modifier: Modifier = Modifier) {
+fun LetterAvatar(name: String, size: Dp = 32.dp, modifier: Modifier = Modifier, contentDescription: String = "Account and settings") {
     val palette = listOf(Color(0xFF1A73E8), Color(0xFFD93025), Color(0xFF188038), Color(0xFFE37400), Color(0xFF9334E6), Color(0xFF007B83))
-    val c = palette[abs(name.hashCode()) % palette.size]
-    Box(modifier.size(size).clip(CircleShape).background(c), contentAlignment = Alignment.Center) {
+    val c = palette[abs(name.trim().lowercase().hashCode()) % palette.size]
+    Box(
+        modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             name.trim().firstOrNull()?.uppercase() ?: "?",
             color = Color.White, fontWeight = FontWeight.Medium, fontSize = (size.value * 0.45f).sp,

@@ -33,6 +33,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
@@ -47,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,7 +81,7 @@ fun FileActionsSheet(
         Column(Modifier.navigationBarsPadding().padding(bottom = 8.dp)) {
             Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (previewUrl != null) RemoteImage(previewUrl, f.path, Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)))
-                else FileIcon(f, 28.dp)
+                else FileIcon(f, 32.dp)
                 Text(f.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 16.dp))
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -88,6 +91,7 @@ fun FileActionsSheet(
             if (!f.isFolder) {
                 ListItem(
                     modifier = Modifier.clickable(onClick = go(onOffline)),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     leadingContent = { Icon(Icons.Outlined.OfflinePin, null) },
                     headlineContent = { Text("Available offline") },
                     trailingContent = { Switch(offline, { onDismiss(); onOffline() }) },
@@ -99,17 +103,18 @@ fun FileActionsSheet(
             SheetRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Move", go(onMove))
             if (!f.isFolder) SheetRow(Icons.Outlined.ContentCopy, "Make a copy", go(onCopy))
             SheetRow(Icons.Outlined.Info, "Details", go(onDetails))
-            SheetRow(Icons.Outlined.DeleteOutline, "Remove", go(onDelete))
+            SheetRow(Icons.Outlined.DeleteOutline, "Remove", go(onDelete), tint = MaterialTheme.colorScheme.error)
         }
     }
 }
 
 @Composable
-private fun SheetRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun SheetRow(icon: ImageVector, label: String, onClick: () -> Unit, tint: Color = Color.Unspecified) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
-        leadingContent = { Icon(icon, null) },
-        headlineContent = { Text(label) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        leadingContent = { Icon(icon, null, tint = if (tint == Color.Unspecified) LocalContentColor.current else tint) },
+        headlineContent = { Text(label, color = tint) },
     )
 }
 

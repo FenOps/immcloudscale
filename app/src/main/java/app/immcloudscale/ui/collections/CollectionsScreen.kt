@@ -50,7 +50,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -192,7 +194,7 @@ fun CollectionsContent(
                     item(span = { GridItemSpan(maxLineSpan) }, key = "people") {
                         Column {
                             SectionHeader("People", start = 4.dp)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            LazyRow(Modifier.bleed(12.dp), contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                                 items(st.people, key = { it.id }) { p ->
                                     Column(
                                         Modifier.width(76.dp).clickable { onOpen(CollectionTarget.Person(p)) },
@@ -214,7 +216,7 @@ fun CollectionsContent(
                     item(span = { GridItemSpan(maxLineSpan) }, key = "places") {
                         Column {
                             SectionHeader("Places", start = 4.dp)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyRow(Modifier.bleed(12.dp), contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(st.places, key = { it.id }) { a ->
                                     val city = a.exifInfo?.city ?: ""
                                     Column(Modifier.width(110.dp).clickable { onOpen(CollectionTarget.Place(city)) }) {
@@ -245,6 +247,13 @@ fun CollectionsContent(
             }
         }
     }
+}
+
+/** Lets a horizontal row scroll to the screen edges past the grid's side padding. */
+private fun Modifier.bleed(by: Dp) = layout { measurable, constraints ->
+    val extra = (by * 2).roundToPx()
+    val placeable = measurable.measure(constraints.copy(maxWidth = constraints.maxWidth + extra, minWidth = constraints.minWidth + extra))
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-by.roundToPx(), 0) }
 }
 
 @Composable

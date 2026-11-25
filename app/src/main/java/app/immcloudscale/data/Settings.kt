@@ -10,8 +10,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Everything the app remembers. Lives in app-private storage (backups are disabled in the manifest). */
 data class AppSettings(
@@ -25,6 +29,8 @@ data class AppSettings(
     val ncUrl: String = "",
     val ncUser: String = "",
     val ncAppPassword: String = "",
+    /** Nextcloud's internal user ID (used in WebDAV paths); differs from ncUser when signing in with an email. */
+    val ncUserId: String = "",
 
     val vpnConfig: String = "",
     /** Route all traffic through home (Tailscale "exit node"); otherwise only the NAS / LAN subnets. */
@@ -40,6 +46,8 @@ data class AppSettings(
     val backupFolders: Set<String> = emptySet(),
     val backupSince: Long = 0L,
     val lastBackupAt: Long = 0L,
+    /** Files the last backup run couldn't send (unsupported type, unreadable). */
+    val backupSkipped: Int = 0,
 
     val filesGrid: Boolean = false,
     val photoColumns: Int = 4,
@@ -48,6 +56,8 @@ data class AppSettings(
     val pairedServer: String = "",
     val pairedServerName: String = "",
     val pairedDeviceId: String = "",
+    /** The server's ID from pairing; checked before sending credentials on Wi-Fi without the VPN. */
+    val pairedServerId: String = "",
 ) {
     val immichConfigured get() = immichUrl.isNotBlank() && immichToken.isNotBlank()
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
@@ -66,6 +76,7 @@ class SettingsStore(private val context: Context) {
         val ncUrl = stringPreferencesKey("nc_url")
         val ncUser = stringPreferencesKey("nc_user")
         val ncPass = stringPreferencesKey("nc_pass")
+        val ncUserId = stringPreferencesKey("nc_user_id")
         val vpnConfig = stringPreferencesKey("vpn_config")
         val vpnFull = booleanPreferencesKey("vpn_full")
         val vpnExcluded = stringSetPreferencesKey("vpn_excluded")
@@ -78,11 +89,13 @@ class SettingsStore(private val context: Context) {
         val backupFolders = stringSetPreferencesKey("backup_folders")
         val backupSince = longPreferencesKey("backup_since")
         val lastBackup = longPreferencesKey("last_backup")
+        val backupSkipped = stringPreferencesKey("backup_skipped")
         val filesGrid = booleanPreferencesKey("files_grid")
         val photoColumns = stringPreferencesKey("photo_columns")
         val pairedServer = stringPreferencesKey("paired_server")
         val pairedServerName = stringPreferencesKey("paired_server_name")
         val pairedDeviceId = stringPreferencesKey("paired_device_id")
+        val pairedServerId = stringPreferencesKey("paired_server_id")
     }
 
     private fun read(p: Preferences) =
@@ -95,6 +108,7 @@ class SettingsStore(private val context: Context) {
             ncUrl = p[K.ncUrl] ?: "",
             ncUser = p[K.ncUser] ?: "",
             ncAppPassword = p[K.ncPass] ?: "",
+            ncUserId = p[K.ncUserId] ?: "",
             vpnConfig = p[K.vpnConfig] ?: "",
             vpnFullTunnel = p[K.vpnFull] ?: false,
             vpnExcludedApps = p[K.vpnExcluded] ?: emptySet(),
@@ -107,36 +121,57 @@ class SettingsStore(private val context: Context) {
             backupFolders = p[K.backupFolders] ?: emptySet(),
             backupSince = p[K.backupSince] ?: 0L,
             lastBackupAt = p[K.lastBackup] ?: 0L,
+            backupSkipped = p[K.backupSkipped]?.toIntOrNull() ?: 0,
             filesGrid = p[K.filesGrid] ?: false,
             photoColumns = p[K.photoColumns]?.toIntOrNull() ?: 4,
             pairedServer = p[K.pairedServer] ?: "",
             pairedServerName = p[K.pairedServerName] ?: "",
             pairedDeviceId = p[K.pairedDeviceId] ?: "",
+            pairedServerId = p[K.pairedServerId] ?: "",
         )
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { read(it) }
 
-    suspend fun current(): AppSettings = flow.first()
+    /**
+     * The settings in memory, updated the moment [update] returns. API clients read this, so the first
+     * request after saving a new server already goes to the new server (no lag behind DataStore).
+     */
+    val state: MutableStateFlow<AppSettings> by lazy { MutableStateFlow(runBlocking { flow.first() }) }
 
-    suspend fun update(block: (AppSettings) -> AppSettings) {
+    suspend fun current(): AppSettings = state.value
+
+    private val writeLock = Mutex()
+
+    // Serialised so the in-memory copy always ends up equal to the newest saved settings.
+    suspend fun update(block: (AppSettings) -> AppSettings) = writeLock.withLock { save(block) }
+
+    private suspend fun save(block: (AppSettings) -> AppSettings) {
+        var saved: AppSettings? = null
         context.dataStore.edit { p ->
             val old = read(p)
-            val n = block(old)
+            var n = block(old)
+            // What gets backed up, or where, changed: look at the whole library again (the server skips
+            // what it already has), otherwise older photos in a newly chosen folder would never be sent.
+            if (n.backupVideos != old.backupVideos || n.backupFolders != old.backupFolders ||
+                n.immichUrl != old.immichUrl || n.immichToken != old.immichToken
+            ) n = n.copy(backupSince = 0)
+            saved = n
             p[K.immichUrl] = n.immichUrl; p[K.immichToken] = n.immichToken
             p[K.immichApiKey] = n.immichTokenIsApiKey; p[K.immichUserName] = n.immichUserName
             p[K.immichEmail] = n.immichEmail
-            p[K.ncUrl] = n.ncUrl; p[K.ncUser] = n.ncUser; p[K.ncPass] = n.ncAppPassword
+            p[K.ncUrl] = n.ncUrl; p[K.ncUser] = n.ncUser; p[K.ncPass] = n.ncAppPassword; p[K.ncUserId] = n.ncUserId
             p[K.vpnConfig] = n.vpnConfig; p[K.vpnFull] = n.vpnFullTunnel
             p[K.vpnExcluded] = n.vpnExcludedApps; p[K.vpnAuto] = n.vpnAutoConnect
             p[K.vpnTrusted] = n.vpnTrustedSsids
             p[K.backupEnabled] = n.backupEnabled; p[K.backupWifi] = n.backupWifiOnly
             p[K.backupCharging] = n.backupChargingOnly; p[K.backupVideos] = n.backupVideos
             p[K.backupFolders] = n.backupFolders; p[K.backupSince] = n.backupSince
-            p[K.lastBackup] = n.lastBackupAt
+            p[K.lastBackup] = n.lastBackupAt; p[K.backupSkipped] = n.backupSkipped.toString()
             p[K.filesGrid] = n.filesGrid; p[K.photoColumns] = n.photoColumns.toString()
             p[K.pairedServer] = n.pairedServer; p[K.pairedServerName] = n.pairedServerName
-            p[K.pairedDeviceId] = n.pairedDeviceId
+            p[K.pairedDeviceId] = n.pairedDeviceId; p[K.pairedServerId] = n.pairedServerId
         }
+        saved?.let { state.value = it }
     }
 }
 

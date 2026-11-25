@@ -137,7 +137,8 @@ class FilesViewModel(private val g: AppGraph) : ViewModel() {
     /** Downloads into the offline store (reused when the file is opened in another app). */
     fun download(f: CloudFile, then: (java.io.File) -> Unit) = viewModelScope.launch {
         val target = g.offline.fileFor(f.path)
-        if (target.exists() && target.length() == f.size) { then(target); return@launch }
+        // Reuse the local copy only if it's still the server's version (same size and not older).
+        if (target.exists() && target.length() == f.size && target.lastModified() >= f.modified) { then(target); return@launch }
         _state.update { it.copy(transfer = Transfer(f.name, 0f)) }
         try {
             g.nextcloud.download(f.path, target) { p -> _state.update { it.copy(transfer = Transfer(f.name, p)) } }
@@ -150,15 +151,24 @@ class FilesViewModel(private val g: AppGraph) : ViewModel() {
 
     fun upload(uris: List<Uri>) = viewModelScope.launch {
         val folder = _state.value.path
+        var failed = 0
+        var lastError: String? = null
         uris.forEachIndexed { i, uri ->
             _state.update { it.copy(transfer = Transfer("Uploading ${i + 1} of ${uris.size}", null)) }
             try {
                 g.uploadUri(uri, folder, forceFiles = true)
             } catch (e: Exception) {
-                _state.update { it.copy(message = e.message ?: "Upload failed") }
+                failed++
+                lastError = e.message
             }
         }
-        _state.update { it.copy(transfer = null, message = "${uris.size} item${if (uris.size == 1) "" else "s"} uploaded") }
+        val ok = uris.size - failed
+        val msg = when {
+            failed == 0 -> "$ok item${if (ok == 1) "" else "s"} uploaded"
+            ok == 0 -> "Upload failed: ${lastError ?: "unknown error"}"
+            else -> "$ok uploaded, $failed failed: ${lastError ?: "unknown error"}"
+        }
+        _state.update { it.copy(transfer = null, message = msg) }
         load()
     }
 }

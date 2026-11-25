@@ -186,6 +186,12 @@ class NextcloudClient(
         }
     }
 
+    /** The signed-in account's internal user ID (WebDAV paths use it; the login name can be an email). */
+    suspend fun currentUserId(): String {
+        val text = exec(Request.Builder().url("${base()}/ocs/v1.php/cloud/user?format=json").header("OCS-APIRequest", "true").build())
+        return json.parseToJsonElement(text).jsonObject["ocs"]!!.jsonObject["data"]!!.jsonObject["id"]!!.jsonPrimitive.content
+    }
+
     // ---- sharing (OCS) ----
 
     private fun ocs(path: String) = "${base()}/ocs/v2.php/apps/files_sharing/api/v1$path"

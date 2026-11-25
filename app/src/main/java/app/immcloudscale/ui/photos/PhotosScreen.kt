@@ -34,6 +34,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +55,7 @@ import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.Pinwheel
 import app.immcloudscale.ui.components.RemoteImage
+import kotlinx.coroutines.flow.flowOf
 import java.time.LocalDate
 
 enum class BackupIndicator { Off, Done, Running }
@@ -136,8 +138,11 @@ fun PhotosScreen(
     val ctx = LocalContext.current
     val g = ctx.graph
     val settings by g.settingsState.collectAsStateWithLifecycle()
-    val work by androidx.compose.runtime.remember { WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW) }
-        .collectAsStateWithLifecycle(emptyList())
+    // Backup progress only matters once backup is on; don't start WorkManager before that.
+    val work by remember(settings.backupEnabled) {
+        if (settings.backupEnabled) WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW)
+        else flowOf(emptyList())
+    }.collectAsStateWithLifecycle(emptyList())
     val running = work.firstOrNull { it.state == WorkInfo.State.RUNNING }
     val progress = running?.progress?.let { p ->
         val t = p.getInt(BackupWorker.KEY_TOTAL, 0); if (t > 0) p.getInt(BackupWorker.KEY_DONE, 0).toFloat() / t else null

@@ -30,6 +30,9 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ics.jks"
             echo "ICS_KEYSTORE_FILE=$RUNNER_TEMP/ics.jks" >> "$GITHUB_ENV"
             echo "Signing with the stable key: published APKs update in place."
+          elif [ "${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '') }}" = "true" ]; then
+            echo "::error::Releases must be signed with the permanent key: add the ICS_KEYSTORE_B64, ICS_KEYSTORE_PASSWORD and ICS_KEY_ALIAS repository secrets."
+            exit 1
           else
             echo "::warning::No ICS_KEYSTORE_B64 secret: the APK is signed with a temporary key, so later versions can't install over it."
           fi
@@ -37,11 +40,15 @@ jobs:
         env:
           ICS_KEYSTORE_PASSWORD: ${{ secrets.ICS_KEYSTORE_PASSWORD }}
           ICS_KEY_ALIAS: ${{ secrets.ICS_KEY_ALIAS }}
-        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug :app:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: immcloudscale-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immcloudscale-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
 
   server:
     runs-on: ubuntu-latest
@@ -79,10 +86,10 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          name: immcloudscale-debug-apk
+          name: immcloudscale-release-apk
           path: dist
       - name: Name the APK
-        run: mv dist/app-debug.apk "dist/ImmCloudScale-${TAG#v}.apk"
+        run: mv dist/app-release.apk "dist/ImmCloudScale-${TAG#v}.apk"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

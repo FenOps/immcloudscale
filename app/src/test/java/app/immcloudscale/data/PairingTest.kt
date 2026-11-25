@@ -92,7 +92,7 @@ class PairingTest {
         val (priv, pub) = VpnManager.newKeyPair()
         val r = Pairing.pair(OkHttpClient(), url!!, code!!, "Robolectric phone", pub)
         var settings = Pairing.apply(AppSettings(), r, priv, url)
-        val http = buildHttpClient { settings }
+        val http = buildHttpClient({ settings })
         // The app's own clients, with the credentials the server handed out.
         val immich = ImmichClient(http) { settings.immichUrl }
         assertEquals(r.user.email, immich.me().email)

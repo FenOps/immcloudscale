@@ -161,7 +161,7 @@ fun SearchScreen(onBack: () -> Unit, onSearch: (String) -> Unit, onOpen: (Collec
                         items(st.people, key = { it.id }) { p ->
                             Column(Modifier.width(72.dp).clickable { onOpen(CollectionTarget.Person(p)) }, horizontalAlignment = Alignment.CenterHorizontally) {
                                 RemoteImage(g.immich.personThumbnailUrl(p.id), p.id, Modifier.size(72.dp).clip(CircleShape))
-                                Text(p.name.ifBlank { "Unnamed" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                                Text(p.name.ifBlank { "Add a name" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
                             }
                         }
                     }

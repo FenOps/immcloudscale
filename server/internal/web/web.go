@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,14 @@ import (
 var indexHTML []byte
 
 type Handler struct {
-	S       *core.Server
-	limiter *limiter
+	S         *core.Server
+	pairLimit *limiter // wrong pairing codes per IP
+	authLimit *limiter // wrong admin passwords per IP
 }
 
-func New(s *core.Server) *Handler { return &Handler{S: s, limiter: newLimiter(10, 10*time.Minute)} }
+func New(s *core.Server) *Handler {
+	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute)}
+}
 
 // PairLink is what the QR code holds; scanning it with the phone's camera opens the app.
 func PairLink(serverURL, code string) string {
@@ -112,8 +116,25 @@ func (h *Handler) Routes() http.Handler {
 		}()
 		writeJSON(w, 202, map[string]string{"status": "updating"})
 	})
-	mux.Handle("/", h.adminAuth(admin))
+	mux.Handle("/", h.adminAuth(sameOriginOnly(admin)))
 	return securityHeaders(mux)
+}
+
+// sameOriginOnly blocks cross-site requests: browsers resend Basic auth automatically, so without this
+// any web page could make the admin's browser add users or start pairings. Changes must come from
+// the console's own fetch() calls, which send X-ICS-Request (a header other sites can't add).
+func sameOriginOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			writeErr(w, http.StatusForbidden, errors.New("cross-site request refused"))
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-ICS-Request") != "1" {
+			writeErr(w, http.StatusForbidden, errors.New("missing X-ICS-Request header"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (h *Handler) adminAuth(next http.Handler) http.Handler {
@@ -121,12 +142,12 @@ func (h *Handler) adminAuth(next http.Handler) http.Handler {
 		want := h.S.Store.Read().Config.AdminPassword
 		user, pass, ok := r.BasicAuth()
 		if !ok || want == "" || user != "admin" || subtle.ConstantTimeCompare([]byte(pass), []byte(want)) != 1 {
-			if ok && !h.limiter.allow(clientIP(r)) {
+			if ok && !h.authLimit.allow(clientIP(r)) {
 				writeErr(w, 429, errors.New("too many attempts, try again later"))
 				return
 			}
 			if ok {
-				h.limiter.fail(clientIP(r))
+				h.authLimit.fail(clientIP(r))
 			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="ImmCloudScale server", charset="UTF-8"`)
 			writeErr(w, 401, errors.New("sign in as admin with the password shown by `ics-server setup` (or `ics-server admin-password`)"))
@@ -136,14 +157,17 @@ func (h *Handler) adminAuth(next http.Handler) http.Handler {
 	})
 }
 
+// info is public and cheap: it only reads stored settings (no Docker or Immich calls).
+// Phones use "id" to check they are talking to their own server before sending credentials.
 func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
-	st := h.S.Status(r.Context())
-	writeJSON(w, 200, map[string]any{"product": "immcloudscale", "name": st.Hostname, "version": st.Version, "setUp": st.SetUp})
+	c := h.S.Store.Read().Config
+	host, _ := os.Hostname()
+	writeJSON(w, 200, map[string]any{"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID})
 }
 
 func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if !h.limiter.allow(ip) {
+	if !h.pairLimit.allow(ip) {
 		writeErr(w, 429, errors.New("too many wrong codes; wait a few minutes"))
 		return
 	}
@@ -153,8 +177,16 @@ func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.S.Pair(r.Context(), req)
 	if errors.Is(err, core.ErrBadCode) {
-		h.limiter.fail(ip)
+		h.pairLimit.fail(ip)
 		writeErr(w, 403, err)
+		return
+	}
+	if errors.Is(err, core.ErrUserGone) {
+		writeErr(w, http.StatusGone, err)
+		return
+	}
+	if errors.Is(err, core.ErrBadKey) {
+		writeErr(w, 400, err)
 		return
 	}
 	if err != nil {
@@ -184,6 +216,10 @@ func clientIP(r *http.Request) string {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeErr(w, http.StatusUnsupportedMediaType, errors.New("send JSON with Content-Type: application/json"))
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, 400, fmt.Errorf("invalid JSON: %w", err))
@@ -221,6 +257,10 @@ func (l *limiter) prune(ip string, now time.Time) []time.Time {
 		if now.Sub(t) < l.window {
 			keep = append(keep, t)
 		}
+	}
+	if len(keep) == 0 {
+		delete(l.hits, ip) // don't let the map grow with every address ever seen
+		return nil
 	}
 	l.hits[ip] = keep
 	return keep

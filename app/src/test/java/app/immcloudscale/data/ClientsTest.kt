@@ -19,7 +19,7 @@ import org.junit.Test
 class ClientsTest {
     private val server = MockWebServer()
     private lateinit var settings: AppSettings
-    private val http by lazy { buildHttpClient { settings } }
+    private val http by lazy { buildHttpClient({ settings }) }
 
     @Before fun start() {
         server.start()

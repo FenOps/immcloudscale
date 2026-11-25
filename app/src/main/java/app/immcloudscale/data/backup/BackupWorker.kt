@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -24,11 +25,14 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
+import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
+import java.io.FileNotFoundException
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -61,7 +65,7 @@ object LocalMediaSource {
         val out = mutableListOf<LocalMedia>()
         for (base in uris) {
             context.contentResolver.query(
-                base, proj, "${MediaStore.MediaColumns.DATE_ADDED} > ?", arrayOf(sinceSeconds.toString()),
+                base, proj, "${MediaStore.MediaColumns.DATE_ADDED} >= ?", arrayOf(sinceSeconds.toString()),
                 "${MediaStore.MediaColumns.DATE_ADDED} ASC",
             )?.use { c ->
                 while (c.moveToNext()) {
@@ -104,7 +108,11 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         val s = app.graph.settings.current()
         if (!s.immichConfigured) return Result.success()
-        val media = LocalMediaSource.query(applicationContext, s.backupSince, s.backupVideos, s.backupFolders)
+        // Look back a day past the last file handled: MediaStore can add items with an older DATE_ADDED
+        // (e.g. a long video finishing), and files sharing one second could be cut off. Re-checking is cheap:
+        // the server says which checksums it already has, so nothing is uploaded twice.
+        val since = (s.backupSince - 24 * 3600).coerceAtLeast(0)
+        val media = LocalMediaSource.query(applicationContext, since, s.backupVideos, s.backupFolders)
         if (media.isEmpty()) {
             app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis()) }
             return Result.success(workDataOf(KEY_UPLOADED to 0))
@@ -112,22 +120,30 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         runCatching { setForeground(foreground(0, media.size)) }
         val deviceId = "immcloudscale-" + (Settings.Secure.getString(applicationContext.contentResolver, Settings.Secure.ANDROID_ID) ?: "android")
         var uploaded = 0
+        var skipped = 0
         var done = 0
         try {
             for (batch in media.chunked(30)) {
-                val sums = batch.associateWith { sha1(it) }
-                val results = app.graph.immich.bulkUploadCheck(sums.map { (m, sum) -> BulkCheckItem(m.id.toString(), sum) })
-                    .associateBy { it.id }
+                // Files that can't be read (deleted meanwhile, no permission) are skipped, not fatal.
+                val sums = batch.mapNotNull { m -> runCatching { m to sha1(m) }.onFailure { if (!permanent(it)) throw it }.getOrNull() }.toMap()
+                skipped += batch.size - sums.size
+                val results = if (sums.isEmpty()) emptyMap() else
+                    app.graph.immich.bulkUploadCheck(sums.map { (m, sum) -> BulkCheckItem(m.id.toString(), sum) }).associateBy { it.id }
                 for (m in batch) {
                     if (isStopped) return Result.retry()
-                    val accept = results[m.id.toString()]?.action != "reject"
-                    if (accept) {
-                        app.graph.immich.upload(
-                            file = contentBody(m), fileName = m.name, deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
-                            createdAt = Instant.ofEpochMilli(m.dateTaken), modifiedAt = Instant.ofEpochMilli(m.dateModified.takeIf { it > 0 } ?: m.dateTaken),
-                            checksum = sums[m],
-                        )
-                        uploaded++
+                    val sum = sums[m]
+                    if (sum != null && results[m.id.toString()]?.action != "reject") {
+                        try {
+                            app.graph.immich.upload(
+                                file = contentBody(m), fileName = uploadName(m), deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
+                                createdAt = Instant.ofEpochMilli(m.dateTaken), modifiedAt = Instant.ofEpochMilli(m.dateModified.takeIf { it > 0 } ?: m.dateTaken),
+                                checksum = sum,
+                            )
+                            uploaded++
+                        } catch (e: Exception) {
+                            if (!permanent(e)) throw e // network trouble or server error: retry later from here
+                            skipped++ // unsupported/unreadable file: skip it so it can't block every later backup
+                        }
                     }
                     done++
                     // Remember progress after every file so an interrupted run resumes where it stopped.
@@ -137,15 +153,31 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 }
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return if (runAttemptCount < 5) Result.retry() else Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Backup failed")))
         }
-        app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis()) }
-        return Result.success(workDataOf(KEY_UPLOADED to uploaded))
+        app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis(), backupSkipped = skipped) }
+        return Result.success(workDataOf(KEY_UPLOADED to uploaded, KEY_SKIPPED to skipped))
+    }
+
+    /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
+    private fun permanent(e: Throwable): Boolean = when (e) {
+        is FileNotFoundException, is SecurityException -> true
+        is HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
+        else -> false
+    }
+
+    /** MediaStore names sometimes lack an extension, which Immich needs to know the file type. */
+    private fun uploadName(m: LocalMedia): String {
+        if ('.' in m.name.substringAfterLast('/')) return m.name
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(m.mime)
+        return if (ext != null) "${m.name}.$ext" else m.name
     }
 
     private fun sha1(m: LocalMedia): String {
         val md = MessageDigest.getInstance("SHA-1")
-        applicationContext.contentResolver.openInputStream(m.uri)?.use { input ->
+        val stream = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
+        stream.use { input ->
             val buf = ByteArray(256 * 1024)
             while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
         }
@@ -154,9 +186,11 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
     private fun contentBody(m: LocalMedia) = object : RequestBody() {
         override fun contentType() = m.mime.toMediaTypeOrNull()
-        override fun contentLength() = m.size
+        // Unknown length (chunked): MediaStore's SIZE can be stale, and a mismatch fails the upload.
+        override fun contentLength() = -1L
         override fun writeTo(sink: BufferedSink) {
-            applicationContext.contentResolver.openInputStream(m.uri)!!.source().use { sink.writeAll(it) }
+            val input = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
+            input.source().use { sink.writeAll(it) }
         }
     }
 
@@ -177,6 +211,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_DONE = "done"
         const val KEY_TOTAL = "total"
         const val KEY_UPLOADED = "uploaded"
+        const val KEY_SKIPPED = "skipped"
         const val KEY_ERROR = "error"
         const val NOW = "backup-now"
         private const val PERIODIC = "backup-periodic"

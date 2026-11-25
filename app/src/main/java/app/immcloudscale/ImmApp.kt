@@ -6,12 +6,14 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.SettingsStore
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.vpn.VpnManager
+import app.immcloudscale.data.vpn.VpnStatus
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -24,14 +26,11 @@ import coil3.video.VideoFrameDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.withIndex
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -43,13 +42,12 @@ import java.time.Instant
 class AppGraph(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(context)
-    val settingsState: StateFlow<AppSettings> = settings.flow.stateIn(
-        scope, SharingStarted.Eagerly, runBlocking { settings.current() },
-    )
-    val http = buildHttpClient { settingsState.value }
+    val settingsState: StateFlow<AppSettings> = settings.state
+    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected })
+    val http = buildHttpClient({ settingsState.value }, homeGuard)
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
-    val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.ncUser })
-    val vpn = VpnManager(context, settings, scope)
+    val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })
+    val vpn: VpnManager = VpnManager(context, settings, scope) { key -> homeGuard.networkKey = key }
     val offline = OfflineStore(context)
 
     /**
@@ -60,7 +58,7 @@ class AppGraph(val context: Context) {
         val (priv, pub) = app.immcloudscale.data.vpn.VpnManager.newKeyPair()
         val name = listOf(android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, android.os.Build.MODEL)
             .distinct().joinToString(" ").take(60)
-        val result = app.immcloudscale.data.pairing.Pairing.pair(http, server, code, name, pub)
+        val result = app.immcloudscale.data.pairing.Pairing.pair(http, server, code, name, pub, settingsState.value.pairedDeviceId)
         vpn.disconnect()
         settings.update { app.immcloudscale.data.pairing.Pairing.apply(it, result, priv, server) }
     }
@@ -92,7 +90,12 @@ class AppGraph(val context: Context) {
 /** "Available offline" copies of Nextcloud files, kept in app storage. */
 class OfflineStore(context: Context) {
     private val dir = File(context.filesDir, "offline").apply { mkdirs() }
-    fun fileFor(path: String) = File(dir, path.trimStart('/'))
+    fun fileFor(path: String): File {
+        val f = File(dir, path.trimStart('/'))
+        // Paths come from the server; never let one point outside the offline folder.
+        require(f.canonicalPath.startsWith(dir.canonicalPath + File.separator)) { "Unsafe path: $path" }
+        return f
+    }
     fun has(path: String) = fileFor(path).exists()
     fun remove(path: String) { fileFor(path).delete() }
     fun all(): List<Pair<String, File>> = dir.walkTopDown().filter { it.isFile && !it.name.endsWith(".part") }
@@ -107,10 +110,15 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
         super.onCreate()
         graph = AppGraph(this)
         graph.vpn.startAutoConnectMonitor()
-        graph.settings.flow
-            .map { Triple(it.backupEnabled, it.immichConfigured, listOf(it.backupWifiOnly, it.backupChargingOnly)) }
-            .distinctUntilChanged()
-            .onEach { BackupWorker.schedule(this, graph.settingsState.value) }
+        // Reschedule backup with the settings that changed (not a separately collected copy, which can lag).
+        graph.settingsState
+            .distinctUntilChanged { a, b ->
+                a.backupEnabled == b.backupEnabled && a.immichConfigured == b.immichConfigured &&
+                    a.backupWifiOnly == b.backupWifiOnly && a.backupChargingOnly == b.backupChargingOnly
+            }
+            .withIndex()
+            // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.
+            .onEach { (i, s) -> if (i > 0 || s.backupEnabled) BackupWorker.schedule(this, s) }
             .launchIn(graph.scope)
     }
 

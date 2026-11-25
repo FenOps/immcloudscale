@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
  * One OkHttp client for the API calls, Coil thumbnails and ExoPlayer streams. The interceptor adds
  * the right credentials depending on which server a request goes to, so image URLs can stay plain.
  */
-class AuthInterceptor(private val settings: () -> AppSettings) : Interceptor {
+class AuthInterceptor(private val settings: () -> AppSettings, private val guard: HomeGuard? = null) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         if (req.header("Authorization") != null || req.header("x-api-key") != null) return chain.proceed(req)
@@ -21,6 +21,7 @@ class AuthInterceptor(private val settings: () -> AppSettings) : Interceptor {
         // Both servers can sit behind one reverse proxy (nas.lan/ and nas.lan/nextcloud): the longer base path wins.
         val immich = if (s.immichConfigured) matchLength(url.toString(), s.immichUrl) else -1
         val nc = if (s.nextcloudConfigured) matchLength(url.toString(), s.ncUrl) else -1
+        if (immich >= 0 || nc >= 0) guard?.check(url)
         if (immich >= 0 && immich >= nc) {
             if (s.immichTokenIsApiKey) b.header("x-api-key", s.immichToken)
             else b.header("Authorization", "Bearer ${s.immichToken}")
@@ -42,8 +43,10 @@ class AuthInterceptor(private val settings: () -> AppSettings) : Interceptor {
     }
 }
 
-fun buildHttpClient(settings: () -> AppSettings): OkHttpClient = OkHttpClient.Builder()
-    .addInterceptor(AuthInterceptor(settings))
+// A network interceptor runs for every hop, so credentials are decided again after each redirect and never
+// follow a redirect to another host.
+fun buildHttpClient(settings: () -> AppSettings, guard: HomeGuard? = null): OkHttpClient = OkHttpClient.Builder()
+    .addNetworkInterceptor(AuthInterceptor(settings, guard))
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS)
     .writeTimeout(10, TimeUnit.MINUTES)

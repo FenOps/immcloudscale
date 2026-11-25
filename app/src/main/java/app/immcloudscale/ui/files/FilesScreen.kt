@@ -149,6 +149,7 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
     var dialog by remember { mutableStateOf<Pair<String, CloudFile?>?>(null) } // "folder" | "rename"
     var movePicker by remember { mutableStateOf<Pair<CloudFile, Boolean>?>(null) }
     var details by remember { mutableStateOf<CloudFile?>(null) }
+    var confirmRemove by remember { mutableStateOf<CloudFile?>(null) }
     val snack = remember { SnackbarHostState() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> if (uris.isNotEmpty()) vm.upload(uris) }
 
@@ -163,14 +164,15 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
         onSearch = vm::search, onUp = { vm.up() }, onNew = { newSheet = true }, onAccount = onAccount, onRefresh = vm::load,
     )
     FilesContent(
-        st, settings.filesGrid, settings.ncUser, actions,
+        st, settings.filesGrid, settings.immichUserName.ifBlank { settings.ncUser.ifBlank { "Me" } }, actions,
         previewUrl = { f -> g.nextcloud.previewUrl(f) },
         snack = snack, bottomPadding = bottomPadding,
     )
 
     sheetFor?.let { f ->
         FileActionsSheet(
-            f, offline = f.path in st.offlinePaths, previewUrl = g.nextcloud.previewUrl(f),
+            f, offline = f.path in st.offlinePaths,
+            previewUrl = if (f.kind() == FileKind.Image || f.kind() == FileKind.Video) g.nextcloud.previewUrl(f) else null,
             onDismiss = { sheetFor = null },
             onShareLink = { vm.shareLink(f) { shareText(ctx, it) } },
             onStar = { vm.star(f) },
@@ -187,7 +189,7 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
             onMove = { movePicker = f to false },
             onCopy = { movePicker = f to true },
             onDetails = { details = f },
-            onDelete = { vm.delete(f) },
+            onDelete = { confirmRemove = f },
         )
     }
     if (newSheet) NewSheet(
@@ -210,6 +212,15 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
             exclude = if (f.isFolder) f.path else null,
             onDismiss = { movePicker = null },
         ) { dest -> movePicker = null; if (copy) vm.copyTo(f, dest) else vm.moveTo(f, dest) }
+    }
+    confirmRemove?.let { f ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text("Remove \"${f.name}\"?") },
+            text = { Text("It moves to the Nextcloud trash bin, where you can restore it from the web.") },
+            confirmButton = { TextButton(onClick = { confirmRemove = null; vm.delete(f) }) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } },
+        )
     }
     details?.let { f ->
         AlertDialog(
