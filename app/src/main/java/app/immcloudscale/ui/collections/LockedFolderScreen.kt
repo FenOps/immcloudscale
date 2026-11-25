@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -26,6 +27,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -44,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -87,6 +91,7 @@ fun LockedFolderScreen(onBack: () -> Unit) {
     var session by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var viewing by remember { mutableStateOf<AssetDto?>(null) }
+    val snack = remember { SnackbarHostState() }
 
     suspend fun open() {
         ui = runCatching {
@@ -119,6 +124,8 @@ fun LockedFolderScreen(onBack: () -> Unit) {
                         val ids = selected.toList()
                         scope.launch {
                             runCatching { g.immich.setVisibility(ids, "timeline", session) }
+                                .onSuccess { snack.showSnackbar("Moved ${ids.size} back to your photos") }
+                                .onFailure { snack.showSnackbar(it.message ?: "Couldn't move them") }
                             selected = emptySet()
                             open()
                         }
@@ -126,15 +133,22 @@ fun LockedFolderScreen(onBack: () -> Unit) {
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snack) },
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (val u = ui) {
                 LockedUi.Loading -> CenteredLoading()
                 is LockedUi.Problem -> EmptyState(Icons.Outlined.Lock, "Locked folder unavailable", u.message)
                 LockedUi.NewPin -> PinEntry(
-                    "Choose a PIN", "6 digits. You'll need it every time you open the locked folder; it can't be recovered from the app.",
+                    "Choose a PIN", "6 digits. You'll need it every time you open the locked folder. If you forget it, ask your server's admin to reset it.",
                     confirm = true,
-                ) { pin -> scope.launch { runCatching { g.immich.setPin(session, pin); g.immich.unlock(session, pin) }.onSuccess { open() } } }
+                ) { pin ->
+                    scope.launch {
+                        runCatching { g.immich.setPin(session, pin); g.immich.unlock(session, pin) }
+                            .onSuccess { open() }
+                            .onFailure { ui = LockedUi.Problem(it.message ?: "Couldn't set the PIN") }
+                    }
+                }
                 is LockedUi.EnterPin -> PinEntry(
                     "Enter your PIN", if (u.wrong) "That PIN isn't right. Try again." else "Your locked photos open with your PIN.",
                     confirm = false,
@@ -189,15 +203,16 @@ private fun PinEntry(title: String, body: String, confirm: Boolean, onPin: (Stri
         Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Icon(Icons.Outlined.Lock, null, tint = MaterialTheme.colorScheme.primary)
+        Icon(Icons.Outlined.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
         Text(title, style = MaterialTheme.typography.headlineSmall)
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         val digits = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+        val mismatch = again.length == 6 && again != pin
         OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(6) }, label = { Text("PIN") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = digits)
+            visualTransformation = PasswordVisualTransformation(), keyboardOptions = digits, modifier = Modifier.fillMaxWidth())
         if (confirm) OutlinedTextField(again, { again = it.filter(Char::isDigit).take(6) }, label = { Text("Same PIN again") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = digits,
-            isError = again.length == 6 && again != pin)
+            visualTransformation = PasswordVisualTransformation(), keyboardOptions = digits, modifier = Modifier.fillMaxWidth(),
+            isError = mismatch, supportingText = { if (mismatch) Text("The PINs don't match") })
         Button(onClick = { onPin(pin) }, enabled = ok) { Text(if (confirm) "Set PIN and open" else "Open") }
     }
 }

@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.collections
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -142,6 +145,13 @@ fun DuplicatesContent(groups: List<DuplicateGroup>?, error: String?, snack: Snac
                 )
                 groups.isEmpty() -> EmptyState(Icons.Outlined.ContentCopy, "No duplicates", "Nothing to clean up. New duplicates show up here after backups.")
                 else -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                    item {
+                        Text(
+                            "The copy marked Best is kept; the others go to Trash, where you can restore them for 30 days.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
                     items(groups, key = { it.duplicateId }) { grp -> DuplicateRow(grp, a) }
                 }
             }
@@ -162,10 +172,11 @@ private fun DuplicateRow(grp: DuplicateGroup, a: DuplicatesActions) {
                         .then(if (keep) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier),
                 ) {
                     RemoteImage(g.immich.thumbnailUrl(asset.id), asset.id, Modifier.fillMaxSize(), contentDescription = if (keep) "Kept copy" else "Duplicate")
-                    if (keep) Icon(
-                        Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                    )
+                    if (keep) Row(Modifier.align(Alignment.TopEnd).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Best", style = MaterialTheme.typography.labelSmall, color = Color.White, modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp))
+                        Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Box(Modifier.fillMaxWidth().height(32.dp).align(Alignment.BottomStart).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x99000000)))))
                     Text(
                         formatBytes(asset.exifInfo?.fileSizeInByte ?: 0), style = MaterialTheme.typography.labelSmall,
                         color = Color.White, modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
@@ -174,7 +185,7 @@ private fun DuplicateRow(grp: DuplicateGroup, a: DuplicatesActions) {
             }
         }
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { a.onKeepBest(grp) }) { Text("Keep best") }
+            Button(onClick = { a.onKeepBest(grp) }) { Text("Keep best, trash ${grp.assets.size - 1}") }
             TextButton(onClick = { a.onNotDuplicates(grp) }) { Text("Not duplicates") }
         }
     }

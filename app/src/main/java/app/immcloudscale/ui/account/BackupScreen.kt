@@ -192,7 +192,7 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
                 }
             }
 
-            SectionHeader("Where to back up")
+            SectionHeader("Back up when I'm on")
             BackupWhereChooser(s, { anywhere -> update { chooseBackupWhere(it, anywhere) } }, onOpenNetwork, Modifier.padding(horizontal = 16.dp))
 
             SectionHeader("Schedule")

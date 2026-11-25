@@ -81,6 +81,7 @@ fun MembersScreen(onBack: () -> Unit) {
     var ui by remember { mutableStateOf(MembersUi()) }
     var shown by remember { mutableStateOf<Pair<String, PairCode>?>(null) }
     var declining by remember { mutableStateOf<JoinRequestInfo?>(null) }
+    var makingAdmin by remember { mutableStateOf<Member?>(null) }
 
     suspend fun load() {
         ui = runCatching {
@@ -95,11 +96,11 @@ fun MembersScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { load() }
 
     MembersContent(
-        ui, me.immichUserName, snack,
+        ui, me.ncUser.ifBlank { me.immichUserName }, snack,
         MembersActions(
             onApprove = { r -> act { shown = r.name to g.members.approve(r.id) } },
             onDecline = { declining = it },
-            onAdmin = { m, on -> act { g.members.setAdmin(m.name, on) } },
+            onAdmin = { m, on -> if (on) makingAdmin = m else act { g.members.setAdmin(m.name, false) } },
             onPairPhone = { m -> act { shown = m.name to g.members.pairCode(m.name) } },
             onMachineLearning = { on -> act { g.members.setMachineLearning(on); snack.showSnackbar(if (on) "Turning on; this takes a few minutes" else "Turning off") } },
             onBack = onBack,
@@ -120,6 +121,15 @@ fun MembersScreen(onBack: () -> Unit) {
                 }
             },
             confirmButton = { TextButton(onClick = { shown = null }) { Text("Done") } },
+        )
+    }
+    makingAdmin?.let { m ->
+        AlertDialog(
+            onDismissRequest = { makingAdmin = null },
+            title = { Text("Make ${m.name} an admin?") },
+            text = { Text("They'll be able to approve sign-ups, manage members and pair phones for anyone, which gives full access to their photos and files.") },
+            confirmButton = { TextButton(onClick = { makingAdmin = null; act { g.members.setAdmin(m.name, true) } }) { Text("Make admin") } },
+            dismissButton = { TextButton(onClick = { makingAdmin = null }) { Text("Cancel") } },
         )
     }
     declining?.let { r ->
@@ -178,10 +188,14 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
                     trailingContent = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { a.onPairPhone(m) }) { Icon(Icons.Outlined.QrCode2, "Pair a phone for ${m.name}") }
-                            Switch(
-                                m.isAdmin, { on -> a.onAdmin(m, on) },
-                                modifier = Modifier.semantics { contentDescription = "${m.name} is an admin" },
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Admin", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                // You can't remove your own admin rights here (another admin can).
+                                Switch(
+                                    m.isAdmin, { on -> a.onAdmin(m, on) }, enabled = m.name != myName,
+                                    modifier = Modifier.semantics { contentDescription = "${m.name} is an admin" },
+                                )
+                            }
                         }
                     },
                 )
@@ -205,13 +219,7 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
                     )
                 }
             }
-            item {
-                Text(
-                    "Admins approve sign-ups and manage members. The switch makes someone an admin.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
+
         }
     }
 }

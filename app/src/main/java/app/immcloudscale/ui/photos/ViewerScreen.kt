@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -110,11 +111,18 @@ fun ViewerScreen(onBack: () -> Unit, onEdit: (AssetDto) -> Unit = {}) {
     LaunchedEffect(slideshow) {
         if (!slideshow) return@LaunchedEffect
         chrome = false
+        launch { snack.showSnackbar("Tap the photo to stop the slideshow") }
         while (slideshow) {
             delay(4_000)
-            if (pager.currentPage >= items.lastIndex) { slideshow = false; chrome = true; break }
-            pager.animateScrollToPage(pager.currentPage + 1)
+            // Starts over after the last photo, like a photo frame.
+            if (pager.currentPage >= items.lastIndex) pager.scrollToPage(0) else pager.animateScrollToPage(pager.currentPage + 1)
         }
+    }
+    // The screen stays on during a slideshow.
+    val view = LocalView.current
+    DisposableEffect(slideshow) {
+        view.keepScreenOn = slideshow
+        onDispose { view.keepScreenOn = false }
     }
 
     fun remove(a: AssetDto, msg: String) {
@@ -215,7 +223,7 @@ fun ViewerScreen(onBack: () -> Unit, onEdit: (AssetDto) -> Unit = {}) {
                 TextButton(onClick = {
                     confirmLock = null
                     run { g.immich.setVisibility(listOf(a.id), "locked"); remove(a, "Moved to Locked folder"); phoneTrash(listOf(a)) }
-                }) { Text("Move") }
+                }) { Text("Move to Locked folder") }
             },
             dismissButton = { TextButton(onClick = { confirmLock = null }) { Text("Cancel") } },
         )

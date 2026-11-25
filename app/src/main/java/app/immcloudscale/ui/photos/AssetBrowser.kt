@@ -159,7 +159,7 @@ fun AssetBrowser(
                 confirmLock = false
                 val chosen = st.assets.filter { it.id in st.selected }
                 vm.lockSelected { phoneTrash(chosen) }
-            }) { Text("Move") }
+            }) { Text("Move to Locked folder") }
         },
         dismissButton = { TextButton(onClick = { confirmLock = false }) { Text("Cancel") } },
     )

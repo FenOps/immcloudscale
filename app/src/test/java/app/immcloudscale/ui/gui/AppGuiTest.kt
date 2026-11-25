@@ -184,7 +184,7 @@ class AppGuiTest {
             shot("15-network-remote-access")
             tab("Photos")
             compose.onNodeWithContentDescription("Backup complete").performClick()
-            compose.onNodeWithText("Where to back up").performScrollTo()
+            compose.onNodeWithText("Back up when I'm on").performScrollTo()
             shot("16-backup-where-and-schedule")
             compose.onNodeWithText("On a schedule").performScrollTo().performClick()
             compose.onNodeWithText("Phone storage").performScrollTo()
@@ -237,11 +237,17 @@ class AppGuiTest {
 
             compose.onAllNodesWithContentDescription("Account and settings").onFirst().performClick()
             shot("25-account-theme-members")
-            compose.onNodeWithText("Theme").performClick()
-            shot("26-theme")
-            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithText("Dark").performClick()
+            shot("26-dark-theme")
             compose.onNodeWithText("Members").performClick()
-            shot("27-members")
+            shot("27-members-dark")
+            pressBack()
+            settle(800)
+            tab("Network")
+            shot("30-network-dark")
+            tab("Collections")
+            compose.onNodeWithText("Duplicates").performClick()
+            shot("31-duplicates-dark")
         }
     }
 

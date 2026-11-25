@@ -1,11 +1,10 @@
 package app.immcloudscale.ui.account
 
 import android.app.TimePickerDialog
+import android.text.format.DateFormat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -28,6 +27,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.immcloudscale.data.AppSettings
 import java.time.DayOfWeek
@@ -84,12 +85,12 @@ fun BackupWhereChooser(
 }
 
 /** Whenever there's something new, or on chosen days at a chosen time. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BackupScheduleSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit) {
     val ctx = LocalContext.current
     val scheduled = s.backupDays.isNotEmpty()
-    val time = LocalTime.of(s.backupTime / 60, s.backupTime % 60).format(DateTimeFormatter.ofPattern("HH:mm"))
+    val h24 = DateFormat.is24HourFormat(ctx)
+    val time = LocalTime.of(s.backupTime / 60, s.backupTime % 60).format(DateTimeFormatter.ofPattern(if (h24) "HH:mm" else "h:mm a"))
     ListItem(
         modifier = Modifier.clickable { update { it.copy(backupDays = emptySet()) } },
         leadingContent = { RadioButton(!scheduled, onClick = { update { it.copy(backupDays = emptySet()) } }) },
@@ -103,7 +104,7 @@ fun BackupScheduleSection(s: AppSettings, update: ((AppSettings) -> AppSettings)
         supportingContent = { Text(if (scheduled) "On the days below at $time" else "Choose days and a time") },
     )
     if (scheduled) {
-        FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             DayOfWeek.entries.forEach { d ->
                 val on = d.value in s.backupDays
                 FilterChip(
@@ -114,14 +115,15 @@ fun BackupScheduleSection(s: AppSettings, update: ((AppSettings) -> AppSettings)
                             it.copy(backupDays = days.ifEmpty { it.backupDays }) // keep at least one day
                         }
                     },
-                    label = { Text(d.getDisplayName(TextStyle.SHORT, Locale.getDefault())) },
+                    label = { Text(d.getDisplayName(TextStyle.NARROW, Locale.getDefault())) },
+                    modifier = Modifier.weight(1f).semantics { contentDescription = d.getDisplayName(TextStyle.FULL, Locale.getDefault()) },
                 )
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Schedule, null)
             TextButton(onClick = {
-                TimePickerDialog(ctx, { _, h, m -> update { it.copy(backupTime = h * 60 + m) } }, s.backupTime / 60, s.backupTime % 60, true).show()
+                TimePickerDialog(ctx, { _, h, m -> update { it.copy(backupTime = h * 60 + m) } }, s.backupTime / 60, s.backupTime % 60, h24).show()
             }) { Text("Time: $time") }
         }
     }

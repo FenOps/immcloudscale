@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.PublicOff
 import androidx.compose.material3.Button
@@ -58,7 +58,7 @@ fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAcce
             if (s.isAdmin) "Your server isn't on Tailscale yet. On the server, run: sudo ics-server tailscale"
             else "Ask the person who set up your server to turn on remote access.",
         )
-        ts.status == TsStatus.NeedsLogin -> Triple(Icons.Outlined.Login, "Sign in to connect", "Sign in to Tailscale once; after that the app connects by itself.")
+        ts.status == TsStatus.NeedsLogin -> Triple(Icons.AutoMirrored.Outlined.Login, "Sign in to connect", "Sign in to Tailscale once; after that the app connects by itself.")
         ts.status == TsStatus.Starting -> Triple(Icons.Outlined.Public, "Connecting…", "Joining your Tailscale network")
         ts.status == TsStatus.Error -> Triple(Icons.Outlined.PublicOff, "Couldn't connect", ts.error ?: "Try again in a moment")
         connected -> Triple(Icons.Outlined.Public, "Connected from outside", "Photos, files and backup work as if you were home")

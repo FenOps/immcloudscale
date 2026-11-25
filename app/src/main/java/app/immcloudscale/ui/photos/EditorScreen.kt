@@ -24,13 +24,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.RotateRight
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Crop
-import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +62,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.graph
@@ -96,7 +100,7 @@ fun EditorScreen(onBack: () -> Unit) {
     var tool by remember { mutableStateOf(Tool.None) }
     var crop by remember { mutableStateOf(Rect(0f, 0f, 1f, 1f)) } // fractions of the image
     val strokes = remember { mutableStateListOf<PenStroke>() }
-    var pen by remember { mutableStateOf(PEN_COLORS.first()) }
+    var pen by remember { mutableStateOf(PEN_COLORS.first().first) }
     var saving by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
     var changed by remember { mutableStateOf(false) }
@@ -124,11 +128,12 @@ fun EditorScreen(onBack: () -> Unit) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { if (changed) confirmLeave = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                 Text("Edit", color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Button(enabled = bitmap != null && changed && !saving, onClick = {
+                Button(modifier = Modifier.padding(start = 4.dp, end = 12.dp), enabled = bitmap != null && changed && !saving, onClick = {
                     saving = true
                     scope.launch {
                         runCatching {
-                            val out = withContext(Dispatchers.Default) { bake().let { b -> if (tool == Tool.Crop) applyCrop(b, crop) else b } }
+                            val baked = bake() // touches Compose state: main thread
+                            val out = withContext(Dispatchers.Default) { if (tool == Tool.Crop) applyCrop(baked, crop) else baked }
                             saveCopy(g, asset, out)
                         }.onSuccess { onBack() }.onFailure { error = it.message ?: "Couldn't save" }
                         saving = false
@@ -200,14 +205,18 @@ fun EditorScreen(onBack: () -> Unit) {
                 }
             }
             if (tool == Tool.Draw) Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center) {
-                PEN_COLORS.forEach { c ->
+                PEN_COLORS.forEach { (c, name) ->
                     Box(
-                        Modifier.padding(6.dp).size(32.dp).background(c, CircleShape)
-                            .border(if (c == pen) 3.dp else 1.dp, if (c == pen) Color.White else Color.Gray, CircleShape)
-                            .clickable { pen = c },
-                    )
+                        Modifier.size(48.dp).selectable(c == pen, role = Role.RadioButton) { pen = c }.semantics { contentDescription = "$name pen" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier.size(32.dp).background(c, CircleShape)
+                                .border(if (c == pen) 3.dp else 1.dp, if (c == pen) Color.White else Color(0xFF8E918F), CircleShape),
+                        )
+                    }
                 }
-                IconButton(onClick = { if (strokes.isNotEmpty()) strokes.removeAt(strokes.lastIndex) }) {
+                IconButton(onClick = { strokes.removeAt(strokes.lastIndex) }, enabled = strokes.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Outlined.Undo, "Undo", tint = Color.White)
                 }
             }
@@ -216,7 +225,7 @@ fun EditorScreen(onBack: () -> Unit) {
                 Button(onClick = { bitmap = applyCrop(bake(), crop); crop = Rect(0f, 0f, 1f, 1f); tool = Tool.None }) { Text("Apply crop") }
             }
             Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                ToolButton(Icons.Outlined.RotateRight, "Rotate", false) {
+                ToolButton(Icons.AutoMirrored.Outlined.RotateRight, "Rotate", false) {
                     bitmap?.let { bitmap = rotate(bake(), 90f); changed = true }
                 }
                 ToolButton(Icons.Outlined.Crop, "Crop", tool == Tool.Crop) { tool = if (tool == Tool.Crop) Tool.None else Tool.Crop }
@@ -233,13 +242,22 @@ fun EditorScreen(onBack: () -> Unit) {
     )
 }
 
-private val PEN_COLORS = listOf(Color(0xFFEA4335), Color(0xFFFBBC04), Color(0xFF34A853), Color(0xFF4285F4), Color.White, Color.Black)
+private val PEN_COLORS = listOf(
+    Color(0xFFEA4335) to "Red", Color(0xFFFBBC04) to "Yellow", Color(0xFF34A853) to "Green",
+    Color(0xFF4285F4) to "Blue", Color.White to "White", Color.Black to "Black",
+)
+
+/** The light theme's blue is too dark on the editor's black background; this one reads well there. */
+private val ACTIVE_TOOL = Color(0xFFA8C7FA)
 
 @Composable
 private fun ToolButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick).padding(8.dp)) {
-        Icon(icon, null, tint = if (active) MaterialTheme.colorScheme.primary else Color.White)
-        Text(label, color = if (active) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelMedium)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.selectable(active, role = Role.Tab, onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Icon(icon, null, tint = if (active) ACTIVE_TOOL else Color.White)
+        Text(label, color = if (active) ACTIVE_TOOL else Color.White, style = MaterialTheme.typography.labelMedium)
     }
 }
 
