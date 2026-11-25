@@ -57,6 +57,7 @@ class AppGraph(val context: Context) {
         override fun proxy() = tailscale.proxy()
         override fun token() = tailscale.proxyToken()
         override fun extraHosts() = listOfNotNull(tailscale.inviteServer)
+        override fun onlyExtraHosts() = tailscale.inviting
     })
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
     val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })

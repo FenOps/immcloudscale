@@ -25,7 +25,7 @@ class InviteJoinTest {
         var running = false
         var startedWithKey = ""
         override fun start(dir: String, hostname: String, authKey: String, controlUrl: String) { running = true; startedWithKey = authKey }
-        override fun stop() { running = false }
+        override fun stop() { running = false; routes.clear() } // like the Go bridge: routes go with the connection
         override fun logout() { running = false }
         override fun setRoute(lanHost: String, tailnetHost: String) { if (tailnetHost.isEmpty()) routes.remove(lanHost) else routes[lanHost] = tailnetHost }
         override fun proxyPort() = if (running) 1080 else 0
@@ -68,5 +68,34 @@ class InviteJoinTest {
         assertEquals(TsStatus.Off, ts.state.value.status)
         assertEquals(paired, app.graph.settings.current())
         assertEquals(null, ts.inviteServer)
+    }
+
+    @Test fun anInviteForThePairedServersAddressIsRefused() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true).apply { routes["192.168.1.50"] = "100.64.0.1"; running = true }
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        val r = runCatching { ts.connectForInvite("http://192.168.1.50:8790", "100.64.0.66", "tskey-x", "https://other.example", onSignIn = {}) }
+        assertTrue(r.isFailure)
+        assertEquals("100.64.0.1", bridge.routes["192.168.1.50"]) // the phone's own route was never replaced
+        ts.inviteDone()
+    }
+
+    @Test fun duringAJoinThePairedServerIsNeverSentThroughTheInvitesTailnet() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true).apply { routes["192.168.1.50"] = "100.64.0.1"; running = true }
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+        assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes) // the phone's own route is gone with its connection
+        assertTrue(!ts.ensureConnected()) // background backup waits
+        val selector = HomeProxySelector({ paired }, object : HomeRoute {
+            override fun proxy() = ts.proxy()
+            override fun token() = "t"
+            override fun extraHosts() = listOfNotNull(ts.inviteServer)
+            override fun onlyExtraHosts() = ts.inviting
+        })
+        assertEquals(listOf(java.net.Proxy.NO_PROXY), selector.select(java.net.URI("http://192.168.1.50:2283/api/assets")))
+        assertTrue(selector.select(java.net.URI("http://10.9.9.9:8790/api/v1/pair"))[0] != java.net.Proxy.NO_PROXY)
+        ts.inviteDone()
+        assertTrue(bridge.routes.isEmpty())
     }
 }

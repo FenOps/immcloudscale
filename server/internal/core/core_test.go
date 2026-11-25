@@ -890,8 +890,11 @@ func TestCancellingWhileSomeoneRedeemsKeepsItCancelled(t *testing.T) {
 		done <- err
 	}()
 	// ...but an admin cancels it while that's happening (wait until the code is taken).
-	for i := 0; i < 2000 && !s.cancelInFlight(p.Code); i++ {
+	for i := 0; i < 2000 && len(s.Invites()) > 0; i++ { // until the pairing has taken the code
 		time.Sleep(time.Millisecond)
+	}
+	if err := s.CancelInvite(p.Code); err == nil || !strings.Contains(err.Error(), "right now") {
+		t.Fatalf("cancel during the pairing: %v", err)
 	}
 	close(f.keyGate)
 	if err := <-done; err == nil {
@@ -899,5 +902,19 @@ func TestCancellingWhileSomeoneRedeemsKeepsItCancelled(t *testing.T) {
 	}
 	if len(s.Invites()) != 0 {
 		t.Fatalf("the cancelled code came back: %+v", s.Invites())
+	}
+}
+
+func TestAnInviteDoesntPairSomeoneWhoBecameAdmin(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _, err := s.Invite(ctx, "tom", "", "camille")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetAdmin("tom", true)
+	_, pub, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub}); err == nil {
+		t.Fatal("an invite paired an admin's phone")
 	}
 }
