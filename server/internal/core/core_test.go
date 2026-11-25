@@ -821,3 +821,37 @@ func TestNobodyCanAskToJoinAsAdmin(t *testing.T) {
 		}
 	}
 }
+
+func TestInviteCreatesThePersonAndIsSingleUse(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	p, err := s.Invite(ctx, "Nina", "", "camille")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Store.Read(); st.FindUser("nina") == nil || p.User != "nina" || p.CreatedBy != "camille" {
+		t.Fatalf("%+v", p)
+	}
+	if !p.Expires.Equal(s.Now().Add(PairingTTL)) && p.Expires.Sub(time.Now()) > PairingTTL {
+		t.Fatalf("expires %v", p.Expires)
+	}
+	_, pub, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "Nina's phone", WGPublicKey: pub}); err != nil {
+		t.Fatal(err)
+	}
+	_, pub2, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "someone else", WGPublicKey: pub2}); err != ErrBadCode {
+		t.Fatalf("used twice: %v", err)
+	}
+	// A second invite for the same person reuses the account; cancelling it makes it unusable.
+	p2, err := s.Invite(ctx, "nina", "", "camille")
+	if err != nil || len(s.Invites()) != 1 {
+		t.Fatalf("%v %d", err, len(s.Invites()))
+	}
+	if err := s.CancelInvite(p2.Code); err != nil || len(s.Invites()) != 0 {
+		t.Fatalf("%v", err)
+	}
+	if err := s.CancelInvite(p2.Code); err == nil {
+		t.Fatal("cancelled twice")
+	}
+}

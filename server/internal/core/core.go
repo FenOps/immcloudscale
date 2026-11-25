@@ -467,7 +467,10 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 
 const PairingTTL = 15 * time.Minute
 
-func (s *Server) StartPairing(user string) (state.Pairing, error) {
+func (s *Server) StartPairing(user string) (state.Pairing, error) { return s.StartPairingBy(user, "") }
+
+// StartPairingBy is StartPairing remembering which admin asked (shown in their list of invites).
+func (s *Server) StartPairingBy(user, by string) (state.Pairing, error) {
 	var p state.Pairing
 	err := s.Store.Update(func(st *state.State) error {
 		if st.FindUser(user) == nil {
@@ -480,7 +483,7 @@ func (s *Server) StartPairing(user string) (state.Pairing, error) {
 				keep = append(keep, x)
 			}
 		}
-		p = state.Pairing{Code: state.PairCode(), User: user, Expires: now.Add(PairingTTL)}
+		p = state.Pairing{Code: state.PairCode(), User: user, Expires: now.Add(PairingTTL), CreatedBy: by}
 		st.Pairings = append(keep, p)
 		return nil
 	})

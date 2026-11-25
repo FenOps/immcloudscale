@@ -91,7 +91,7 @@ func main() {
 			server := fmt.Sprintf("http://%s:%d", c.LANAddress, c.AdminPort)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetEscapeHTML(false) // keep "&" in the link readable for shell scripts
-			check(enc.Encode(map[string]any{"server": server, "code": p.Code, "link": web.PairLink(server, p.Code), "expires": p.Expires}))
+			check(enc.Encode(map[string]any{"server": server, "code": p.Code, "link": web.PairLink(server, p.Code, p.Expires, s.TailscaleJoin()), "expires": p.Expires}))
 			return
 		}
 		printPairing(s, args[1])
@@ -425,7 +425,7 @@ func printPairing(s *core.Server, user string) {
 	check(err)
 	c := s.Store.Read().Config
 	server := fmt.Sprintf("http://%s:%d", c.LANAddress, c.AdminPort)
-	link := web.PairLink(server, p.Code)
+	link := web.PairLink(server, p.Code, p.Expires, s.TailscaleJoin())
 	q, err := qrcode.New(link, qrcode.Low)
 	check(err)
 	fmt.Printf("\nPair %s's phone: scan this with the phone's camera, or open ImmCloudScale → Scan QR code.\n", user)

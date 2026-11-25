@@ -57,6 +57,8 @@ type Pairing struct {
 	Code    string    `json:"code"`
 	User    string    `json:"user"`
 	Expires time.Time `json:"expires"`
+	// CreatedBy is the admin who made it (an invite from the app), empty for the console and the CLI.
+	CreatedBy string `json:"createdBy,omitempty"`
 }
 
 type Config struct {

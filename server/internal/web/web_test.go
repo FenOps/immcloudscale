@@ -70,8 +70,13 @@ func TestAdminNeedsPassword(t *testing.T) {
 	if w.Code != 201 || !strings.Contains(w.Body.String(), "immcloudscale://pair?") {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if w := do(h, "GET", "/api/admin/qr?code=ABCD-EFGH", "", true); w.Code != 200 || w.Header().Get("Content-Type") != "image/png" {
+	var p struct{ Code string }
+	json.Unmarshal(w.Body.Bytes(), &p)
+	if w := do(h, "GET", "/api/admin/qr?code="+p.Code, "", true); w.Code != 200 || w.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("qr: %d", w.Code)
+	}
+	if w := do(h, "GET", "/api/admin/qr?code=ABCD-EFGH", "", true); w.Code != 404 {
+		t.Fatalf("a QR for a code that doesn't exist: %d", w.Code)
 	}
 }
 
@@ -91,11 +96,62 @@ func TestPublicEndpointsAndCodeRateLimit(t *testing.T) {
 }
 
 func TestPairLink(t *testing.T) {
-	u, _ := url.Parse(PairLink("http://192.168.1.50:8790", "ABCD-EFGH"))
+	u, _ := url.Parse(PairLink("http://192.168.1.50:8790", "ABCD-EFGH", time.Time{}, nil))
 	if u.Scheme != "immcloudscale" || u.Host != "pair" || u.Query().Get("code") != "ABCD-EFGH" || u.Query().Get("server") != "http://192.168.1.50:8790" {
 		t.Fatal(u)
 	}
-	_ = time.Second
+	if u.Query().Has("exp") || u.Query().Has("ts") {
+		t.Fatal("nothing extra without an expiry or Tailscale", u)
+	}
+	exp := time.Unix(1795620000, 0)
+	u, _ = url.Parse(PairLink("http://192.168.1.50:8790", "ABCD-EFGH", exp, &core.TailscaleInfo{IP: "100.101.102.103", AuthKey: "tskey-auth-x"}))
+	q := u.Query()
+	if q.Get("exp") != "1795620000" || q.Get("ts") != "100.101.102.103" || q.Get("tskey") != "tskey-auth-x" || q.Has("control") {
+		t.Fatal(u)
+	}
+}
+
+func TestInvitesFromAnAdminPhone(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.TailscaleIP = func() string { return "100.101.102.103" }
+	s.Store.Update(func(st *state.State) error {
+		st.Users = []state.User{{Name: "camille", IsAdmin: true}, {Name: "tom"}}
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("a")}, {ID: "dev_t", User: "tom", TokenHash: hashForTest("t")}}
+		return nil
+	})
+	call := func(method, path, body, secret string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		r.Header.Set("Authorization", "Device "+secret)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	// An existing person: no account to create, just a code (new people go through AddUser, covered in core).
+	if w := call("POST", "/api/v1/manage/invites", `{"name":"tom"}`, "dev_t:t"); w.Code != 403 {
+		t.Fatalf("non-admin: %d", w.Code)
+	}
+	w := call("POST", "/api/v1/manage/invites", `{"name":"tom"}`, "dev_a:a")
+	if w.Code != 201 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var inv struct{ Code, Link string }
+	json.Unmarshal(w.Body.Bytes(), &inv)
+	if !strings.Contains(inv.Link, "ts=100.101.102.103") || !strings.Contains(inv.Link, "exp=") {
+		t.Fatal(inv.Link)
+	}
+	list := call("GET", "/api/v1/manage/invites", "", "dev_a:a").Body.String()
+	if !strings.Contains(list, inv.Code) || !strings.Contains(list, `"createdBy":"camille"`) {
+		t.Fatal(list)
+	}
+	if w := call("DELETE", "/api/v1/manage/invites/"+inv.Code, "", "dev_a:a"); w.Code != 204 {
+		t.Fatalf("cancel: %d", w.Code)
+	}
+	if w := do(h, "POST", "/api/v1/pair", `{"code":"`+inv.Code+`"}`, false); w.Code != 403 {
+		t.Fatalf("a cancelled invite still works: %d %s", w.Code, w.Body)
+	}
 }
 
 func TestCrossSiteRequestsAreRefused(t *testing.T) {
