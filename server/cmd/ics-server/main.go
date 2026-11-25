@@ -3,10 +3,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,7 +37,7 @@ Usage: ics-server <command> [options]
   pair <person>         show a pairing code and QR for a new phone  [--json]
   user add <name>       add a person (Immich + Nextcloud accounts)   [--email]
   user list             list people and their web sign-in passwords
-  user remove <name>    remove a person and their phones
+  user remove <name>    delete a person's accounts, photos and files [--yes]
   devices               list paired phones
   revoke <device-id>    disconnect a phone (VPN, photo and file access)
   config                change settings                             [--endpoint --lan-ip]
@@ -56,6 +59,9 @@ func main() {
 		return
 	}
 	st, err := state.Open(statePath)
+	if errors.Is(err, os.ErrPermission) {
+		fail("permission denied: run it with sudo, e.g. sudo ics-server %s", strings.Join(args, " "))
+	}
 	check(err)
 	s := core.New(st)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -103,7 +109,15 @@ func main() {
 			}
 			w.Flush()
 		case "remove":
-			need(args, 3, "ics-server user remove <name>")
+			need(args, 3, "ics-server user remove <name> [--yes]")
+			if !(len(args) > 3 && args[3] == "--yes") {
+				fmt.Printf("This deletes %s's Immich and Nextcloud accounts, including all their photos and files, and disconnects their phones.\nType the name again to confirm: ", args[2])
+				var again string
+				_, _ = fmt.Scanln(&again)
+				if again != args[2] {
+					fail("not confirmed; nothing was removed")
+				}
+			}
 			check(s.RemoveUser(ctx, args[2]))
 			fmt.Println("Removed", args[2])
 		default:
@@ -125,16 +139,25 @@ func main() {
 		endpoint := fs.String("endpoint", "", "public host name or IP phones use to reach the VPN")
 		lan := fs.String("lan-ip", "", "the NAS's LAN address used in service URLs")
 		check(fs.Parse(args[1:]))
+		if *endpoint == "" && *lan == "" {
+			fail("nothing to change: use --endpoint <public name or IP> and/or --lan-ip <address>")
+		}
+		if *endpoint != "" && !validHost(*endpoint) {
+			fail("%q isn't a host name or IP address (e.g. myhome.duckdns.org or 203.0.113.7)", *endpoint)
+		}
+		if *lan != "" && net.ParseIP(*lan) == nil {
+			fail("%q isn't an IP address (e.g. 192.168.1.50)", *lan)
+		}
 		check(st.Update(func(x *state.State) error {
 			if *endpoint != "" {
 				x.Config.Endpoint = *endpoint
 			}
 			if *lan != "" {
-				x.Config.LANAddress = *lan
+				x.Config.LANAddress, x.Config.LANManual = *lan, true
 			}
 			return nil
 		}))
-		fmt.Println("Saved. Phones pick up a new endpoint when they are paired again.")
+		fmt.Println("Saved. Now run `sudo ics-server setup` to apply it, then pair phones again (admin console → Pair a phone).")
 	case "admin-password":
 		fmt.Println(st.Read().Config.AdminPassword)
 	case "update":
@@ -157,7 +180,8 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	fs.StringVar(&o.FirstEmail, "email", "", "the owner's email (optional)")
 	noML := fs.Bool("no-ml", false, "skip Immich machine learning (smart search, faces); automatic below 6 GB RAM")
 	forceML := fs.Bool("ml", false, "turn on machine learning even below 6 GB RAM")
-	fs.BoolVar(&o.SkipVPN, "no-vpn", false, "don't set up WireGuard")
+	noVPN := fs.Bool("no-vpn", false, "don't set up WireGuard")
+	withVPN := fs.Bool("vpn", false, "turn the VPN back on after --no-vpn")
 	noPublic := fs.Bool("no-public-ip-lookup", false, "don't ask api.ipify.org for the public IP")
 	allowSleep := fs.Bool("allow-sleep", false, "don't stop this machine from suspending (it must stay on to serve phones)")
 	check(fs.Parse(args))
@@ -175,9 +199,21 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 		}
 	}
 	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
-		fail("Docker Compose v2 is missing: sudo apt install docker-compose-v2")
+		fail("Docker Compose v2 is missing. Run the installer again (it adds it), or see https://docs.docker.com/compose/install/linux/")
 	}
-	if !o.SkipVPN {
+	// Flags left out keep what was chosen before (a re-run doesn't flip settings).
+	stored := s.Store.Read().Config
+	firstRun := stored.DBPassword == ""
+	vpnOn := firstRun || stored.VPNEnabled
+	switch {
+	case *noVPN:
+		vpnOn = false
+		o.VPN = &vpnOn
+	case *withVPN:
+		vpnOn = true
+		o.VPN = &vpnOn
+	}
+	if vpnOn {
 		if _, err := exec.LookPath("wg-quick"); err != nil {
 			fail("wireguard-tools is not installed: sudo apt install wireguard-tools")
 		}
@@ -185,16 +221,15 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 
 	// Smart search and face recognition need memory; small machines run better without them.
 	ramGB := netinfo.MemTotalGB()
+	on, off := true, false
 	switch {
 	case *noML:
-		o.MachineLearning = false
+		o.MachineLearning = &off
 	case *forceML:
-		o.MachineLearning = true
-	case ramGB > 0 && ramGB < 6:
-		o.MachineLearning = false
-		fmt.Printf("ℹ️  This machine has %.1f GB of RAM, so smart search and face recognition are turned off (use --ml to force them on).\n", ramGB)
-	default:
-		o.MachineLearning = true
+		o.MachineLearning = &on
+	case firstRun && ramGB > 0 && ramGB < 6:
+		o.MachineLearning = &off
+		fmt.Printf("Note: this machine has %.1f GB of RAM, so smart search and face recognition are turned off (use --ml to force them on).\n", ramGB)
 	}
 
 	dataDir := o.DataDir
@@ -205,26 +240,21 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 		dataDir = "/srv/immcloudscale"
 	}
 	if free := netinfo.FreeGB(dataDir); free > 0 && free < 20 {
-		fmt.Printf("⚠️  Only %.0f GB free where photos and files will be stored (%s). The apps need about 10 GB, plus room for your photos.\n   Choose a bigger disk with --data-dir /path/on/big/disk if you have one.\n", free, dataDir)
+		fmt.Printf("Warning: only %.0f GB free where photos and files will be stored (%s). The apps need about 10 GB, plus room for your photos.\n   Choose a bigger disk with --data-dir /path/on/big/disk if you have one.\n", free, dataDir)
 	}
 
 	if lan, err := netinfo.DetectLAN(); err == nil {
-		if o.LANAddress == "" {
-			o.LANAddress = lan.Address
-		}
+		o.DetectedLAN = lan.Address
 		o.LANSubnet, o.EgressIface = lan.Subnet, lan.Iface
 	}
-	if o.Endpoint == "" && s.Store.Read().Config.Endpoint == "" && !*noPublic && !o.SkipVPN {
+	if o.Endpoint == "" && stored.Endpoint == "" && !*noPublic && vpnOn {
 		o.Endpoint = netinfo.PublicIP(ctx)
 	}
 	if o.FirstUser == "" && len(s.Store.Read().Users) == 0 {
-		for !validName(o.FirstUser) {
-			fmt.Print("\nChoose your user name (lowercase letters, e.g. alex): ")
-			if _, err := fmt.Scanln(&o.FirstUser); err != nil && o.FirstUser == "" {
-				fail("no user name given: run again with --user yourname")
-			}
-			o.FirstUser = strings.ToLower(strings.TrimSpace(o.FirstUser))
-		}
+		o.FirstUser = askUserName()
+	}
+	if o.FirstUser != "" && !validName(o.FirstUser) {
+		fail("%q isn't a valid user name: use 2-32 lowercase letters, digits, '.', '_' or '-', starting with a letter (e.g. alex)", o.FirstUser)
 	}
 
 	check(s.Setup(ctx, o))
@@ -235,13 +265,13 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	startPairingService(s)
 
 	c := s.Store.Read().Config
-	fmt.Printf("\n✅ ImmCloudScale is running.\n\n")
+	fmt.Printf("\nImmCloudScale is running.\n\n")
 	fmt.Printf("  Admin console:  http://%s:%d   (user: admin, password: %s)\n", c.LANAddress, c.AdminPort, c.AdminPassword)
 	fmt.Printf("  Photos (web):   http://%s:%d\n", c.LANAddress, c.ImmichPort)
 	fmt.Printf("  Files (web):    http://%s:%d\n", c.LANAddress, c.NextcloudPort)
-	if !o.SkipVPN {
+	if c.VPNEnabled {
 		if c.Endpoint == "" || c.Endpoint == c.LANAddress {
-			fmt.Printf("  VPN:            ⚠️  no public address found, so the VPN only works at home for now.\n")
+			fmt.Printf("  VPN:            no public address found, so the VPN only works at home for now.\n")
 			fmt.Printf("                  Fix it later with: sudo ics-server config --endpoint <your public IP or DuckDNS name>\n")
 		} else {
 			fmt.Printf("  VPN:            to use the apps away from home, forward UDP %d on your router to %s\n", c.WGPort, c.LANAddress)
@@ -257,6 +287,25 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 		}
 	}
 	fmt.Println("  Write these passwords down. Show them again any time with: sudo ics-server admin-password / sudo ics-server user list")
+}
+
+// askUserName reads a user name from the terminal, a few times at most; it never loops on end-of-input.
+func askUserName() string {
+	in := bufio.NewReader(os.Stdin)
+	for try := 0; try < 3; try++ {
+		fmt.Print("\nChoose your user name (lowercase letters, e.g. alex): ")
+		line, err := in.ReadString('\n')
+		name := strings.TrimSpace(line)
+		if validName(name) {
+			return name
+		}
+		if err != nil { // end of input: nobody to ask
+			break
+		}
+		fmt.Println("  Use 2-32 lowercase letters or digits (also . _ -), starting with a letter, and no spaces.")
+	}
+	fail("no valid user name given: run setup again with --user yourname")
+	return ""
 }
 
 func validName(n string) bool {
@@ -317,11 +366,11 @@ func printPairing(s *core.Server, user string) {
 	link := web.PairLink(server, p.Code)
 	q, err := qrcode.New(link, qrcode.Low)
 	check(err)
-	fmt.Printf("\nPair %s's phone: scan this with the camera, or open ImmCloudScale → Pair with server.\n", user)
+	fmt.Printf("\nPair %s's phone: scan this with the phone's camera, or open ImmCloudScale → Scan QR code.\n", user)
 	fmt.Print(q.ToSmallString(false))
 	fmt.Printf("  Server: %s\n  Code:   %s   (valid 15 minutes, one phone)\n\n", server, p.Code)
 	if !serving(c.AdminPort) {
-		fmt.Println("  ⚠️  The pairing service isn't answering, so the phone can't pair yet. Start it with: sudo systemctl restart ics-server")
+		fmt.Println("  Warning: the pairing service isn't answering, so the phone can't pair yet. Start it with: sudo systemctl restart ics-server")
 	}
 }
 
@@ -409,6 +458,27 @@ func openFirewall(s *core.Server) {
 		_ = exec.Command("ufw", r...).Run()
 	}
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
+}
+
+// validHost accepts a DNS name or an IP address (no port, no spaces).
+func validHost(h string) bool {
+	if net.ParseIP(strings.Trim(h, "[]")) != nil {
+		return true
+	}
+	if len(h) == 0 || len(h) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func envOr(k, def string) string {

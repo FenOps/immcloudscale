@@ -194,7 +194,10 @@ type Runner interface {
 	Up(dir string) error
 	Pull(dir string) error
 	Services(dir string) ([]Service, error)
-	Exec(dir, service string, args ...string) (string, error)
+	// HaveImages reports whether every image the bundle needs is already on this machine.
+	HaveImages(dir string) bool
+	// Exec runs a command in a service container as user ("" = the image's default user).
+	Exec(dir, user, service string, args ...string) (string, error)
 }
 
 type Service struct {
@@ -235,8 +238,25 @@ func (d Docker) Pull(dir string) error {
 	return nil
 }
 
-func (d Docker) Exec(dir, service string, args ...string) (string, error) {
-	return d.run(dir, append([]string{"exec", "-T", service}, args...)...)
+func (d Docker) HaveImages(dir string) bool {
+	out, err := d.compose(dir, "config", "--images").Output()
+	if err != nil {
+		return false
+	}
+	for _, img := range strings.Fields(string(out)) {
+		if exec.Command("docker", "image", "inspect", img).Run() != nil {
+			return false
+		}
+	}
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+func (d Docker) Exec(dir, user, service string, args ...string) (string, error) {
+	a := []string{"exec", "-T"}
+	if user != "" {
+		a = append(a, "--user", user)
+	}
+	return d.run(dir, append(append(a, service), args...)...)
 }
 
 func (d Docker) Services(dir string) ([]Service, error) {

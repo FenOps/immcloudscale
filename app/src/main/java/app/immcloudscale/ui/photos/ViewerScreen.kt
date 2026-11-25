@@ -276,6 +276,7 @@ fun ZoomableImage(url: String?, key: String, onTap: () -> Unit) {
             url, key,
             Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
             contentScale = ContentScale.Fit,
+            background = Color.Black,
         )
     }
 }

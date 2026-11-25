@@ -51,9 +51,12 @@ android {
             signingConfigs.findByName("stable")?.let { signingConfig = it }
         }
         release {
-            (signingConfigs.findByName("release") ?: signingConfigs.findByName("stable"))?.let { signingConfig = it }
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Not debuggable (adb can't read its private data). Signed with keystore.properties, else the CI key,
+            // else the local debug key so the APK still installs.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.findByName("stable") ?: signingConfigs.getByName("debug")
+            // Code shrinking stays off until release builds are tested on devices (R8 can break reflection-based code).
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -72,6 +75,9 @@ android {
             // Optional live check against a running ics-server: ICS_E2E_SERVER=http://host:8790 ICS_E2E_CODE=XXXX-XXXX
             System.getenv("ICS_E2E_SERVER")?.let { v -> it.environment("ICS_E2E_SERVER", v) }
             System.getenv("ICS_E2E_CODE")?.let { v -> it.environment("ICS_E2E_CODE", v) }
+            // Screenshots of the real app: ./gradlew :app:testDebugUnitTest --tests '*AppGuiTest*' -Pgui
+            if (project.hasProperty("gui")) it.systemProperty("gui.out", layout.buildDirectory.dir("gui").get().asFile.path)
+            else it.exclude("**/AppGuiTest*")
         }
     }
 }
@@ -113,10 +119,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-    testImplementation("org.robolectric:robolectric:4.14.1") {
-        // Not needed with LEGACY graphics/SQLite modes; keeps the test classpath small.
-        exclude(group = "org.robolectric", module = "nativeruntime-dist-compat")
-    }
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.39.0")
     testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("androidx.test:core:1.6.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

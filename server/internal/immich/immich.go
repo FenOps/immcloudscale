@@ -102,8 +102,15 @@ func (c *Client) CreateUser(ctx context.Context, adminToken, email, password, na
 	return u, err
 }
 
+// SetPassword lets the service admin reset a user's password (used to recover access when someone
+// changed theirs in the web UI and the server can no longer manage their phones' keys).
+func (c *Client) SetPassword(ctx context.Context, adminToken, id, password string) error {
+	return c.do(ctx, http.MethodPut, "/admin/users/"+id, adminToken, map[string]any{"password": password, "shouldChangePassword": false}, nil)
+}
+
 func (c *Client) DeleteUser(ctx context.Context, adminToken, id string) error {
-	return c.do(ctx, http.MethodDelete, "/admin/users/"+id, adminToken, map[string]any{"force": false}, nil)
+	// force: delete now (with their photos), not a soft delete that keeps the email taken for weeks.
+	return c.do(ctx, http.MethodDelete, "/admin/users/"+id, adminToken, map[string]any{"force": true}, nil)
 }
 
 type APIKey struct {

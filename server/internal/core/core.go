@@ -11,8 +11,11 @@ import (
 	"net/mail"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 
 	"github.com/FenOps/immcloudscale/server/internal/immich"
 	"github.com/FenOps/immcloudscale/server/internal/nextcloud"
@@ -37,6 +40,26 @@ type Server struct {
 	WaitTimeout  time.Duration
 	// PortFree checks ports on first setup; nil means "assume free" (tests).
 	PortFree func(port int, udp bool) bool
+
+	tokMu    sync.Mutex
+	tok      string
+	tokUntil time.Time
+}
+
+// adminToken logs in as the hidden Immich service admin, reusing the session for a while
+// (every login is a password check and a new session on the Immich server).
+func (s *Server) adminToken(ctx context.Context, c state.Config) (string, error) {
+	s.tokMu.Lock()
+	defer s.tokMu.Unlock()
+	if s.tok != "" && s.Now().Before(s.tokUntil) {
+		return s.tok, nil
+	}
+	t, err := s.immich(c).Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass)
+	if err != nil {
+		return "", err
+	}
+	s.tok, s.tokUntil = t, s.Now().Add(30*time.Minute)
+	return t, nil
 }
 
 func New(st *state.Store) *Server {
@@ -59,18 +82,21 @@ func (s *Server) nextcloud(c state.Config) *nextcloud.Client { return nextcloud.
 // ---- setup ----
 
 type SetupOptions struct {
-	DataDir         string
-	StackDir        string
-	LANAddress      string
-	LANSubnet       string
-	EgressIface     string
-	Endpoint        string
-	WGPort          int
-	WGSubnet        string
-	MachineLearning bool
+	DataDir     string
+	StackDir    string
+	LANAddress  string // given with --lan-ip
+	LANManual   bool   // true when LANAddress was given by hand
+	DetectedLAN string // used when no address was given by hand
+	LANSubnet   string
+	EgressIface string
+	Endpoint    string
+	WGPort      int
+	WGSubnet    string
+	// MachineLearning and VPN: nil keeps the stored choice (on first setup: on).
+	MachineLearning *bool
+	VPN             *bool
 	FirstUser       string
 	FirstEmail      string
-	SkipVPN         bool
 }
 
 // Setup installs or repairs the whole stack. It is safe to run again: existing secrets are kept.
@@ -86,7 +112,12 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		}
 		set(&c.DataDir, o.DataDir, "/srv/immcloudscale")
 		set(&c.StackDir, o.StackDir, "/opt/immcloudscale")
-		set(&c.LANAddress, o.LANAddress, "")
+		switch {
+		case o.LANAddress != "": // given by hand: keep it on later runs
+			c.LANAddress, c.LANManual = o.LANAddress, true
+		case !c.LANManual && o.DetectedLAN != "": // follow the machine's current address (e.g. DHCP changed it)
+			c.LANAddress = o.DetectedLAN
+		}
 		set(&c.LANSubnet, o.LANSubnet, "")
 		set(&c.EgressIface, o.EgressIface, "")
 		set(&c.Endpoint, o.Endpoint, c.LANAddress)
@@ -109,14 +140,24 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		pick(&c.ImmichPort, 2283, false)
 		pick(&c.NextcloudPort, 8080, false)
 		pick(&c.AdminPort, 8790, false)
-		c.MachineLearning = o.MachineLearning
-		c.VPNEnabled = !o.SkipVPN
+		firstRun := c.DBPassword == ""
+		if o.MachineLearning != nil {
+			c.MachineLearning = *o.MachineLearning
+		} else if firstRun {
+			c.MachineLearning = true
+		}
+		if o.VPN != nil {
+			c.VPNEnabled = *o.VPN
+		} else if firstRun {
+			c.VPNEnabled = true
+		}
 		set(&c.DBPassword, "", state.Secret(32))
 		set(&c.NCDBPassword, "", state.Secret(32))
 		set(&c.NCAdminPassword, "", state.Secret(24))
 		set(&c.ImmichAdminEmail, "", "ics-admin@immcloudscale.local")
 		set(&c.ImmichAdminPass, "", state.Secret(24))
 		set(&c.AdminPassword, "", state.Secret(16))
+		set(&c.ServerID, "", "ics_"+state.Secret(24))
 		if c.WGPrivateKey == "" {
 			priv, pub, err := wg.NewKeyPair()
 			if err != nil {
@@ -147,7 +188,11 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 	}
 	s.Log.Printf("Downloading Immich, Nextcloud, PostgreSQL and Valkey (about 5 GB the first time; this can take a while)…")
 	if err := s.Docker.Pull(c.StackDir); err != nil {
-		return fmt.Errorf("downloading the apps failed (check the internet connection, then run setup again): %w", err)
+		if !s.Docker.HaveImages(c.StackDir) {
+			return fmt.Errorf("downloading the apps failed. Check the internet connection and run setup again in a few minutes "+
+				"(Docker Hub limits downloads per hour): %w", err)
+		}
+		s.Log.Printf("Couldn't check for newer images (%v); using the ones already on this machine", err)
 	}
 	s.Log.Printf("Starting the apps…")
 	if err := s.Docker.Up(c.StackDir); err != nil {
@@ -166,7 +211,17 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		}
 	}
 
-	if !o.SkipVPN {
+	// Nextcloud only reads its trusted addresses at first install; re-apply them so a changed LAN address
+	// or endpoint works after re-running setup.
+	for i, d := range params.TrustedDomains {
+		if _, err := s.Docker.Exec(c.StackDir, "www-data", "nextcloud",
+			"php", "occ", "config:system:set", "trusted_domains", strconv.Itoa(i), "--value="+d); err != nil {
+			s.Log.Printf("updating Nextcloud trusted addresses: %v", err)
+			break
+		}
+	}
+
+	if s.Store.Read().Config.VPNEnabled {
 		if err := s.applyWG(); err != nil {
 			return fmt.Errorf("starting the VPN: %w", err)
 		}
@@ -274,19 +329,30 @@ func (s *Server) AddUser(ctx context.Context, name, email string, admin bool) (s
 	if email == "" {
 		email = name + "@immcloudscale.local"
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		return state.User{}, fmt.Errorf("invalid email %q", email)
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Name != "" {
+		return state.User{}, fmt.Errorf("invalid email %q (write just the address, e.g. alex@example.com)", email)
+	}
+	email = strings.ToLower(addr.Address)
+	for _, x := range st.Users {
+		if strings.EqualFold(x.Email, email) {
+			return state.User{}, fmt.Errorf("the email %s is already used by %s", email, x.Name)
+		}
 	}
 	c := st.Config
 	u := state.User{Name: name, Email: email, Password: state.Secret(16), IsAdmin: admin, Created: s.Now()}
 
 	im := s.immich(c)
-	tok, err := im.Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass)
+	tok, err := s.adminToken(ctx, c)
 	if err != nil {
 		return u, fmt.Errorf("immich admin login: %w", err)
 	}
 	iu, err := im.CreateUser(ctx, tok, email, u.Password, name)
 	if err != nil {
+		var ae *immich.APIError
+		if errors.As(err, &ae) && (ae.Status == 400 || ae.Status == 409 || ae.Status == 500) && strings.Contains(strings.ToLower(ae.Message), "exist") {
+			return u, fmt.Errorf("Immich already has an account with the email %s; choose another email with --email", email)
+		}
 		return u, fmt.Errorf("creating Immich user: %w", err)
 	}
 	u.ImmichID = iu.ID
@@ -304,33 +370,66 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 	if u == nil {
 		return fmt.Errorf("no user %q", name)
 	}
+	c := st.Config
+	// Deleting the accounts below also ends every phone's access; revoking first is belt and braces.
 	for _, d := range st.Devices {
 		if d.User == name {
-			if err := s.Revoke(ctx, d.ID); err != nil {
-				s.Log.Printf("revoking %s: %v", d.ID, err)
+			if err := s.revokeCredentials(ctx, c, u, d); err != nil {
+				s.Log.Printf("revoking %s before removing %s: %v", d.ID, name, err)
 			}
 		}
 	}
-	c := st.Config
-	im := s.immich(c)
-	if tok, err := im.Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass); err == nil && u.ImmichID != "" {
-		if err := im.DeleteUser(ctx, tok, u.ImmichID); err != nil {
-			s.Log.Printf("deleting Immich user: %v", err)
+	var errs []string
+	if u.ImmichID != "" {
+		tok, err := s.adminToken(ctx, c)
+		if err == nil {
+			err = s.immich(c).DeleteUser(ctx, tok, u.ImmichID)
+		}
+		var ae *immich.APIError
+		if err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
+			errs = append(errs, "Immich: "+err.Error())
 		}
 	}
 	if err := s.nextcloud(c).DeleteUser(ctx, ncAdmin, c.NCAdminPassword, name); err != nil {
-		s.Log.Printf("deleting Nextcloud user: %v", err)
+		var oe *nextcloud.OCSError
+		if !(errors.As(err, &oe) && (oe.Code == 101 || oe.Code == 404 || oe.Code == 998)) { // already gone
+			errs = append(errs, "Nextcloud: "+err.Error())
+		}
 	}
-	return s.Store.Update(func(st *state.State) error {
-		out := st.Users[:0]
+	if len(errs) > 0 {
+		return fmt.Errorf("couldn't remove %s's accounts (nothing was changed here; try again): %s", name, strings.Join(errs, "; "))
+	}
+	hadVPN := false
+	err := s.Store.Update(func(st *state.State) error {
+		users := st.Users[:0]
 		for _, x := range st.Users {
 			if x.Name != name {
-				out = append(out, x)
+				users = append(users, x)
 			}
 		}
-		st.Users = out
+		st.Users = users
+		devs := st.Devices[:0]
+		for _, d := range st.Devices {
+			if d.User != name {
+				devs = append(devs, d)
+			} else if d.PublicKey != "" {
+				hadVPN = true
+			}
+		}
+		st.Devices = devs
+		pend := st.Pairings[:0]
+		for _, p := range st.Pairings {
+			if p.User != name {
+				pend = append(pend, p)
+			}
+		}
+		st.Pairings = pend
 		return nil
 	})
+	if err == nil && hadVPN {
+		err = s.applyWG()
+	}
+	return err
 }
 
 // ---- pairing ----
@@ -361,13 +460,20 @@ type PairRequest struct {
 	Code        string `json:"code"`
 	DeviceName  string `json:"deviceName"`
 	WGPublicKey string `json:"wgPublicKey"`
+	// ReplacesDevice is the phone's previous device ID, if it was paired before; that entry is revoked.
+	ReplacesDevice string `json:"replacesDevice,omitempty"`
 }
+
+// ErrUserGone: the code belonged to a person who has since been removed.
+var ErrUserGone = errors.New("the person this code was made for has been removed")
 
 type PairResult struct {
 	DeviceID string `json:"deviceId"`
 	Server   struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
+		// ID identifies this server; the phone checks it before sending credentials on Wi-Fi without the VPN.
+		ID string `json:"id"`
 	} `json:"server"`
 	User struct {
 		Name  string `json:"name"`
@@ -393,6 +499,25 @@ type PairResult struct {
 
 var ErrBadCode = errors.New("that pairing code is wrong or has expired")
 
+// SanitizeDeviceName makes a phone-supplied name safe to store and to write into config files:
+// printable characters only (no newlines, which could inject WireGuard config), at most 60 characters.
+func SanitizeDeviceName(n string) string {
+	n = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '#' || r == '[' || r == ']' || r == '=' || r == '\\' {
+			return ' '
+		}
+		return r
+	}, n)
+	n = strings.Join(strings.Fields(n), " ")
+	if r := []rune(n); len(r) > 60 {
+		n = strings.TrimSpace(string(r[:60]))
+	}
+	if n == "" {
+		n = "Android phone"
+	}
+	return n
+}
+
 func normCode(c string) string {
 	c = strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(c))
 	if len(c) == 8 {
@@ -406,6 +531,11 @@ func normCode(c string) string {
 func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) {
 	var res PairResult
 	code := normCode(req.Code)
+	// Check the request before using up the code, so a bad request doesn't burn it.
+	if req.WGPublicKey != "" && !wg.ValidKey(req.WGPublicKey) {
+		return res, errors.New("invalid WireGuard public key")
+	}
+	name := SanitizeDeviceName(req.DeviceName)
 	var pairing state.Pairing
 	err := s.Store.Update(func(st *state.State) error {
 		now := s.Now()
@@ -421,22 +551,25 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	if err != nil {
 		return res, err
 	}
-	if req.WGPublicKey != "" && !wg.ValidKey(req.WGPublicKey) {
-		return res, errors.New("invalid WireGuard public key")
-	}
-	name := strings.TrimSpace(req.DeviceName)
-	if name == "" {
-		name = "Android phone"
-	}
-	if len(name) > 60 {
-		name = name[:60]
-	}
+	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry.
+	ok := false
+	defer func() {
+		if !ok {
+			_ = s.Store.Update(func(st *state.State) error {
+				if pairing.Expires.After(s.Now()) {
+					st.Pairings = append(st.Pairings, pairing)
+				}
+				return nil
+			})
+		}
+	}()
 
 	st := s.Store.Read()
 	c := st.Config
 	u := st.FindUser(pairing.User)
 	if u == nil {
-		return res, fmt.Errorf("user %q was removed", pairing.User)
+		ok = true // nothing to give back
+		return res, ErrUserGone
 	}
 	dev := state.Device{ID: "dev_" + strings.ToLower(state.Secret(10)), User: u.Name, Name: name, PublicKey: strings.TrimSpace(req.WGPublicKey), Created: s.Now()}
 
@@ -491,7 +624,7 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 
 	host, _ := os.Hostname()
 	res.DeviceID = dev.ID
-	res.Server.Name, res.Server.Version = host, Version
+	res.Server.Name, res.Server.Version, res.Server.ID = host, Version, c.ServerID
 	res.User.Name, res.User.Email = u.Name, u.Email
 	res.Immich.URL = fmt.Sprintf("http://%s:%d", c.LANAddress, c.ImmichPort)
 	res.Immich.APIKey = key.Secret
@@ -511,10 +644,62 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 		}
 	}
 	s.Log.Printf("Paired %q for %s (VPN %s)", name, u.Name, dev.Address)
+	ok = true
+	// The same phone paired again (e.g. after a new endpoint): retire its old entry and credentials.
+	if old := req.ReplacesDevice; old != "" && old != dev.ID {
+		for _, d := range s.Store.Read().Devices {
+			if d.ID == old && d.User == u.Name {
+				if err := s.Revoke(ctx, old); err != nil {
+					s.Log.Printf("retiring the phone's previous entry %s: %v", old, err)
+				}
+			}
+		}
+	}
 	return res, nil
 }
 
-// Revoke removes a phone: its VPN peer, Immich API key and Nextcloud app password.
+// userToken signs in as a person. If their password was changed in the Immich web UI, the service admin
+// resets it to the one this server manages, so their phones' keys can still be revoked.
+func (s *Server) userToken(ctx context.Context, c state.Config, u *state.User) (string, error) {
+	im := s.immich(c)
+	tok, err := im.Login(ctx, u.Email, u.Password)
+	if err == nil || u.ImmichID == "" {
+		return tok, err
+	}
+	admin, aerr := s.adminToken(ctx, c)
+	if aerr != nil {
+		return "", fmt.Errorf("signing in as %s: %v (and as admin: %v)", u.Name, err, aerr)
+	}
+	if rerr := im.SetPassword(ctx, admin, u.ImmichID, u.Password); rerr != nil {
+		return "", fmt.Errorf("signing in as %s: %v (password reset failed: %v)", u.Name, err, rerr)
+	}
+	s.Log.Printf("%s's Immich password was changed outside ImmCloudScale; it was reset to their ImmCloudScale password (see `ics-server user list`)", u.Name)
+	return im.Login(ctx, u.Email, u.Password)
+}
+
+// revokeCredentials deletes a phone's Immich API key and Nextcloud app password.
+func (s *Server) revokeCredentials(ctx context.Context, c state.Config, u *state.User, dev state.Device) error {
+	if dev.ImmichKeyID != "" {
+		tok, err := s.userToken(ctx, c, u)
+		if err != nil {
+			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+		}
+		var ae *immich.APIError
+		if err := s.immich(c).DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
+			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+		}
+	}
+	if dev.NCAppPassword != "" {
+		if err := s.nextcloud(c).RevokeAppPassword(ctx, u.Name, dev.NCAppPassword); err != nil {
+			return fmt.Errorf("couldn't revoke the phone's file access: %w", err)
+		}
+	}
+	return nil
+}
+
+// Revoke removes a phone: its VPN peer, Immich API key and Nextcloud app password. If a key can't be
+// revoked, the phone stays listed and an error is returned, so the admin can retry instead of
+// believing a lost phone was cut off.
 func (s *Server) Revoke(ctx context.Context, deviceID string) error {
 	st := s.Store.Read()
 	var dev *state.Device
@@ -528,16 +713,8 @@ func (s *Server) Revoke(ctx context.Context, deviceID string) error {
 	}
 	c := st.Config
 	if u := st.FindUser(dev.User); u != nil {
-		im := s.immich(c)
-		if tok, err := im.Login(ctx, u.Email, u.Password); err == nil && dev.ImmichKeyID != "" {
-			if err := im.DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil {
-				s.Log.Printf("deleting Immich API key: %v", err)
-			}
-		}
-		if dev.NCAppPassword != "" {
-			if err := s.nextcloud(c).RevokeAppPassword(ctx, u.Name, dev.NCAppPassword); err != nil {
-				s.Log.Printf("revoking Nextcloud app password: %v", err)
-			}
+		if err := s.revokeCredentials(ctx, c, u, *dev); err != nil {
+			return err
 		}
 	}
 	if err := s.Store.Update(func(st *state.State) error {
@@ -617,7 +794,7 @@ func (s *Server) Status(ctx context.Context) Status {
 	im := s.immich(c)
 	out.Immich = im.Ping(ctx)
 	out.Nextcloud = s.nextcloud(c).Installed(ctx)
-	if tok, err := im.Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass); err == nil {
+	if tok, err := s.adminToken(ctx, c); err == nil {
 		if sto, err := im.Storage(ctx, tok); err == nil {
 			out.Storage = &sto
 		}

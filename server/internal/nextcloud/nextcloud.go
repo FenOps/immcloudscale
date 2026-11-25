@@ -4,6 +4,7 @@ package nextcloud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,14 @@ type Client struct {
 func New(base string) *Client {
 	return &Client{Base: strings.TrimRight(base, "/"), HTTP: &http.Client{Timeout: 60 * time.Second}}
 }
+
+// OCSError is a non-success OCS reply. Status is the HTTP status.
+type OCSError struct {
+	Status, Code int
+	Message      string
+}
+
+func (e *OCSError) Error() string { return fmt.Sprintf("nextcloud: %s (code %d)", e.Message, e.Code) }
 
 type ocsMeta struct {
 	Status     string `json:"status"`
@@ -59,12 +68,12 @@ func (c *Client) ocs(ctx context.Context, method, path, user, pass string, form 
 		} `json:"ocs"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("nextcloud: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return &OCSError{Status: resp.StatusCode, Code: resp.StatusCode, Message: strings.TrimSpace(string(raw))}
 	}
 	m := env.OCS.Meta
 	// OCS v1 reports success as 100, v2 as 200.
 	if m.StatusCode != 100 && m.StatusCode != 200 {
-		return fmt.Errorf("nextcloud: %s (code %d)", m.Message, m.StatusCode)
+		return &OCSError{Status: resp.StatusCode, Code: m.StatusCode, Message: m.Message}
 	}
 	if data != nil && len(env.OCS.Data) > 0 {
 		return json.Unmarshal(env.OCS.Data, data)
@@ -109,6 +118,12 @@ func (c *Client) AppPassword(ctx context.Context, user, pass string) (string, er
 }
 
 // RevokeAppPassword deletes an app password, authenticating with that app password.
+// An app password that no longer signs in (401 / OCS 997) is already gone, which counts as success.
 func (c *Client) RevokeAppPassword(ctx context.Context, user, appPass string) error {
-	return c.ocs(ctx, http.MethodDelete, "/ocs/v2.php/core/apppassword", user, appPass, nil, nil)
+	err := c.ocs(ctx, http.MethodDelete, "/ocs/v2.php/core/apppassword", user, appPass, nil, nil)
+	var oe *OCSError
+	if errors.As(err, &oe) && (oe.Status == http.StatusUnauthorized || oe.Code == 997) {
+		return nil
+	}
+	return err
 }

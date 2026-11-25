@@ -150,6 +150,11 @@ fun BackupScreen(onBack: () -> Unit) {
                         }
                     }
                     failed?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    if (s.backupSkipped > 0 && running == null) Text(
+                        "${s.backupSkipped} item${if (s.backupSkipped == 1) "" else "s"} couldn't be backed up (unsupported file type or unreadable). Everything else is safe.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    )
                 }
             }
 

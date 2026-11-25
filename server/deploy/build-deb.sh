@@ -8,6 +8,7 @@ for ARCH in ${ARCHES:-amd64 arm64}; do
   ROOT=$(mktemp -d)
   chmod 0755 "$ROOT"
   mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/lib/systemd/system"
+  chmod 0755 "$ROOT/DEBIAN" "$ROOT/usr" "$ROOT/usr/bin" "$ROOT/lib" "$ROOT/lib/systemd" "$ROOT/lib/systemd/system"
   CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -trimpath -ldflags "-s -w" -o "$ROOT/usr/bin/ics-server" ./cmd/ics-server
   install -m 0644 deploy/ics-server.service "$ROOT/lib/systemd/system/ics-server.service"
   mkdir -p "$ROOT/usr/share/doc/immcloudscale-server"
@@ -18,7 +19,8 @@ Package: immcloudscale-server
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: ImmCloudScale <noreply@immcloudscale.local>
-Depends: wireguard-tools, iptables, docker.io (>= 20.10) | docker-ce, docker-compose-v2 | docker-compose-plugin
+Depends: wireguard-tools, iptables, docker.io (>= 20.10) | docker-ce
+Recommends: docker-compose-v2 | docker-compose-plugin
 Section: net
 Priority: optional
 Homepage: https://github.com/FenOps/immcloudscale

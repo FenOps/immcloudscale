@@ -37,11 +37,15 @@ jobs:
         env:
           ICS_KEYSTORE_PASSWORD: ${{ secrets.ICS_KEYSTORE_PASSWORD }}
           ICS_KEY_ALIAS: ${{ secrets.ICS_KEY_ALIAS }}
-        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug
+        run: ./gradlew :app:testDebugUnitTest :app:verifyPaparazziDebug :app:lintDebug :app:assembleDebug :app:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: immcloudscale-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immcloudscale-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
 
   server:
     runs-on: ubuntu-latest
@@ -79,10 +83,10 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          name: immcloudscale-debug-apk
+          name: immcloudscale-release-apk
           path: dist
       - name: Name the APK
-        run: mv dist/app-debug.apk "dist/ImmCloudScale-${TAG#v}.apk"
+        run: mv dist/app-release.apk "dist/ImmCloudScale-${TAG#v}.apk"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

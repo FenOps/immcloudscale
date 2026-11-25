@@ -47,7 +47,13 @@ data class PeerStats(val publicKey: String, val rxBytes: Long, val txBytes: Long
  * Adds the Tailscale-style switches on top of a plain WireGuard config: exit node (full tunnel)
  * vs. home-LAN-only routing, per-app split tunnelling, and auto-connect away from trusted Wi-Fi.
  */
-class VpnManager(private val context: Context, private val settings: SettingsStore, private val scope: CoroutineScope) {
+class VpnManager(
+    private val context: Context,
+    private val settings: SettingsStore,
+    private val scope: CoroutineScope,
+    /** Told an identifier of the current underlying network whenever it changes (see HomeGuard). */
+    private val onNetworkKey: (String) -> Unit = {},
+) {
     private val backend by lazy { GoBackend(context.applicationContext) }
     private val mutex = Mutex()
     private val _state = MutableStateFlow(VpnState())
@@ -90,6 +96,20 @@ class VpnManager(private val context: Context, private val settings: SettingsSto
             Log.w("VpnManager", "connect failed", e)
             _state.value = VpnState(VpnStatus.Error, e.message ?: e.javaClass.simpleName)
         }
+    }
+
+    /** Set when the person switches the VPN off; auto-connect then waits until the network changes. */
+    @Volatile private var userDisconnected = false
+
+    /** Disconnect because the person asked to (auto-connect respects it until they change networks). */
+    suspend fun disconnectByUser() {
+        userDisconnected = true
+        disconnect()
+    }
+
+    suspend fun connectByUser() {
+        userDisconnected = false
+        connect()
     }
 
     suspend fun disconnect() = mutex.withLock {
@@ -155,48 +175,89 @@ class VpnManager(private val context: Context, private val settings: SettingsSto
     // ---- auto-connect ----
 
     private var callbackRegistered = false
+    private val networks = java.util.concurrent.ConcurrentHashMap<Network, NetworkCapabilities>()
+    @Volatile private var lastKey: String? = null
 
+    /**
+     * Watches the phone's real (non-VPN) networks. Decisions use one "current" network, Wi-Fi if there is one,
+     * else mobile data, and are taken only when it actually changes (not on every signal-strength update).
+     */
     fun startAutoConnectMonitor() {
         if (callbackRegistered) return
         callbackRegistered = true
         val cm = context.getSystemService(ConnectivityManager::class.java)
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build()
-        val onChange: (NetworkCapabilities) -> Unit = { caps ->
-            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                val name = when {
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> ssid(caps) ?: "Wi-Fi"
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile data"
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
-                    else -> "Network"
-                }
-                val onWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                _state.value = _state.value.copy(network = name)
-                scope.launch { onNetworkChanged(name.takeIf { onWifi }) }
-            }
+        val onChange: (Network, NetworkCapabilities?) -> Unit = { network, caps ->
+            if (caps == null) networks.remove(network) else networks[network] = caps
+            evaluate()
         }
         // NetworkCallback(flags) only exists on Android 12+; calling it on older phones crashes the app at start.
         val cb = if (Build.VERSION.SDK_INT >= 31) {
             object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(caps)
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(network, caps)
+                override fun onLost(network: Network) = onChange(network, null)
             }
         } else {
             object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(caps)
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = onChange(network, caps)
+                override fun onLost(network: Network) = onChange(network, null)
             }
         }
         runCatching { cm.registerNetworkCallback(request, cb) }
     }
 
-    private suspend fun onNetworkChanged(ssid: String?) {
+    private fun evaluate() {
+        val all = networks.entries.toList()
+        val current = all.firstOrNull { it.value.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
+            ?: all.firstOrNull { it.value.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) }
+            ?: all.firstOrNull { it.value.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) }
+            ?: all.firstOrNull()
+        val caps = current?.value
+        val wifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        val ssid = if (wifi) ssid(caps!!) else null
+        val name = when {
+            caps == null -> "Offline"
+            wifi -> ssid ?: "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile data"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "Network"
+        }
+        val key = "${current?.key}|$name"
+        if (key == lastKey) return
+        lastKey = key
+        userDisconnected = false // a new network: auto-connect may act again
+        onNetworkKey(key)
+        _state.value = _state.value.copy(network = name)
+        val net = current?.key
+        scope.launch { onNetworkChanged(wifi, ssid, net) }
+    }
+
+    private suspend fun onNetworkChanged(wifi: Boolean, ssid: String?, network: Network?) {
         val s = settings.current()
-        if (!s.vpnAutoConnect || !s.vpnConfigured || permissionIntent() != null) return
-        val trusted = ssid != null && s.vpnTrustedSsids.any { it.equals(ssid, ignoreCase = true) }
+        if (!s.vpnAutoConnect || !s.vpnConfigured || network == null || permissionIntent() != null) return
+        // Home is a trusted Wi-Fi name, or (works without location permission) a Wi-Fi where our own server
+        // answers directly, asked over that Wi-Fi itself rather than through the tunnel.
+        val home = wifi && (
+            (ssid != null && s.vpnTrustedSsids.any { it.equals(ssid, ignoreCase = true) }) ||
+                (s.pairedServerId.isNotBlank() && serverAnswersOn(network, s.pairedServer, s.pairedServerId))
+            )
         val status = state.value.status
-        if (trusted && status == VpnStatus.Connected) disconnect()
-        if (!trusted && status == VpnStatus.Disconnected) connect()
+        if (home && status == VpnStatus.Connected) disconnect()
+        // An earlier failed attempt (Error) mustn't stop auto-connect for good: try again on this network.
+        if (!home && (status == VpnStatus.Disconnected || status == VpnStatus.Error) && !userDisconnected) connect()
+    }
+
+    private suspend fun serverAnswersOn(network: Network, server: String, id: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val client = okhttp3.OkHttpClient.Builder().socketFactory(network.socketFactory)
+                .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).followRedirects(false).build()
+            client.newCall(okhttp3.Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { r ->
+                r.isSuccessful && r.body?.string()?.contains("\"id\":\"$id\"") == true
+            }
+        }.getOrDefault(false)
     }
 
     @SuppressLint("MissingPermission")

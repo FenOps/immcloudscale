@@ -215,8 +215,11 @@ private fun NextcloudCard() {
     var error by remember { mutableStateOf<String?>(null) }
 
     suspend fun save(base: String, u: String, p: String) {
-        g.settings.update { it.copy(ncUrl = base, ncUser = u, ncAppPassword = p) }
+        g.settings.update { it.copy(ncUrl = base, ncUser = u, ncAppPassword = p, ncUserId = "") }
         try {
+            // Signing in with an email works, but files live under the account's internal ID.
+            val id = runCatching { g.nextcloud.currentUserId() }.getOrDefault(u)
+            g.settings.update { it.copy(ncUserId = id) }
             g.nextcloud.list("/")
         } catch (e: Exception) {
             g.settings.update { it.copy(ncAppPassword = "") }

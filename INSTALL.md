@@ -125,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/de
 4. When it's finished you'll see a box like this:
 
 ```
-✅ ImmCloudScale is running.
+ImmCloudScale is running.
 
   Admin console:  http://192.168.1.50:8790   (user: admin, password: Xy7kPq2mWv9cRt4B)
   Photos (web):   http://192.168.1.50:2283
@@ -134,7 +134,7 @@ curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/de
 
   Your web sign-in: alex@immcloudscale.local / Mn3bVx8LqZ2wTr5K
 
-Pair alex's phone: scan this with the camera, or open ImmCloudScale → Pair with server.
+Pair alex's phone: scan this with the phone's camera, or open ImmCloudScale → Scan QR code.
 █████████████████████
 ██ ▄▄▄▄▄ █▀▄█ ▄▄▄▄▄ █      ← a QR code for your phone
 ...

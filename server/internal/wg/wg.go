@@ -120,7 +120,20 @@ func (c ServerConfig) Render() (string, error) {
 		fmt.Fprintf(&b, "PostDown = iptables -D FORWARD -i %%i -j ACCEPT; iptables -D FORWARD -o %%i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; iptables -t nat -D POSTROUTING -s %s -o %s -j MASQUERADE\n", c.Subnet, c.Egress)
 	}
 	for _, p := range c.Peers {
-		fmt.Fprintf(&b, "\n[Peer]\n# %s\nPublicKey = %s\nAllowedIPs = %s/32\n", p.Name, p.PublicKey, p.Address)
+		// Names come from phones: never let one break out of its comment line (that would inject config).
+		name := strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f || r == '[' || r == ']' || r == '=' {
+				return ' '
+			}
+			return r
+		}, p.Name)
+		if !ValidKey(p.PublicKey) {
+			return "", fmt.Errorf("invalid public key for peer %q", name)
+		}
+		if _, err := netip.ParseAddr(p.Address); err != nil {
+			return "", fmt.Errorf("invalid address for peer %q", name)
+		}
+		fmt.Fprintf(&b, "\n[Peer]\n# %s\nPublicKey = %s\nAllowedIPs = %s/32\n", name, p.PublicKey, p.Address)
 	}
 	return b.String(), nil
 }

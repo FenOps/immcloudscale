@@ -6,10 +6,9 @@
 #
 # Where the package comes from, in this order:
 #   1. ICS_DEB=/path/to/immcloudscale-server_X_arch.deb       a package you copied to the server
-#   2. a package already built in ../dist next to this script
-#   3. built from this checkout (installs Go if needed)         when run from a `git clone`
-#   4. the newest GitHub release
-#   5. a fresh clone of the repository, built here              (before the first release, or with ICS_FROM_SOURCE=1)
+#   2. built from this checkout (installs Go if needed)         when run as ./server/deploy/install.sh from a `git clone`
+#   3. the newest GitHub release
+#   4. a fresh clone of the repository, built here              (if there's no release, or with ICS_FROM_SOURCE=1)
 # Set ICS_SKIP_SETUP=1 to install without running setup.
 set -euo pipefail
 
@@ -24,8 +23,13 @@ die() { printf '\n\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 case "${ID:-} ${ID_LIKE:-}" in *ubuntu*|*debian*) ;; *) die "this installer supports Ubuntu and Debian (found ${PRETTY_NAME:-unknown})" ;; esac
 ARCH=$(dpkg --print-architecture)
 case "$ARCH" in amd64|arm64) ;; *) die "only amd64 and arm64 are supported (found $ARCH)" ;; esac
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)
-SRC=$(cd "$HERE/.." 2>/dev/null && pwd || true)   # immcloudscale/server when run from a checkout
+# Running from a checkout (…/server/deploy/install.sh)? Then build that code. Piped from curl there is no
+# checkout, and files in whatever folder you happen to be in must not be picked up.
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || true)
+SRC=""
+case "$HERE" in
+  */server/deploy) if grep -q 'FenOps/immcloudscale/server' "$HERE/../go.mod" 2>/dev/null; then SRC=$(cd "$HERE/.." && pwd); fi ;;
+esac
 
 say "Installing Docker, Docker Compose and WireGuard from ${PRETTY_NAME}"
 export DEBIAN_FRONTEND=noninteractive
@@ -35,13 +39,27 @@ if ! command -v docker >/dev/null 2>&1; then
   apt-get install -y -qq docker.io >/dev/null 2>&1 || { curl -fsSL https://get.docker.com | sh; }
 fi
 if ! docker compose version >/dev/null 2>&1; then
-  apt-get install -y -qq docker-compose-v2 >/dev/null 2>&1 || apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 \
-    || die "couldn't install Docker Compose v2; see https://docs.docker.com/compose/install/linux/"
+  apt-get install -y -qq docker-compose-v2 >/dev/null 2>&1 || apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || true
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  # Debian 12 has Docker but no Compose v2 package: install Docker's official plugin binary (checksum-verified).
+  COMPOSE_VERSION="v2.32.4"
+  case "$ARCH" in amd64) CARCH=x86_64 ;; arm64) CARCH=aarch64 ;; esac
+  say "Installing Docker Compose $COMPOSE_VERSION (not packaged by ${PRETTY_NAME})"
+  CTMP=$(mktemp -d)
+  CURL="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-$CARCH"
+  curl -fsSL "$CURL" -o "$CTMP/docker-compose" && curl -fsSL "$CURL.sha256" -o "$CTMP/sum" \
+    || die "couldn't download Docker Compose; see https://docs.docker.com/compose/install/linux/"
+  (cd "$CTMP" && sha256sum -c --quiet sum) || die "the Docker Compose download is damaged (checksum mismatch); try again"
+  install -D -m 0755 "$CTMP/docker-compose" /usr/local/lib/docker/cli-plugins/docker-compose
+  rm -rf "$CTMP"
+  docker compose version >/dev/null 2>&1 || die "Docker Compose still doesn't work; see https://docs.docker.com/compose/install/linux/"
 fi
 if [ -d /run/systemd/system ]; then systemctl enable --now docker >/dev/null; fi
 
 # Go for building from source: the distribution's if new enough (1.21+ fetches the exact toolchain), else go.dev.
-GO_NEEDED=$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$SRC/go.mod" 2>/dev/null || echo 1.24)
+GO_NEEDED=1.24
+if [ -n "$SRC" ]; then GO_NEEDED=$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$SRC/go.mod"); fi
 go_ok() {   # a Go at least as new as go.mod asks for, so no toolchain download is needed
   command -v go >/dev/null 2>&1 || return 1
   local v; v=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
@@ -53,17 +71,19 @@ ensure_go() {
   apt-get install -y -qq golang-go >/dev/null 2>&1 || true
   go_ok && return
   say "Installing Go $GO_VERSION (needed once to build ics-server)"
-  # dl.google.com is where go.dev/dl downloads are served from.
-  curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz || die "couldn't download Go"
-  tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
+  # dl.google.com is where go.dev/dl downloads are served from; it publishes a SHA-256 next to each file.
+  local tmp url; tmp=$(mktemp -d); url="https://dl.google.com/go/go${GO_VERSION}.linux-${ARCH}.tar.gz"
+  curl -fsSL "$url" -o "$tmp/go.tgz" && curl -fsSL "$url.sha256" -o "$tmp/go.sha256" || die "couldn't download Go"
+  echo "$(cat "$tmp/go.sha256")  $tmp/go.tgz" | sha256sum -c --quiet - || die "the Go download is damaged (checksum mismatch); try again"
+  rm -rf /usr/local/go && tar -C /usr/local -xzf "$tmp/go.tgz" && rm -rf "$tmp"
   go_ok || die "Go installation failed"
 }
 
 DEB="${ICS_DEB:-}"
-if [ -z "$DEB" ]; then DEB=$(ls "$SRC"/dist/immcloudscale-server_*_"$ARCH".deb 2>/dev/null | sort -V | tail -1 || true); fi
-if [ -z "$DEB" ] && [ -f "$SRC/go.mod" ] && [ -x "$SRC/deploy/build-deb.sh" ]; then
+if [ -z "$DEB" ] && [ -n "$SRC" ]; then   # always rebuild a checkout, so `git pull` + re-running installs the update
   say "Building ics-server from $SRC"
   ensure_go
+  rm -f "$SRC"/dist/immcloudscale-server_*_"$ARCH".deb
   (cd "$SRC" && GOTOOLCHAIN=local ARCHES="$ARCH" ./deploy/build-deb.sh)
   DEB=$(ls "$SRC"/dist/immcloudscale-server_*_"$ARCH".deb | sort -V | tail -1)
 fi
@@ -93,7 +113,8 @@ if [ -z "$DEB" ]; then
 fi
 
 say "Installing $(basename "$DEB")"
-apt-get install -y -qq "$(readlink -f "$DEB")" >/dev/null
+# --reinstall: a rebuilt package with the same version number must still replace the installed one.
+apt-get install -y -qq --reinstall "$(readlink -f "$DEB")" >/dev/null
 ics-server version >/dev/null
 
 if [ "${ICS_SKIP_SETUP:-}" = 1 ]; then

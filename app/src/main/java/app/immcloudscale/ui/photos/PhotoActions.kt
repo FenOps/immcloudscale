@@ -80,9 +80,18 @@ suspend fun shareAssets(context: Context, assets: List<AssetDto>) {
     val dir = File(context.cacheDir, "share").apply { mkdirs() }
     val files = withContext(Dispatchers.IO) {
         assets.map { a ->
-            val f = File(dir, a.originalFileName.ifBlank { a.id })
-            if (!f.exists()) g.http.newCall(Request.Builder().url(g.immich.originalUrl(a.id)).build()).execute().use { r ->
-                r.body?.byteStream()?.use { input -> f.outputStream().use { input.copyTo(it) } }
+            // One folder per asset: two photos can share a name (IMG_0001.JPG), and must never be mixed up.
+            val safeName = a.originalFileName.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_").ifBlank { a.id }
+            val f = File(File(dir, a.id.replace(Regex("[^A-Za-z0-9-]"), "_")), safeName)
+            check(f.canonicalPath.startsWith(dir.canonicalPath + File.separator))
+            if (!f.exists()) {
+                f.parentFile?.mkdirs()
+                val part = File(f.path + ".part")
+                g.http.newCall(Request.Builder().url(g.immich.originalUrl(a.id)).build()).execute().use { r ->
+                    if (!r.isSuccessful) throw java.io.IOException("Couldn't download ${a.originalFileName} (HTTP ${r.code})")
+                    r.body!!.byteStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+                }
+                if (!part.renameTo(f)) throw java.io.IOException("Couldn't save ${a.originalFileName}")
             }
             f
         }

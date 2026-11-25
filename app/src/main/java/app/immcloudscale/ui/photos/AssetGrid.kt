@@ -47,11 +47,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.DaySection
+import app.immcloudscale.data.immich.localDate
 import app.immcloudscale.ui.components.RemoteImage
 
 /**
@@ -185,10 +188,11 @@ fun AssetTile(
     small: Boolean = false,
 ) {
     val inset by animateDpAsState(if (selected) 14.dp else 0.dp, label = "inset")
+    val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() + (if (selected) ", selected" else "")
     Box(
         modifier.aspectRatio(1f).background(
             if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-        ),
+        ).semantics { contentDescription = label },
     ) {
         RemoteImage(
             url, asset.id,

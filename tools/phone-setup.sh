@@ -2,7 +2,8 @@
 # Installs ImmCloudScale on an Android phone and pairs it with your server, from a computer with adb.
 #
 #   ./phone-setup.sh --apk ImmCloudScale.apk --server 192.168.1.50 --code K7QX-M2PA   (code from the admin console)
-#   ./phone-setup.sh --apk ImmCloudScale.apk --nas alex@192.168.1.50 --person alex      (code fetched over SSH)
+#   ./phone-setup.sh --apk ImmCloudScale.apk --nas alex@192.168.1.50 --person alex      (code fetched over SSH;
+#                                                                                        needs sudo without a password there)
 #   ./phone-setup.sh --link 'immcloudscale://pair?code=…&server=…'
 #
 # The phone must be connected with USB debugging, or Wireless debugging (`adb pair` + `adb connect`).
@@ -10,7 +11,9 @@
 set -euo pipefail
 
 APK="" NAS="" PERSON="" LINK="" SERIAL="" SUDO="sudo" SERVER="" CODE=""
+need_value() { [ $# -ge 2 ] && [ -n "$2" ] || { echo "phone-setup.sh: $1 needs a value (see --help)" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
+  case "$1" in --apk|--nas|--person|--link|--serial|--server|--code) need_value "$@" ;; esac
   case "$1" in
     --apk) APK=$2; shift 2 ;;
     --nas) NAS=$2; shift 2 ;;
@@ -20,7 +23,7 @@ while [ $# -gt 0 ]; do
     --code) CODE=$2; shift 2 ;;
     --serial) SERIAL=$2; shift 2 ;;
     --no-sudo) SUDO=""; shift ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -33,6 +36,8 @@ command -v adb >/dev/null || die "adb not found. Install Android platform tools:
 [ -n "$APK$LINK$NAS$CODE" ] || die "pass --apk and a way to pair: --server/--code, --nas/--person or --link"
 if [ -z "$LINK" ] && [ -n "$CODE" ]; then
   [ -n "$SERVER" ] || die "--server is required with --code (the NAS address, e.g. 192.168.1.50)"
+  case "$CODE" in *[!A-Za-z0-9\ -]*) die "--code looks wrong; it's like K7QX-M2PA" ;; esac
+  case "$SERVER" in *[!A-Za-z0-9.:/\[\]-]*) die "--server looks wrong; use the address, e.g. 192.168.1.50" ;; esac
   case "$SERVER" in *://*) ;; *) SERVER="http://$SERVER" ;; esac
   case "${SERVER#*://}" in *:*) ;; *) SERVER="$SERVER:8790" ;; esac
   ENC=$(printf '%s' "$SERVER" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's#/#%2F#g')
@@ -62,24 +67,33 @@ if [ -z "$LINK" ] && [ -n "$NAS" ]; then
   [ -n "$PERSON" ] || die "--person is required with --nas"
   say "Getting a pairing code for $PERSON from $NAS"
   BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | wc -l)
-  JSON=$(ssh "$NAS" "$SUDO ics-server pair $PERSON --json")
+  case "$PERSON" in *[!a-z0-9._-]*|"") die "--person must be a user name like alex" ;; esac
+  JSON=$(ssh "$NAS" "$SUDO ics-server pair $(printf %q "$PERSON") --json")
   LINK=$(printf '%s' "$JSON" | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
   [ -n "$LINK" ] || die "couldn't read the pairing link: $JSON"
 fi
 
 if [ -n "$LINK" ]; then
   say "Opening the pairing link on the phone. Tap \"Pair\" on the phone now"
+  case "$LINK" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $LINK" ;; esac
+  case "$LINK" in *"'"*) die "the pairing link contains a quote character" ;; esac
   A shell "am start -a android.intent.action.VIEW -d '$LINK' $PKG" >/dev/null
   if [ -n "$NAS" ]; then
     printf '   waiting for the phone'
+    PAIRED=""
     for _ in $(seq 1 60); do
       sleep 2; printf '.'
       if [ "$(ssh "$NAS" "$SUDO ics-server devices" | wc -l)" -gt "$BEFORE" ]; then
         printf '\n'; say "Paired! The phone now has photos, files and the home VPN."
         ssh "$NAS" "$SUDO ics-server devices" | tail -1
+        PAIRED=1
         break
       fi
     done
+    if [ -z "$PAIRED" ]; then
+      printf '\n'
+      die "the phone didn't pair within 2 minutes. Check that it's on the home Wi-Fi and that you tapped \"Pair\"; then run this again (codes expire after 15 minutes)"
+    fi
   else
     echo "   Check the phone: after you tap Pair it shows the Photos tab, and the console lists the phone under Phones."
   fi

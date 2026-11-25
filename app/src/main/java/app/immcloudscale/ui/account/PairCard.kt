@@ -125,8 +125,19 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
         icon = { Icon(Icons.Outlined.Dns, null) },
         title = { Text("Pair with your server?") },
         text = {
+            val s = g.settingsState.collectAsStateWithLifecycle().value
+            val host = android.net.Uri.parse(link.server).host.orEmpty()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("This phone will use the photos, files and home VPN of the ImmCloudScale server at ${link.server}.")
+                if (s.immichConfigured || s.nextcloudConfigured) Text(
+                    "This replaces your current setup (${listOf(s.immichUrl, s.ncUrl).filter { it.isNotBlank() }.joinToString(", ")}). " +
+                        "Backups will then go to the new server.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                if (!app.immcloudscale.data.HomeGuard.isPrivateHost(host)) Text(
+                    "$host isn't a home-network address. Only pair with a server you set up yourself: it will receive your photos.",
+                    color = MaterialTheme.colorScheme.error,
+                )
                 Text("Code ${link.code}", style = MaterialTheme.typography.titleMedium)
                 if (busy) CircularProgressIndicator(Modifier.size(24.dp))
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
