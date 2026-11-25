@@ -60,10 +60,12 @@ if [ -n "$NAS" ] && [ -z "$LINK" ]; then
   case "$PERSON" in *[!a-z0-9._-]*) die "--person must be a user name like alex" ;; esac
 fi
 if [ -n "$APK" ] && [ ! -f "$APK" ]; then die "APK not found: $APK"; fi
-if [ -n "$LINK" ]; then
-  case "$LINK" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $LINK" ;; esac
-  case "$LINK" in *"'"*) die "the pairing link contains a quote character" ;; esac
-fi
+# Called on every link before it goes to the phone, including one fetched from the server over SSH.
+check_link() {
+  case "$1" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $1" ;; esac
+  case "$1" in *[!A-Za-z0-9:/?=\&%._~+-]*) die "the pairing link contains unexpected characters" ;; esac
+}
+if [ -n "$LINK" ]; then check_link "$LINK"; fi
 
 # With SSH access, remember the paired phones now, so a new one can be recognised afterwards.
 BEFORE=""
@@ -97,6 +99,7 @@ fi
 
 if [ -n "$LINK" ]; then
   say "Opening the pairing link on the phone. Tap \"Pair\" on the phone now"
+  check_link "$LINK"
   A shell "am start -a android.intent.action.VIEW -d '$LINK' $PKG" >/dev/null
   if [ -n "$NAS" ]; then
     printf '   waiting for the phone'
