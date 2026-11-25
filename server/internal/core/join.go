@@ -158,17 +158,36 @@ func (s *Server) Requests() []PublicRequest {
 
 // ApproveJoin creates the person's accounts and a pairing code for their phone.
 func (s *Server) ApproveJoin(ctx context.Context, id, by string) (PublicRequest, error) {
+	// Mark the request before creating anything. An existing person with the same name only counts as this
+	// request's own (a retry after a failure) when the mark is there: otherwise approving a leftover request
+	// would hand someone else's account to whoever sent it.
 	var req state.JoinRequest
-	for _, r := range s.Store.Read().Requests {
-		if r.ID == id {
-			req = r
+	resume := false
+	err := s.Store.Update(func(st *state.State) error {
+		for i := range st.Requests {
+			r := &st.Requests[i]
+			if r.ID != id {
+				continue
+			}
+			if r.Status != "pending" {
+				return errors.New("that request isn't waiting any more")
+			}
+			if st.FindUser(r.Name) != nil {
+				if !r.Approving {
+					return fmt.Errorf("someone is already called %q; decline this request and ask them to pick another name", r.Name)
+				}
+				resume = true
+			}
+			r.Approving = true
+			req = *r
+			return nil
 		}
+		return errors.New("that request isn't waiting any more")
+	})
+	if err != nil {
+		return PublicRequest{}, err
 	}
-	if req.ID == "" || req.Status != "pending" {
-		return PublicRequest{}, errors.New("that request isn't waiting any more")
-	}
-	// An earlier approval may have created the accounts and then failed: carry on from there.
-	if st := s.Store.Read(); st.FindUser(req.Name) == nil {
+	if !resume {
 		if _, err := s.AddUser(ctx, req.Name, req.Email, false); err != nil {
 			return PublicRequest{}, err
 		}

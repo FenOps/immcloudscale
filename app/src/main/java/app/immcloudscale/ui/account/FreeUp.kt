@@ -61,7 +61,7 @@ fun FreeUpSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit
             checking = true
             scope.launch {
                 runCatching { withContext(Dispatchers.IO) { findFreeUp(ctx, g.immich, s.freeUpKeepDays) } }
-                    .onSuccess { if (it.ids.isEmpty()) onMessage("Nothing to free up: no backed-up photos older than ${s.freeUpKeepDays} days") else found = it }
+                    .onSuccess { if (it.sizes.isEmpty()) onMessage("Nothing to free up: no backed-up photos older than ${s.freeUpKeepDays} days") else found = it }
                     .onFailure { onMessage(it.message ?: "Couldn't reach your server") }
                 checking = false
             }
@@ -107,11 +107,11 @@ fun FreeUpSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit
         AlertDialog(
             onDismissRequest = { found = null },
             title = { Text("Free up ${formatBytes(f.bytes)}?") },
-            text = { Text("${f.ids.size} photos and videos will be removed from this phone. They stay safe on your server and in the app.") },
+            text = { Text("${f.sizes.size} photos and videos will be removed from this phone. They stay safe on your server and in the app.") },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        val sender = withContext(Dispatchers.IO) { runCatching { PhoneCopies.deleteRequest(ctx, PhoneCopies.find(ctx, f.ids)) }.getOrNull() }
+                        val sender = withContext(Dispatchers.IO) { runCatching { PhoneCopies.deleteRequest(ctx, PhoneCopies.find(ctx, f.sizes.keys, f.sizes)) }.getOrNull() }
                         if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build())
                         else { found = null; onMessage("This needs Android 11 or newer") }
                     }
@@ -127,7 +127,7 @@ fun FreeUpSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit
  * they stay restorable for 30 days (Android empties it after that, which is when the space comes back).
  */
 @Composable
-fun FreeUpPrompt(ids: Set<Long>) {
+fun FreeUpPrompt(ids: Set<String>) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val scope = rememberCoroutineScope()
@@ -135,7 +135,7 @@ fun FreeUpPrompt(ids: Set<Long>) {
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { clear() }
     val go = {
         scope.launch {
-            val sender = withContext(Dispatchers.IO) { runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.find(ctx, ids)) }.getOrNull() }
+            val sender = withContext(Dispatchers.IO) { runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.findKeys(ctx, ids)) }.getOrNull() }
             if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build()) else clear()
         }
     }

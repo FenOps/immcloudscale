@@ -76,20 +76,25 @@ func (s *Server) DeviceSession(ctx context.Context, deviceID string) (string, er
 		_ = im.Logout(ctx, tok)
 		return "", err
 	}
-	if dev.ImmichSessionID != "" && dev.ImmichSessionID != id {
-		if err := im.DeleteSession(ctx, tok, dev.ImmichSessionID); err != nil {
-			s.Log.Printf("signing out %s's previous locked-folder session: %v", dev.Name, err)
-		}
-	}
+	// Swap in one step, so two requests at once can't both keep the same old session and orphan one.
+	var old string
 	err = s.Store.Update(func(st *state.State) error {
 		for i := range st.Devices {
 			if st.Devices[i].ID == deviceID {
-				st.Devices[i].ImmichSessionID = id
+				old, st.Devices[i].ImmichSessionID = st.Devices[i].ImmichSessionID, id
 			}
 		}
 		return nil
 	})
-	return tok, err
+	if err != nil {
+		return "", err
+	}
+	if old != "" && old != id {
+		if err := im.DeleteSession(ctx, tok, old); err != nil {
+			s.Log.Printf("signing out %s's previous locked-folder session: %v", dev.Name, err)
+		}
+	}
+	return tok, nil
 }
 
 func memoryGB() float64 {

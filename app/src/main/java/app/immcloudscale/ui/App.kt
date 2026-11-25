@@ -267,7 +267,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
 
 /** Photos deleted in the library elsewhere (web, another phone) are still on this phone: offer to trash them here too. */
 @Composable
-private fun PhoneTrashPrompt(ids: Set<Long>) {
+private fun PhoneTrashPrompt(ids: Set<String>) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val scope = rememberCoroutineScope()
@@ -282,7 +282,7 @@ private fun PhoneTrashPrompt(ids: Set<Long>) {
             TextButton(onClick = {
                 scope.launch {
                     val sender = withContext(Dispatchers.IO) {
-                        runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.find(ctx, ids)) }.getOrNull()
+                        runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.findKeys(ctx, ids)) }.getOrNull()
                     }
                     if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build()) else clear()
                 }

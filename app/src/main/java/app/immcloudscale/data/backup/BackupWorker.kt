@@ -202,7 +202,9 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val checkedAt = System.currentTimeMillis()
         val since = Instant.ofEpochMilli(graph.settings.current().trashSyncedAt)
         val trashed = graph.immich.trashedFrom(PhoneCopies.deviceId(applicationContext), since)
-        val still = PhoneCopies.copiesOf(applicationContext, trashed).mapNotNull { it.lastPathSegment?.toLongOrNull() }
+        val known = PhoneCopies.backedUp(applicationContext, trashed)
+        val still = PhoneCopies.find(applicationContext, known.keys, known)
+            .mapNotNull { it.lastPathSegment?.toLongOrNull() }.map { PhoneCopies.key(it, known.getValue(it)) }
         graph.settings.update { it.copy(trashSyncedAt = checkedAt, phoneTrashPending = it.phoneTrashPending + still) }
         if (still.isNotEmpty()) notifyDeletedElsewhere(graph.settings.current().phoneTrashPending.size)
     }
@@ -210,9 +212,9 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     /** Automatic "Free up space": remembers what can go and asks the app (on screen) to remove it. */
     private suspend fun offerFreeUp(s: AppSettings) {
         val f = findFreeUp(applicationContext, app.graph.immich, s.freeUpKeepDays)
-        if (f.ids.isEmpty()) return
-        app.graph.settings.update { it.copy(freeUpPending = f.ids.toSet()) }
-        notify(44, "Free up ${formatBytes(f.bytes)}", "${f.ids.size} backed-up photos and videos can be removed from this phone. Tap to free up space.")
+        if (f.sizes.isEmpty()) return
+        app.graph.settings.update { it.copy(freeUpPending = f.keys) }
+        notify(44, "Free up ${formatBytes(f.bytes)}", "${f.sizes.size} backed-up photos and videos can be removed from this phone. Tap to free up space.")
     }
 
     private fun notifyDeletedElsewhere(count: Int) = notify(

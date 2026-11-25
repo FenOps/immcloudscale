@@ -54,6 +54,19 @@ object PhoneCopies {
         return out
     }
 
+    /** How a copy is remembered between a backup run and the person's confirmation: "id-size". */
+    fun key(id: Long, size: Long) = "$id-$size"
+
+    /** Back from [key]s to ID and size (entries that don't parse are dropped). */
+    fun sizes(keys: Collection<String>): Map<Long, Long> = keys.mapNotNull { k ->
+        val id = k.substringBefore('-').toLongOrNull()
+        val size = k.substringAfter('-', "").toLongOrNull()
+        if (id != null && size != null) id to size else null
+    }.toMap()
+
+    /** Copies remembered as [keys] that are still on the phone, unchanged. */
+    fun findKeys(context: Context, keys: Collection<String>): List<Uri> = sizes(keys).let { find(context, it.keys, it) }
+
     /** This phone's copies of [assets] that are still on it (matched by ID and size). */
     fun copiesOf(context: Context, assets: List<AssetDto>): List<Uri> {
         val known = backedUp(context, assets)
@@ -79,14 +92,16 @@ object PhoneCopies {
 }
 
 /** Backed-up photos and videos that can be removed from the phone, and the space that frees. */
-data class FreeUp(val ids: List<Long>, val bytes: Long)
+data class FreeUp(val sizes: Map<Long, Long>, val bytes: Long) {
+    val keys get() = sizes.map { (id, size) -> PhoneCopies.key(id, size) }.toSet()
+}
 
 /** What "Free up space" would remove: this phone's copies already on the server, older than [keepDays]. */
 suspend fun findFreeUp(context: Context, immich: ImmichClient, keepDays: Int): FreeUp {
     val onServer = PhoneCopies.backedUp(context, immich.assetsFrom(PhoneCopies.deviceId(context)))
-    if (onServer.isEmpty()) return FreeUp(emptyList(), 0)
+    if (onServer.isEmpty()) return FreeUp(emptyMap(), 0)
     val before = System.currentTimeMillis() / 1000 - keepDays * 86_400L
-    val ids = mutableListOf<Long>()
+    val found = mutableMapOf<Long, Long>()
     var bytes = 0L
     for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
         context.contentResolver.query(
@@ -96,9 +111,9 @@ suspend fun findFreeUp(context: Context, immich: ImmichClient, keepDays: Int): F
             while (c.moveToNext()) {
                 val id = c.getLong(0)
                 val size = c.getLong(1)
-                if (onServer[id] == size) { ids += id; bytes += size } // same file as backed up, not a reused ID
+                if (onServer[id] == size) { found[id] = size; bytes += size } // same file as backed up, not a reused ID
             }
         }
     }
-    return FreeUp(ids, bytes)
+    return FreeUp(found, bytes)
 }

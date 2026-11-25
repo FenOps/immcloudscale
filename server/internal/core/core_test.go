@@ -791,3 +791,24 @@ func TestDeviceSecretIdentifiesThePhone(t *testing.T) {
 		t.Fatal("the secret itself is stored")
 	}
 }
+
+func TestApprovingALeftoverRequestNeverHandsOverSomeoneElse(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	id, _, err := s.RequestJoin("tom", "", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// While the request waits, nobody can quietly create a "tom" next to it...
+	if _, err := s.AddUser(ctx, "tom", "", false); err == nil {
+		t.Fatal("a person was created with the name of a waiting request")
+	}
+	// ...and if a "tom" exists anyway (made before this fix, or by hand), approving must refuse.
+	s.Store.Update(func(st *state.State) error { st.Users = append(st.Users, state.User{Name: "tom"}); return nil })
+	if _, err := s.ApproveJoin(ctx, id, "camille"); err == nil {
+		t.Fatal("approving gave the requester the existing tom's account")
+	}
+	if p := s.Store.Read().Pairings; len(p) != 0 {
+		t.Fatalf("a pairing code was made: %+v", p)
+	}
+}

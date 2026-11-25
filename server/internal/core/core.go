@@ -349,6 +349,11 @@ func (s *Server) AddUser(ctx context.Context, name, email string, admin bool) (s
 	if st.FindUser(name) != nil {
 		return state.User{}, fmt.Errorf("user %q already exists", name)
 	}
+	for _, r := range st.Requests {
+		if r.Name == name && r.Status == "pending" && !r.Approving {
+			return state.User{}, fmt.Errorf("someone asked to join as %q from the app; approve or decline that request first", name)
+		}
+	}
 	if email == "" {
 		email = name + "@immcloudscale.local"
 	}

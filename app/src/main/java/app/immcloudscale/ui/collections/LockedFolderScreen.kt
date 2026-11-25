@@ -94,7 +94,18 @@ fun LockedFolderScreen(onBack: () -> Unit) {
     val snack = remember { SnackbarHostState() }
 
     suspend fun open() {
-        ui = runCatching { LockedUi.Open(g.immich.lockedAssets(session, 1).items) }.getOrElse { LockedUi.Problem(it.message ?: "Couldn't open the locked folder") }
+        ui = runCatching {
+            // Every page, not only the first 200.
+            val all = mutableListOf<AssetDto>()
+            var page = 1
+            while (true) {
+                val p = g.immich.lockedAssets(session, page)
+                all += p.items
+                if (p.nextPage == null || p.items.isEmpty()) break
+                page++
+            }
+            LockedUi.Open(all)
+        }.getOrElse { LockedUi.Problem(it.message ?: "Couldn't open the locked folder") }
     }
 
     LaunchedEffect(Unit) {
@@ -120,11 +131,11 @@ fun LockedFolderScreen(onBack: () -> Unit) {
                     if (selected.isNotEmpty()) TextButton(onClick = {
                         val ids = selected.toList()
                         scope.launch {
-                            runCatching { g.immich.setVisibility(ids, "timeline", session) }
-                                .onSuccess { snack.showSnackbar("Moved ${ids.size} back to your photos") }
-                                .onFailure { snack.showSnackbar(it.message ?: "Couldn't move them") }
+                            val msg = runCatching { g.immich.setVisibility(ids, "timeline", session) }
+                                .fold({ "Moved ${ids.size} back to your photos" }, { it.message ?: "Couldn't move them" })
                             selected = emptySet()
                             open()
+                            launch { snack.showSnackbar(msg) }
                         }
                     }) { Text("Move out") }
                 },

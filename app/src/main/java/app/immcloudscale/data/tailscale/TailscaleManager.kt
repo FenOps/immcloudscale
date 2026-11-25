@@ -91,8 +91,6 @@ class TailscaleManager(
         return if (port > 0) Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)) else null
     }
 
-    /** True while requests go through Tailscale (the destination is then verified by Tailscale itself). */
-    val routing: Boolean get() = proxy() != null
 
     fun proxyToken(): String = runCatching { bridge.proxyToken() }.getOrDefault("")
 

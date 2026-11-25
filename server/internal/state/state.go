@@ -49,6 +49,8 @@ type JoinRequest struct {
 	TokenHash string    `json:"tokenHash"` // SHA-256 of the requester's secret for checking on the request
 	Code      string    `json:"code,omitempty"`
 	DecidedBy string    `json:"decidedBy,omitempty"`
+	// Approving marks an approval that started creating this person's accounts, so a retry can finish it.
+	Approving bool `json:"approving,omitempty"`
 }
 
 type Pairing struct {
