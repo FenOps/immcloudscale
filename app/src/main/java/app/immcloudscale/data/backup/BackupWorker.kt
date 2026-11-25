@@ -129,7 +129,9 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val ts = app.graph.tailscale
         if (s.pairedServer.isNotBlank() && !ts.checkHome()) {
             if (!s.backupAnywhere) return Result.success(workDataOf(KEY_ERROR to "Waiting for your home Wi-Fi"))
+            if (ts.inviting) return Result.retry() // joining a server with an invite: back up once that's done
             if (!ts.ensureConnected()) {
+                if (ts.inviting) return Result.retry()
                 return Result.success(workDataOf(KEY_ERROR to "Away from home: turn on Remote access in the Network tab to back up"))
             }
         }

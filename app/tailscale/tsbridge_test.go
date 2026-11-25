@@ -2,9 +2,12 @@ package tsbridge
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/curve25519"
 	"tailscale.com/tsnet"
 )
 
@@ -113,3 +117,89 @@ type recorder struct {
 func (r *recorder) Header() http.Header         { return r.header }
 func (r *recorder) Write(b []byte) (int, error) { return len(b), nil }
 func (r *recorder) WriteHeader(c int)           { r.code = c }
+
+// TestPairThroughAnInvite plays a phone away from home: with only an invite link, it joins the tailnet and pairs
+// with the server through the proxy. A stand-in node forwards the server's pairing port onto the tailnet. It runs
+// when TS_TEST_CONTROL_URL, TS_TEST_AUTHKEY and TS_TEST_INVITE (an invite link from a live server) are set.
+func TestPairThroughAnInvite(t *testing.T) {
+	control, key, invite := os.Getenv("TS_TEST_CONTROL_URL"), os.Getenv("TS_TEST_AUTHKEY"), os.Getenv("TS_TEST_INVITE")
+	if control == "" || key == "" || invite == "" {
+		t.Skip("set TS_TEST_CONTROL_URL, TS_TEST_AUTHKEY and TS_TEST_INVITE")
+	}
+	link, err := url.Parse(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, code := link.Query().Get("server"), link.Query().Get("code")
+	srv, _ := url.Parse(server)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// The server's side: its pairing port, reachable on the tailnet.
+	nas := &tsnet.Server{Dir: t.TempDir(), Hostname: "invite-nas", AuthKey: key, ControlURL: control, Logf: func(string, ...any) {}}
+	defer nas.Close()
+	st, err := nas.Up(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := nas.Listen("tcp", ":"+srv.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				up, err := net.Dial("tcp", srv.Host)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				go io.Copy(up, c)
+				io.Copy(c, up)
+			}()
+		}
+	}()
+
+	// The phone: what the invite carries, nothing else.
+	if err := Start(t.TempDir(), "invite-phone", key, control); err != nil {
+		t.Fatal(err)
+	}
+	defer Stop()
+	for {
+		var s map[string]string
+		json.Unmarshal([]byte(Status()), &s)
+		if s["state"] == "Running" {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("never connected: %v", s)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	SetRoute(srv.Hostname(), st.TailscaleIPs[0].String())
+
+	var priv, pub [32]byte
+	rand.Read(priv[:])
+	curve25519.ScalarBaseMult(&pub, &priv)
+	body := fmt.Sprintf(`{"code":%q,"deviceName":"Invite test","wgPublicKey":%q}`, code, base64.StdEncoding.EncodeToString(pub[:]))
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ProxyPort()))
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	req, _ := http.NewRequestWithContext(ctx, "POST", server+"/api/v1/pair", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Proxy-Authorization", "Bearer "+ProxyToken())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(out), `"deviceId"`) {
+		t.Fatalf("pairing through the tailnet: %d %s", resp.StatusCode, out)
+	}
+	t.Log("paired through Tailscale")
+}

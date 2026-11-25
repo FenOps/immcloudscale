@@ -29,6 +29,10 @@ type fakeServices struct {
 	ncUsers map[string]string // nextcloud user -> password
 	appPass map[string]string // app password -> user
 	nextID  int
+	// failKeys makes creating API keys fail; keyGate (when set) holds that request until it's closed.
+	failKeys bool
+	keyGate  chan struct{}
+	keyAsked chan struct{} // when set, gets a value when a key request reaches the gate
 }
 
 func (f *fakeServices) id() string { f.nextID++; return "id" + string(rune('a'+f.nextID)) }
@@ -111,6 +115,16 @@ func (f *fakeServices) immich() http.Handler {
 		io.WriteString(w, `{"diskSize":"1 TiB","diskUse":"1 GiB","diskUsagePercentage":0.1}`)
 	})
 	mux.HandleFunc("POST /api/api-keys", func(w http.ResponseWriter, r *http.Request) {
+		if f.keyGate != nil {
+			if f.keyAsked != nil {
+				f.keyAsked <- struct{}{}
+			}
+			<-f.keyGate
+		}
+		if f.failKeys {
+			http.Error(w, `{"message":"down"}`, 500)
+			return
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		id := f.id()
@@ -819,5 +833,129 @@ func TestNobodyCanAskToJoinAsAdmin(t *testing.T) {
 		if _, _, err := s.RequestJoin(n, "", "phone"); err == nil {
 			t.Errorf("%q was accepted", n)
 		}
+	}
+}
+
+func TestInviteCreatesThePersonAndIsSingleUse(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	ctx := context.Background()
+	p, created, err := s.Invite(ctx, "Nina", "", "camille")
+	if err != nil || !created {
+		t.Fatal(err, created)
+	}
+	if st := s.Store.Read(); st.FindUser("nina") == nil || p.User != "nina" || p.CreatedBy != "camille" {
+		t.Fatalf("%+v", p)
+	}
+	if !p.Expires.Equal(s.Now().Add(PairingTTL)) {
+		t.Fatalf("expires %v, want %v", p.Expires, s.Now().Add(PairingTTL))
+	}
+	_, pub, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "Nina's phone", WGPublicKey: pub}); err != nil {
+		t.Fatal(err)
+	}
+	_, pub2, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "someone else", WGPublicKey: pub2}); err != ErrBadCode {
+		t.Fatalf("used twice: %v", err)
+	}
+	// A second invite for the same person reuses the account; cancelling it makes it unusable.
+	p2, created, err := s.Invite(ctx, " Nina ", "", "camille")
+	if err != nil || created || len(s.Invites()) != 1 {
+		t.Fatalf("%v %d", err, len(s.Invites()))
+	}
+	if err := s.CancelInvite(p2.Code); err != nil || len(s.Invites()) != 0 {
+		t.Fatalf("%v", err)
+	}
+	if err := s.CancelInvite(p2.Code); err == nil {
+		t.Fatal("cancelled twice")
+	}
+}
+
+func TestAdminsArentInvitedByLink(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	s.SetAdmin("camille", true)
+	if _, _, err := s.Invite(context.Background(), "camille", "", "camille"); err == nil {
+		t.Fatal("an admin's phone could be handed out by a forwarded link")
+	}
+}
+
+func TestCancellingWhileSomeoneRedeemsKeepsItCancelled(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _, _ := s.Invite(ctx, "nina", "", "camille")
+	// Immich fails during pairing, so the code would normally be given back for a retry...
+	f.failKeys = true
+	f.keyGate = make(chan struct{})
+	done := make(chan error)
+	go func() {
+		_, pub, _ := wg.NewKeyPair()
+		_, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub})
+		done <- err
+	}()
+	// ...but an admin cancels it while that's happening (wait until the code is taken).
+	for i := 0; i < 2000 && len(s.Invites()) > 0; i++ { // until the pairing has taken the code
+		time.Sleep(time.Millisecond)
+	}
+	if err := s.CancelInvite(p.Code); err == nil || !strings.Contains(err.Error(), "right now") {
+		t.Fatalf("cancel during the pairing: %v", err)
+	}
+	close(f.keyGate)
+	if err := <-done; err == nil {
+		t.Fatal("pairing should have failed")
+	}
+	if len(s.Invites()) != 0 {
+		t.Fatalf("the cancelled code came back: %+v", s.Invites())
+	}
+}
+
+func TestAnInviteDoesntPairSomeoneMadeAdminWhilePairing(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _, _ := s.Invite(ctx, "tom", "", "camille")
+	f.mu.Lock()
+	keys := len(f.keys)
+	f.mu.Unlock()
+	f.keyGate, f.keyAsked = make(chan struct{}), make(chan struct{}, 1)
+	done := make(chan error)
+	go func() {
+		_, pub, _ := wg.NewKeyPair()
+		_, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub})
+		done <- err
+	}()
+	<-f.keyAsked // past the early admin check, making the phone's Immich key
+	if err := s.SetAdmin("tom", true); err != nil {
+		t.Fatal(err)
+	}
+	close(f.keyGate)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "admin now") {
+		t.Fatalf("got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.keys) != keys {
+		t.Error("the Immich key made for the refused pairing is still there")
+	}
+	for _, d := range s.Store.Read().Devices {
+		if d.User == "tom" {
+			t.Error("tom's phone was paired")
+		}
+	}
+	if len(s.Invites()) != 0 {
+		t.Error("the used invite came back")
+	}
+}
+
+func TestAnInviteDoesntPairSomeoneWhoBecameAdmin(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _, err := s.Invite(ctx, "tom", "", "camille")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetAdmin("tom", true)
+	_, pub, _ := wg.NewKeyPair()
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub}); err == nil {
+		t.Fatal("an invite paired an admin's phone")
 	}
 }

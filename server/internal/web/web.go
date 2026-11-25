@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +40,33 @@ func New(s *core.Server) *Handler {
 	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute), joinLimit: newLimiter(5, 10*time.Minute), sessionLimit: newLimiter(10, time.Hour), deviceLimit: newLimiter(10, 10*time.Minute)}
 }
 
-// PairLink is what the QR code holds; scanning it with the phone's camera opens the app.
-func PairLink(serverURL, code string) string {
-	return "immcloudscale://pair?" + url.Values{"server": {serverURL}, "code": {code}}.Encode()
+// PairLink is what the QR code and invites hold; opening it on the phone opens the app. It says until when the
+// code works, and (with ts) how to reach the server through Tailscale, so it also works away from home.
+func PairLink(serverURL, code string, expires time.Time, ts *core.TailscaleInfo) string {
+	v := url.Values{"server": {serverURL}, "code": {code}}
+	if !expires.IsZero() {
+		v.Set("exp", strconv.FormatInt(expires.Unix(), 10))
+	}
+	if ts != nil {
+		v.Set("ts", ts.IP)
+		if ts.AuthKey != "" {
+			v.Set("tskey", ts.AuthKey)
+		}
+		if ts.ControlURL != "" {
+			v.Set("control", ts.ControlURL)
+		}
+	}
+	return "immcloudscale://pair?" + v.Encode()
+}
+
+// link is PairLink for this server. Only invites sent from the app carry the Tailscale join key (they're meant to
+// travel by message); other codes are used at home, and pairing hands the key to the phone anyway.
+func (h *Handler) link(p state.Pairing) string {
+	ts := h.S.TailscaleJoin()
+	if ts != nil && p.CreatedBy == "" {
+		ts = &core.TailscaleInfo{IP: ts.IP, ControlURL: ts.ControlURL}
+	}
+	return PairLink(h.baseURL(), p.Code, p.Expires, ts)
 }
 
 func (h *Handler) baseURL() string {
@@ -100,6 +125,38 @@ func (h *Handler) Routes() http.Handler {
 		}
 		writeJSON(w, 202, h.S.Features())
 	}))
+	mux.Handle("POST /api/v1/manage/invites", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ Name, Email string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		p, created, err := h.S.Invite(r.Context(), in.Name, in.Email, u.Name)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 201, map[string]any{"name": p.User, "code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": h.link(p), "created": created})
+	}))
+	mux.Handle("GET /api/v1/manage/invites", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		type invite struct {
+			Name      string    `json:"name"`
+			Code      string    `json:"code"`
+			Expires   time.Time `json:"expires"`
+			CreatedBy string    `json:"createdBy"`
+		}
+		out := []invite{}
+		for _, p := range h.S.SentInvites() {
+			out = append(out, invite{p.User, p.Code, p.Expires, p.CreatedBy})
+		}
+		writeJSON(w, 200, out)
+	}))
+	mux.Handle("DELETE /api/v1/manage/invites/{code}", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		if err := h.S.CancelInvite(r.PathValue("code")); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		w.WriteHeader(204)
+	}))
 	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
 		writeJSON(w, 200, h.S.Requests())
 	}))
@@ -116,7 +173,19 @@ func (h *Handler) Routes() http.Handler {
 		h.setAdmin(w, r)
 	}))
 	mux.Handle("POST /api/v1/manage/users/{name}/pair", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
-		h.startPairing(w, r.PathValue("name"))
+		// A code for a member's phone sent from the app works like an invite (it can be sent by message), except
+		// for admins' phones, which are paired at home.
+		name := r.PathValue("name")
+		if st := h.S.Store.Read(); st.FindUser(name) != nil && !st.FindUser(name).IsAdmin {
+			p, err := h.S.StartPairingBy(name, u.Name)
+			if err != nil {
+				writeErr(w, 400, err)
+				return
+			}
+			writeJSON(w, 201, map[string]any{"name": p.User, "code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": h.link(p)})
+			return
+		}
+		h.startPairing(w, name)
 	}))
 
 	admin := http.NewServeMux()
@@ -166,7 +235,17 @@ func (h *Handler) Routes() http.Handler {
 	admin.HandleFunc("POST /api/admin/users/{name}/admin", h.setAdmin)
 	admin.HandleFunc("GET /api/admin/qr", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
-		png, err := qrcode.Encode(PairLink(h.baseURL(), code), qrcode.Medium, 320)
+		var p state.Pairing
+		for _, x := range h.S.Invites() {
+			if x.Code == code {
+				p = x
+			}
+		}
+		if p.Code == "" {
+			writeErr(w, 404, errors.New("that code was used or has expired"))
+			return
+		}
+		png, err := qrcode.Encode(h.link(p), qrcode.Medium, 320)
 		if err != nil {
 			writeErr(w, 500, err)
 			return
@@ -203,7 +282,7 @@ func (h *Handler) startPairing(w http.ResponseWriter, user string) {
 		writeErr(w, 400, err)
 		return
 	}
-	writeJSON(w, 201, map[string]any{"code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": PairLink(h.baseURL(), p.Code)})
+	writeJSON(w, 201, map[string]any{"code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": h.link(p)})
 }
 
 func (h *Handler) approve(w http.ResponseWriter, r *http.Request, by string) {
@@ -212,7 +291,13 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request, by string) {
 		writeErr(w, 400, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"request": req, "server": h.baseURL(), "link": PairLink(h.baseURL(), req.Code)})
+	p := state.Pairing{Code: req.Code}
+	for _, x := range h.S.Invites() {
+		if x.Code == req.Code {
+			p = x
+		}
+	}
+	writeJSON(w, 200, map[string]any{"request": req, "server": h.baseURL(), "link": h.link(p)})
 }
 
 func (h *Handler) decline(w http.ResponseWriter, r *http.Request, by string) {

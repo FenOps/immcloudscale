@@ -24,7 +24,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 const ncAdmin = "ics-admin"
 
@@ -42,6 +42,11 @@ type Server struct {
 	PortFree func(port int, udp bool) bool
 	// TailscaleIP is this machine's Tailscale address, "" when it has none; nil means no Tailscale (tests).
 	TailscaleIP func() string
+
+	// Codes being redeemed right now, and those cancelled meanwhile (so a failed pairing doesn't give them back).
+	codesMu   sync.Mutex
+	inflight  map[string]bool
+	cancelled map[string]bool
 
 	tokMu      sync.Mutex
 	tok        string
@@ -467,7 +472,10 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 
 const PairingTTL = 15 * time.Minute
 
-func (s *Server) StartPairing(user string) (state.Pairing, error) {
+func (s *Server) StartPairing(user string) (state.Pairing, error) { return s.StartPairingBy(user, "") }
+
+// StartPairingBy is StartPairing remembering which admin asked (shown in their list of invites).
+func (s *Server) StartPairingBy(user, by string) (state.Pairing, error) {
 	var p state.Pairing
 	err := s.Store.Update(func(st *state.State) error {
 		if st.FindUser(user) == nil {
@@ -480,7 +488,7 @@ func (s *Server) StartPairing(user string) (state.Pairing, error) {
 				keep = append(keep, x)
 			}
 		}
-		p = state.Pairing{Code: state.PairCode(), User: user, Expires: now.Add(PairingTTL)}
+		p = state.Pairing{Code: state.PairCode(), User: user, Expires: now.Add(PairingTTL), CreatedBy: by}
 		st.Pairings = append(keep, p)
 		return nil
 	})
@@ -581,24 +589,34 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 			if p.Code == code && p.Expires.After(now) {
 				pairing = p
 				st.Pairings = append(st.Pairings[:i], st.Pairings[i+1:]...) // single use
+				// Marked while the store is locked, so a cancel always finds the code somewhere.
+				s.codeInFlight(code, true)
 				return nil
 			}
 		}
 		return ErrBadCode
 	})
 	if err != nil {
+		if pairing.Code != "" {
+			s.codeInFlight(code, false) // the state couldn't be saved, so the code is still there
+		}
 		return res, err
 	}
-	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry.
+	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry, unless an
+	// admin cancelled it in the meantime. Both happen with the store locked, so a cancel can't fall in between.
 	ok := false
 	defer func() {
-		if !ok {
-			_ = s.Store.Update(func(st *state.State) error {
-				if pairing.Expires.After(s.Now()) {
-					st.Pairings = append(st.Pairings, pairing)
-				}
-				return nil
-			})
+		cleared := false
+		_ = s.Store.Update(func(st *state.State) error {
+			cleared = true
+			cancelled := s.codeInFlight(code, false)
+			if !ok && !cancelled && pairing.Expires.After(s.Now()) {
+				st.Pairings = append(st.Pairings, pairing)
+			}
+			return nil
+		})
+		if !cleared {
+			s.codeInFlight(code, false) // the state couldn't be read: at least don't leave the code marked
 		}
 	}()
 
@@ -608,6 +626,11 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	if u == nil {
 		ok = true // nothing to give back
 		return res, ErrUserGone
+	}
+	if pairing.CreatedBy != "" && u.IsAdmin {
+		// An invite made before its person became an admin: admins' phones are paired at home, not by forwarded links.
+		ok = true
+		return res, fmt.Errorf("%s is an admin now; pair the phone at home instead of with this invite", u.Name)
 	}
 	deviceToken := state.Secret(32)
 	dev := state.Device{
@@ -633,8 +656,13 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	dev.NCAppPassword = appPass
 
 	err = s.Store.Update(func(st *state.State) error {
-		if st.FindUser(u.Name) == nil {
+		cur := st.FindUser(u.Name)
+		if cur == nil {
 			return ErrUserGone // removed while this pairing was in progress
+		}
+		if pairing.CreatedBy != "" && cur.IsAdmin {
+			ok = true // made an admin meanwhile: the invite is used up
+			return fmt.Errorf("%s is an admin now; pair the phone at home instead of with this invite", u.Name)
 		}
 		if !st.Config.VPNEnabled {
 			dev.PublicKey = ""

@@ -1,0 +1,141 @@
+package app.immcloudscale.data
+
+import androidx.test.core.app.ApplicationProvider
+import app.immcloudscale.ImmApp
+import app.immcloudscale.data.tailscale.TailscaleBridge
+import app.immcloudscale.data.tailscale.TailscaleManager
+import app.immcloudscale.data.tailscale.TsStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/** An invite join (a link from a message) must never change or reroute the phone's existing setup. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class InviteJoinTest {
+    private class FakeBridge(private val joins: Boolean) : TailscaleBridge {
+        val routes = mutableMapOf<String, String>()
+        var running = false
+        var startedWithKey = ""
+        override fun start(dir: String, hostname: String, authKey: String, controlUrl: String) { running = true; startedWithKey = authKey }
+        var stops = 0
+        override fun stop() { running = false; routes.clear(); stops++ } // like the Go bridge: routes go with the connection
+        override fun logout() { running = false }
+        override fun setRoute(lanHost: String, tailnetHost: String) { if (tailnetHost.isEmpty()) routes.remove(lanHost) else routes[lanHost] = tailnetHost }
+        override fun proxyPort() = if (running) 1080 else 0
+        override fun proxyToken() = "t"
+        override fun status() = if (running && joins) """{"state":"Running","ip":"100.64.0.9"}""" else """{"state":"Starting"}"""
+        override fun logs() = ""
+    }
+
+    private val app get() = ApplicationProvider.getApplicationContext<ImmApp>()
+    private val paired = AppSettings(
+        immichUrl = "http://192.168.1.50:2283", immichToken = "k", immichTokenIsApiKey = true, pairedServer = "http://192.168.1.50:8790",
+        pairedServerId = "ics_home", tsServerIp = "100.64.0.1", tsAuthKey = "tskey-home", tsEnabled = true,
+    )
+
+    @After fun reset() = runBlocking { app.graph.settings.update { AppSettings() } }
+
+    @Test fun aJoinThatWorksOnlyRoutesTheInvitedServerAndCleansUp() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-invite", "", onSignIn = {})
+        assertEquals(TsStatus.Connected, ts.state.value.status)
+        assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes) // the home server is NOT sent to the invite's tailnet
+        assertEquals("tskey-invite", bridge.startedWithKey)
+        val stops = bridge.stops
+        ts.inviteDone()
+        assertTrue(bridge.stops > stops) // the invite's connection was stopped
+        assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
+        assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists()) // the temporary identity is deleted
+        assertEquals(paired, app.graph.settings.current()) // nothing from the link was saved
+    }
+
+    @Test fun aJoinThatFailsLeavesNothingBehind() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = false)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        val failed = runCatching { ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "https://other.example", onSignIn = {}) }
+        assertTrue(failed.isFailure)
+        ts.inviteDone()
+        assertTrue(bridge.routes.isEmpty())
+        assertTrue(!bridge.running)
+        assertEquals(TsStatus.Off, ts.state.value.status)
+        assertEquals(paired, app.graph.settings.current())
+        assertEquals(null, ts.inviteServer)
+    }
+
+    @Test fun anInviteForThePairedServersAddressIsRefused() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true).apply { routes["192.168.1.50"] = "100.64.0.1"; running = true }
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        val r = runCatching { ts.connectForInvite("http://192.168.1.50:8790", "100.64.0.66", "tskey-x", "https://other.example", onSignIn = {}) }
+        assertTrue(r.isFailure)
+        assertEquals("100.64.0.1", bridge.routes["192.168.1.50"]) // the phone's own route was never replaced
+        ts.inviteDone()
+    }
+
+    @Test fun duringAJoinThePairedServerIsNeverSentThroughTheInvitesTailnet() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true).apply { routes["192.168.1.50"] = "100.64.0.1"; running = true }
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+        assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes) // the phone's own route is gone with its connection
+        assertTrue(!ts.ensureConnected()) // background backup waits
+        val selector = HomeProxySelector({ paired }, object : HomeRoute {
+            override fun proxy() = ts.proxy()
+            override fun token() = "t"
+            override fun extraHosts() = listOfNotNull(ts.inviteServer)
+            override fun onlyExtraHosts() = ts.inviting
+        })
+        assertEquals(listOf(java.net.Proxy.NO_PROXY), selector.select(java.net.URI("http://192.168.1.50:2283/api/assets")))
+        assertTrue(selector.select(java.net.URI("http://10.9.9.9:8790/api/v1/pair"))[0] != java.net.Proxy.NO_PROXY)
+        ts.inviteDone()
+        assertTrue("10.9.9.9" !in bridge.routes)
+    }
+
+    @Test fun aJoinWhoseScreenWentAwayStillCleansUp() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        val job = launch {
+            try {
+                ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+                awaitCancellation()
+            } finally {
+                ts.inviteDone()
+            }
+        }
+        while (!ts.inviting || bridge.routes.isEmpty()) delay(10)
+        job.cancelAndJoin()
+        assertTrue(!ts.inviting)
+        assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
+        assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists())
+    }
+
+    @Test fun aSecondInviteWhileOneIsJoiningLeavesTheFirstAlone() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+        val stops = bridge.stops
+        assertTrue(runCatching { ts.connectForInvite("http://10.8.8.8:8790", "100.64.0.77", "tskey-y", "", onSignIn = {}) }.isFailure)
+        assertTrue(ts.inviting)
+        assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes)
+        assertEquals(stops, bridge.stops)
+        ts.inviteDone()
+        assertTrue(!ts.inviting)
+    }
+}

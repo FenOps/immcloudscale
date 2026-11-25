@@ -29,7 +29,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 )
 @Serializable data class Member(val name: String, val email: String = "", val isAdmin: Boolean = false, val devices: Int = 0)
 @Serializable data class Features(val machineLearning: Boolean = false, val memoryGB: Double = 0.0, val applying: Boolean = false)
-@Serializable data class PairCode(val code: String, val server: String = "", val link: String = "")
+@Serializable data class PairCode(val code: String, val server: String = "", val link: String = "", val expires: String = "", val name: String = "")
+@Serializable data class InviteInfo(val name: String, val code: String, val expires: String, val createdBy: String = "")
 
 /**
  * Joining a server (someone without an account asks; an admin approves) and managing members from an admin's
@@ -72,6 +73,15 @@ class MembersClient(private val http: OkHttpClient, private val settings: () -> 
     /** An Immich session for this person, for the locked folder (which API keys can't open). */
     suspend fun session(): String =
         json.parseToJsonElement(manage("POST", "/api/v1/me/session")).jsonObject["accessToken"]?.jsonPrimitive?.content.orEmpty()
+
+    /** An invite (single use, 15 minutes) for [name], who is created on the server if new. */
+    suspend fun invite(name: String, email: String): PairCode = parse(manage("POST", "/api/v1/manage/invites", buildJsonObject {
+        put("name", name.trim().lowercase()); put("email", email.trim())
+    }.toString()))
+
+    suspend fun invites(): List<InviteInfo> = parse(manage("GET", "/api/v1/manage/invites"))
+
+    suspend fun cancelInvite(code: String) { manage("DELETE", "/api/v1/manage/invites/$code") }
 
     /** A new pairing code for a member's (new) phone. */
     suspend fun pairCode(name: String): PairCode = parse(manage("POST", "/api/v1/manage/users/$name/pair"))

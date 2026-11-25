@@ -1,6 +1,8 @@
 package app.immcloudscale.ui.gui
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Looper
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasClickAction
@@ -238,6 +240,10 @@ class AppGuiTest {
             shot("26-dark-theme")
             compose.onNodeWithText("Members").performClick()
             shot("27-members-dark")
+            compose.onNodeWithContentDescription("Pair a phone for tom").performClick()
+            shot("32-invite-to-send")
+            compose.onNodeWithText("Done").performClick()
+            settle(800)
             pressBack()
             settle(800)
             tab("Network")
@@ -246,6 +252,15 @@ class AppGuiTest {
             compose.onNodeWithText("Duplicates").performClick()
             shot("31-duplicates-dark")
         }
+    }
+
+    /** An invite opened on a new phone: the dialog says until when it works. */
+    @Test fun openingAnInvite() {
+        runBlocking { ApplicationProvider.getApplicationContext<ImmApp>().graph.settings.update { AppSettings() } }
+        val exp = System.currentTimeMillis() / 1000 + 12 * 60
+        val link = "immcloudscale://pair?server=http%3A%2F%2F192.168.1.49%3A8790&code=K7QX-M2PA&exp=$exp&ts=100.101.102.103"
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).setClass(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+        ActivityScenario.launch<MainActivity>(intent).use { shot("33-opening-an-invite") }
     }
 
     @Test @Config(qualifiers = "+night") fun darkTheme() {
