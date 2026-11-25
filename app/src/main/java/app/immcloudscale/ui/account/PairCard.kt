@@ -1,6 +1,9 @@
 package app.immcloudscale.ui.account
 
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,10 +46,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
+import app.immcloudscale.data.pairing.QrImage
 import app.immcloudscale.graph
 import app.immcloudscale.ui.theme.GoogleColors
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Scans a pairing QR with Google's code scanner; reports a parsed link or an error message. */
 fun scanPairingCode(context: android.content.Context, onLink: (PairLink) -> Unit, onError: (String) -> Unit) {
@@ -82,6 +89,16 @@ fun PairCard(onPaired: () -> Unit) {
         }
     }
 
+    // A QR code saved as a picture (a screenshot of the admin console, a photo of the setup screen).
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val link = withContext(Dispatchers.IO) { runCatching { QrImage.read(ctx, uri) }.getOrNull() }?.let(Pairing::parseLink)
+            if (link != null) pair(link.server, link.code)
+            else error = "No ImmCloudScale pairing code found in that picture. Try a sharper screenshot, or type the code."
+        }
+    }
+
     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -100,6 +117,12 @@ fun PairCard(onPaired: () -> Unit) {
             Text("Scan the code shown by `ics-server setup` or the server's admin console. Photos, files and the home VPN are set up in one go.")
             Button(onClick = { scanPairingCode(ctx, { pair(it.server, it.code) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
+            }
+            OutlinedButton(
+                onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                enabled = !busy, modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Outlined.Image, null); Spacer(Modifier.width(8.dp)); Text("Use a QR picture from the gallery")
             }
             Text("or type them in", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(server, { server = it }, label = { Text("Server address") }, placeholder = { Text("192.168.1.50") }, singleLine = true,
