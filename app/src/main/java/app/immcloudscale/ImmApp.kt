@@ -97,15 +97,13 @@ class AppGraph(val context: Context) {
         // Nothing from the link is saved: the Tailscale details are used for this attempt only, and pairing
         // brings the server's own settings.
         if (link.tailscaleIp.isBlank() || tailscale.answersDirectly(server)) return pairWithServer(server, link.code)
+        tailscale.connectForInvite(server, link.tailscaleIp, link.tailscaleKey, link.controlUrl, onSignIn)
         try {
-            tailscale.connectForInvite(server, link.tailscaleIp, link.tailscaleKey, link.controlUrl, onSignIn)
-            try {
-                pairWithServer(server, link.code)
-            } catch (e: HttpException) {
-                // The "same Wi-Fi" advice for unreachable servers doesn't fit here.
-                if (e.code == 0) throw IOException("Connected to Tailscale, but your server didn't answer through it. Ask whoever sent the invite to check the server.")
-                throw e
-            }
+            pairWithServer(server, link.code)
+        } catch (e: HttpException) {
+            // The "same Wi-Fi" advice for unreachable servers doesn't fit here.
+            if (e.code == 0) throw IOException("Connected to Tailscale, but your server didn't answer through it. Ask whoever sent the invite to check the server.")
+            throw e
         } finally {
             tailscale.inviteDone()
         }

@@ -29,7 +29,8 @@ class InviteJoinTest {
         var running = false
         var startedWithKey = ""
         override fun start(dir: String, hostname: String, authKey: String, controlUrl: String) { running = true; startedWithKey = authKey }
-        override fun stop() { running = false; routes.clear() } // like the Go bridge: routes go with the connection
+        var stops = 0
+        override fun stop() { running = false; routes.clear(); stops++ } // like the Go bridge: routes go with the connection
         override fun logout() { running = false }
         override fun setRoute(lanHost: String, tailnetHost: String) { if (tailnetHost.isEmpty()) routes.remove(lanHost) else routes[lanHost] = tailnetHost }
         override fun proxyPort() = if (running) 1080 else 0
@@ -54,7 +55,9 @@ class InviteJoinTest {
         assertEquals(TsStatus.Connected, ts.state.value.status)
         assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes) // the home server is NOT sent to the invite's tailnet
         assertEquals("tskey-invite", bridge.startedWithKey)
+        val stops = bridge.stops
         ts.inviteDone()
+        assertTrue(bridge.stops > stops) // the invite's connection was stopped
         assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
         assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists()) // the temporary identity is deleted
         assertEquals(paired, app.graph.settings.current()) // nothing from the link was saved
@@ -120,5 +123,19 @@ class InviteJoinTest {
         assertTrue(!ts.inviting)
         assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
         assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists())
+    }
+
+    @Test fun aSecondInviteWhileOneIsJoiningLeavesTheFirstAlone() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+        val stops = bridge.stops
+        assertTrue(runCatching { ts.connectForInvite("http://10.8.8.8:8790", "100.64.0.77", "tskey-y", "", onSignIn = {}) }.isFailure)
+        assertTrue(ts.inviting)
+        assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes)
+        assertEquals(stops, bridge.stops)
+        ts.inviteDone()
+        assertTrue(!ts.inviting)
     }
 }

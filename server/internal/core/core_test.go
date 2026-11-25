@@ -905,6 +905,45 @@ func TestCancellingWhileSomeoneRedeemsKeepsItCancelled(t *testing.T) {
 	}
 }
 
+func TestAnInviteDoesntPairSomeoneMadeAdminWhilePairing(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	p, _, _ := s.Invite(ctx, "tom", "", "camille")
+	f.mu.Lock()
+	keys := len(f.keys)
+	f.mu.Unlock()
+	f.keyGate = make(chan struct{})
+	done := make(chan error)
+	go func() {
+		_, pub, _ := wg.NewKeyPair()
+		_, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub})
+		done <- err
+	}()
+	for i := 0; i < 2000 && len(s.Invites()) > 0; i++ { // until the pairing has taken the code
+		time.Sleep(time.Millisecond)
+	}
+	if err := s.SetAdmin("tom", true); err != nil {
+		t.Fatal(err)
+	}
+	close(f.keyGate)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "admin now") {
+		t.Fatalf("got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.keys) != keys {
+		t.Error("the Immich key made for the refused pairing is still there")
+	}
+	for _, d := range s.Store.Read().Devices {
+		if d.User == "tom" {
+			t.Error("tom's phone was paired")
+		}
+	}
+	if len(s.Invites()) != 0 {
+		t.Error("the used invite came back")
+	}
+}
+
 func TestAnInviteDoesntPairSomeoneWhoBecameAdmin(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	ctx := context.Background()

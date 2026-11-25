@@ -606,13 +606,18 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	// admin cancelled it in the meantime. Both happen with the store locked, so a cancel can't fall in between.
 	ok := false
 	defer func() {
+		cleared := false
 		_ = s.Store.Update(func(st *state.State) error {
+			cleared = true
 			cancelled := s.codeInFlight(code, false)
 			if !ok && !cancelled && pairing.Expires.After(s.Now()) {
 				st.Pairings = append(st.Pairings, pairing)
 			}
 			return nil
 		})
+		if !cleared {
+			s.codeInFlight(code, false) // the state couldn't be read: at least don't leave the code marked
+		}
 	}()
 
 	st := s.Store.Read()

@@ -29,6 +29,7 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** What the app needs from the Go bridge (app/tailscale). The real one loads native code; tests use a fake. */
 interface TailscaleBridge {
@@ -105,15 +106,26 @@ class TailscaleManager(
     @Volatile var inviting = false
         private set
     @Volatile private var homeBeforeInvite = true
+    private val inviteClaimed = AtomicBoolean(false) // one join at a time; only the one that claimed it cleans up
 
     /**
      * Joins through an invite away from home, with a temporary Tailscale identity of its own: the phone's own
      * Tailscale settings are left alone, and only the invited server's home address is routed (to [ip]).
-     * [onSignIn] opens Tailscale's sign-in page when the invite has no key. Always call [inviteDone] afterwards.
+     * [onSignIn] opens Tailscale's sign-in page when the invite has no key. When this returns, the join is
+     * connected and the caller must call [inviteDone]; when it throws, it has cleaned up after itself.
      */
     suspend fun connectForInvite(server: String, ip: String, key: String, controlUrl: String, onSignIn: (String) -> Unit) {
+        if (!inviteClaimed.compareAndSet(false, true)) throw IOException("Already joining a server with an invite; wait for that to finish")
+        try {
+            joinInvite(server, ip, key, controlUrl, onSignIn)
+        } catch (e: Throwable) {
+            inviteDone()
+            throw e
+        }
+    }
+
+    private suspend fun joinInvite(server: String, ip: String, key: String, controlUrl: String, onSignIn: (String) -> Unit) {
         val host = server.toHttpUrlOrNull()?.host ?: throw IOException("That invite has no server address")
-        if (inviting) throw IOException("Already joining a server with an invite; wait for that to finish")
         val s = settings.current()
         if (listOf(s.pairedServer, s.immichUrl, s.ncUrl).any { it.toHttpUrlOrNull()?.host.equals(host, ignoreCase = true) }) {
             // Same address as this phone's server, but reached through someone else's tailnet: refuse.
@@ -141,9 +153,13 @@ class TailscaleManager(
      * deleted, and the phone's own Tailscale comes back as the network calls for it.
      */
     suspend fun inviteDone() = withContext(NonCancellable) { // also when the screen that started the join has gone
+        if (!inviteClaimed.get()) return@withContext // nothing of ours to end (a refused join, or already done)
         val host = inviteServer?.toHttpUrlOrNull()?.host
         inviteServer = null
-        if (!inviting) return@withContext
+        if (!inviting) {
+            inviteClaimed.set(false)
+            return@withContext
+        }
         try {
             lock.withLock {
                 withContext(Dispatchers.IO) {
@@ -155,9 +171,10 @@ class TailscaleManager(
             }
         } finally {
             inviting = false
+            inviteClaimed.set(false)
         }
         onNetwork(homeBeforeInvite)
-        checkHome() // the phone may now be paired with the invite's server, whose home network is another one
+        scope.launch { checkHome() } // the phone may now be paired with the invite's server, on another network
     }
 
     private fun inviteDir() = File(context.cacheDir, "tailscale-invite")
