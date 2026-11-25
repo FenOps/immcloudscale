@@ -574,7 +574,10 @@ func TestTurningTheVPNOnLaterSkipsPhonesWithoutKeys(t *testing.T) {
 func TestEndpointFollowsTheLANAddressWhenNoPublicAddressIsKnown(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	ctx := context.Background()
-	s.Store.Update(func(st *state.State) error { st.Config.Endpoint, st.Config.LANManual = st.Config.LANAddress, false; return nil })
+	s.Store.Update(func(st *state.State) error {
+		st.Config.Endpoint, st.Config.LANManual = st.Config.LANAddress, false
+		return nil
+	})
 	if err := s.Setup(ctx, SetupOptions{DetectedLAN: "192.168.1.60"}); err != nil {
 		t.Fatal(err)
 	}

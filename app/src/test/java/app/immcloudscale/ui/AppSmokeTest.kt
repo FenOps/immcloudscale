@@ -4,6 +4,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import app.immcloudscale.MainActivity
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,6 +21,15 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk = [34])
 class AppSmokeTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Before fun testWorkManager() {
+        // A synchronous WorkManager: the real one keeps database threads running after the test closes the database.
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(
+            ctx, androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build(),
+        )
+    }
+
 
     @Test fun firstRunAndTabs() {
         compose.onNodeWithText("Welcome to ImmCloudScale").assertExists()

@@ -58,7 +58,7 @@ class HomeGuardTest {
     @Test fun interceptorRefusesBeforeSendingCredentials() {
         val server = MockWebServer().apply { start() }
         val base = server.url("/").toString().trimEnd('/')
-        val s = paired.copy(immichUrl = base)
+        val s = paired.copy(immichUrl = base, pairedServer = base) // MockWebServer stands in for the paired server
         val guard = HomeGuard({ s }, { false }, probe = { "wrong" })
         val http = buildHttpClient({ s }, guard)
         // MockWebServer listens on 127.0.0.1, which counts as private, so the guard applies.

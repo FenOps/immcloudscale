@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -118,7 +119,9 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
                 a.backupEnabled == b.backupEnabled && a.immichConfigured == b.immichConfigured &&
                     a.backupWifiOnly == b.backupWifiOnly && a.backupChargingOnly == b.backupChargingOnly
             }
-            .onEach { BackupWorker.schedule(this, it) }
+            .withIndex()
+            // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.
+            .onEach { (i, s) -> if (i > 0 || s.backupEnabled) BackupWorker.schedule(this, s) }
             .launchIn(graph.scope)
     }
 

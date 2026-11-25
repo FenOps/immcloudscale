@@ -49,6 +49,14 @@ class AppGuiTest {
 
     @After fun stop() = home.shutdown()
 
+    @Before fun testWorkManager() {
+        // A synchronous WorkManager: the real one keeps database threads running after the test closes the database.
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(
+            ctx, androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build(),
+        )
+    }
+
     @Before fun softwareBitmaps() {
         // Robolectric has no GPU, so images must stay in normal memory (the app uses hardware bitmaps on phones),
         // and its native graphics aren't thread-safe, so images are decoded on the main thread.

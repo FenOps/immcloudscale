@@ -136,8 +136,11 @@ fun PhotosScreen(
     val ctx = LocalContext.current
     val g = ctx.graph
     val settings by g.settingsState.collectAsStateWithLifecycle()
-    val work by androidx.compose.runtime.remember { WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW) }
-        .collectAsStateWithLifecycle(emptyList())
+    // Backup progress only matters once backup is on; don't start WorkManager before that.
+    val work by androidx.compose.runtime.remember(settings.backupEnabled) {
+        if (settings.backupEnabled) WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW)
+        else kotlinx.coroutines.flow.flowOf(emptyList())
+    }.collectAsStateWithLifecycle(emptyList())
     val running = work.firstOrNull { it.state == WorkInfo.State.RUNNING }
     val progress = running?.progress?.let { p ->
         val t = p.getInt(BackupWorker.KEY_TOTAL, 0); if (t > 0) p.getInt(BackupWorker.KEY_DONE, 0).toFloat() / t else null

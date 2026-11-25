@@ -143,10 +143,13 @@ func main() {
 			fail("nothing to change: use --endpoint <public name or IP> and/or --lan-ip <address>")
 		}
 		if *endpoint != "" && !validHost(*endpoint) {
+			if strings.Count(*endpoint, ":") == 1 {
+				fail("give the name without a port (the VPN port is set with setup --vpn-port), e.g. myhome.duckdns.org")
+			}
 			fail("%q isn't a host name or IP address (e.g. myhome.duckdns.org or 203.0.113.7)", *endpoint)
 		}
-		if *lan != "" && net.ParseIP(*lan) == nil {
-			fail("%q isn't an IP address (e.g. 192.168.1.50)", *lan)
+		if ip := net.ParseIP(*lan); *lan != "" && (ip == nil || ip.To4() == nil) {
+			fail("%q isn't an IPv4 address (e.g. 192.168.1.50)", *lan)
 		}
 		check(st.Update(func(x *state.State) error {
 			if *endpoint != "" {
@@ -173,7 +176,7 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	o := core.SetupOptions{}
 	fs.StringVar(&o.DataDir, "data-dir", "", "where photos, files and the database are stored (default /srv/immcloudscale)")
-	fs.StringVar(&o.LANAddress, "lan-ip", "", "the NAS's LAN address (detected)")
+	fs.StringVar(&o.LANAddress, "lan-ip", "", "the NAS's LAN IPv4 address (detected)")
 	fs.StringVar(&o.Endpoint, "endpoint", "", "public host name or IP for the VPN (default: detected public IP)")
 	fs.IntVar(&o.WGPort, "vpn-port", 0, "WireGuard UDP port (default 51820)")
 	fs.StringVar(&o.FirstUser, "user", "", "the owner's user name (asked if missing)")
@@ -185,6 +188,12 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	noPublic := fs.Bool("no-public-ip-lookup", false, "don't ask api.ipify.org for the public IP")
 	allowSleep := fs.Bool("allow-sleep", false, "don't stop this machine from suspending (it must stay on to serve phones)")
 	check(fs.Parse(args))
+	if ip := net.ParseIP(o.LANAddress); o.LANAddress != "" && (ip == nil || ip.To4() == nil) {
+		fail("--lan-ip %q isn't an IPv4 address (e.g. 192.168.1.50)", o.LANAddress)
+	}
+	if o.Endpoint != "" && !validHost(o.Endpoint) {
+		fail("--endpoint %q isn't a host name or IP address without a port (e.g. myhome.duckdns.org)", o.Endpoint)
+	}
 
 	if os.Geteuid() != 0 {
 		fail("setup needs root: sudo ics-server setup")

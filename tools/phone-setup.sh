@@ -34,14 +34,31 @@ PKG=app.immcloudscale
 
 command -v adb >/dev/null || die "adb not found. Install Android platform tools: macOS 'brew install android-platform-tools', Ubuntu 'sudo apt install adb', Windows 'winget install Google.PlatformTools'"
 [ -n "$APK$LINK$NAS$CODE" ] || die "pass --apk and a way to pair: --server/--code, --nas/--person or --link"
+
+# Check everything we were given before touching the phone or the server.
 if [ -z "$LINK" ] && [ -n "$CODE" ]; then
   [ -n "$SERVER" ] || die "--server is required with --code (the NAS address, e.g. 192.168.1.50)"
   case "$CODE" in *[!A-Za-z0-9\ -]*) die "--code looks wrong; it's like K7QX-M2PA" ;; esac
   case "$SERVER" in *[!A-Za-z0-9.:/\[\]-]*) die "--server looks wrong; use the address, e.g. 192.168.1.50" ;; esac
   case "$SERVER" in *://*) ;; *) SERVER="http://$SERVER" ;; esac
-  case "${SERVER#*://}" in *:*) ;; *) SERVER="$SERVER:8790" ;; esac
-  ENC=$(printf '%s' "$SERVER" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's#/#%2F#g')
+  HOSTPORT=${SERVER#*://}
+  case "$HOSTPORT" in
+    \[*\]:*) ;;                              # [IPv6]:port
+    \[*\]) SERVER="$SERVER:8790" ;;          # [IPv6]
+    *:*) ;;                                   # host:port
+    *) SERVER="$SERVER:8790" ;;
+  esac
+  ENC=$(printf '%s' "$SERVER" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's#/#%2F#g' -e 's/\[/%5B/g' -e 's/\]/%5D/g')
   LINK="immcloudscale://pair?code=$CODE&server=$ENC"
+fi
+if [ -n "$NAS" ]; then
+  [ -n "$PERSON" ] || die "--person is required with --nas"
+  case "$PERSON" in *[!a-z0-9._-]*) die "--person must be a user name like alex" ;; esac
+fi
+if [ -n "$APK" ] && [ ! -f "$APK" ]; then die "APK not found: $APK"; fi
+if [ -n "$LINK" ]; then
+  case "$LINK" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $LINK" ;; esac
+  case "$LINK" in *"'"*) die "the pairing link contains a quote character" ;; esac
 fi
 
 # Pick the phone.
@@ -56,7 +73,6 @@ A() { adb -s "$SERIAL" "$@"; }
 say "Phone: $(A shell getprop ro.product.manufacturer | tr -d '\r') $(A shell getprop ro.product.model | tr -d '\r') (Android $(A shell getprop ro.build.version.release | tr -d '\r'))"
 
 if [ -n "$APK" ]; then
-  [ -f "$APK" ] || die "APK not found: $APK"
   say "Installing $(basename "$APK") with its permissions granted"
   A install -r -g "$APK" >/dev/null
   # Pre-approve the VPN so the app doesn't need the system VPN dialog (works on most phones).
@@ -67,7 +83,6 @@ if [ -z "$LINK" ] && [ -n "$NAS" ]; then
   [ -n "$PERSON" ] || die "--person is required with --nas"
   say "Getting a pairing code for $PERSON from $NAS"
   BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort)
-  case "$PERSON" in *[!a-z0-9._-]*|"") die "--person must be a user name like alex" ;; esac
   JSON=$(ssh "$NAS" "$SUDO ics-server pair $(printf %q "$PERSON") --json")
   LINK=$(printf '%s' "$JSON" | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
   [ -n "$LINK" ] || die "couldn't read the pairing link: $JSON"
@@ -75,8 +90,6 @@ fi
 
 if [ -n "$LINK" ]; then
   say "Opening the pairing link on the phone. Tap \"Pair\" on the phone now"
-  case "$LINK" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $LINK" ;; esac
-  case "$LINK" in *"'"*) die "the pairing link contains a quote character" ;; esac
   A shell "am start -a android.intent.action.VIEW -d '$LINK' $PKG" >/dev/null
   if [ -n "$NAS" ]; then
     printf '   waiting for the phone'
