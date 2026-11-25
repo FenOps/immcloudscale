@@ -65,6 +65,28 @@ func (h *Handler) Routes() http.Handler {
 		}
 		writeJSON(w, 200, map[string]any{"name": u.Name, "isAdmin": u.IsAdmin, "pendingRequests": pending})
 	}))
+	mux.Handle("POST /api/v1/me/session", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		tok, err := h.S.UserSession(r.Context(), u.Name)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"accessToken": tok})
+	}))
+	mux.Handle("GET /api/v1/manage/features", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.Features())
+	}))
+	mux.Handle("POST /api/v1/manage/features", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ MachineLearning bool }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if err := h.S.SetMachineLearning(in.MachineLearning); err != nil {
+			writeErr(w, 409, err)
+			return
+		}
+		writeJSON(w, 202, h.S.Features())
+	}))
 	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
 		writeJSON(w, 200, h.S.Requests())
 	}))
@@ -302,7 +324,10 @@ func (h *Handler) adminAuth(next http.Handler) http.Handler {
 func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
 	c := h.S.Store.Read().Config
 	host, _ := os.Hostname()
-	info := map[string]any{"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID}
+	info := map[string]any{
+		"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID,
+		"machineLearning": c.MachineLearning, // face recognition, smart search and duplicates need it
+	}
 	// The Tailscale address only (never the auth key): phones paired before Tailscale was set up learn it here.
 	if h.S.TailscaleIP != nil {
 		if ip := h.S.TailscaleIP(); ip != "" {
