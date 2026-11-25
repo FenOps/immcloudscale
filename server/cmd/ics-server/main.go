@@ -38,6 +38,9 @@ Usage: ics-server <command> [options]
   user add <name>       add a person (Immich + Nextcloud accounts)   [--email]
   user list             list people and their web sign-in passwords
   user remove <name>    delete a person's accounts, photos and files [--yes]
+  user admin <name>     let a person approve sign-ups and manage members [--off]
+  requests              list sign-up requests from the app; approve or decline them
+                                                        [--approve <id> --decline <id>]
   devices               list paired phones
   revoke <device-id>    disconnect a phone (VPN, photo and file access)
   config                change settings                             [--endpoint --lan-ip]
@@ -129,6 +132,15 @@ func main() {
 			}
 			check(s.RemoveUser(ctx, args[2]))
 			fmt.Println("Removed", args[2])
+		case "admin":
+			need(args, 3, "ics-server user admin <name> [--off]")
+			on := !(len(args) > 3 && args[3] == "--off")
+			check(s.SetAdmin(args[2], on))
+			if on {
+				fmt.Printf("%s is now an admin: they can approve sign-up requests and manage members in the app.\n", args[2])
+			} else {
+				fmt.Printf("%s is no longer an admin.\n", args[2])
+			}
 		default:
 			fail("unknown user command %q", args[1])
 		}
@@ -145,6 +157,27 @@ func main() {
 		fmt.Println("Revoked", args[1])
 	case "tailscale":
 		tailscaleCmd(s, args[1:])
+	case "requests":
+		fs := flag.NewFlagSet("requests", flag.ExitOnError)
+		approve := fs.String("approve", "", "approve the request with this ID")
+		decline := fs.String("decline", "", "decline the request with this ID")
+		check(fs.Parse(args[1:]))
+		switch {
+		case *approve != "":
+			req, err := s.ApproveJoin(ctx, *approve, "command line")
+			check(err)
+			fmt.Printf("Approved %s. Their app pairs by itself; or give them this code: %s\n", req.Name, req.Code)
+		case *decline != "":
+			check(s.DeclineJoin(*decline, "command line"))
+			fmt.Println("Declined.")
+		default:
+			w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tNAME\tEMAIL\tPHONE\tSTATUS\tASKED")
+			for _, r := range s.Requests() {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Name, r.Email, r.Device, r.Status, r.Created.Format("2006-01-02 15:04"))
+			}
+			w.Flush()
+		}
 	case "config":
 		fs := flag.NewFlagSet("config", flag.ExitOnError)
 		endpoint := fs.String("endpoint", "", "public host name or IP phones use to reach the VPN")

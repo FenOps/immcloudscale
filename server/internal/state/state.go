@@ -32,6 +32,21 @@ type Device struct {
 	ImmichKeyID   string    `json:"immichKeyId"`
 	NCAppPassword string    `json:"ncAppPassword"`
 	Created       time.Time `json:"created"`
+	// TokenHash is the SHA-256 of the secret the phone got at pairing; it signs the phone's member-management requests.
+	TokenHash string `json:"tokenHash,omitempty"`
+}
+
+// JoinRequest is someone asking, from the app, for an account; an admin approves or declines it.
+type JoinRequest struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Device    string    `json:"device"`
+	Created   time.Time `json:"created"`
+	Status    string    `json:"status"`    // pending, approved, declined
+	TokenHash string    `json:"tokenHash"` // SHA-256 of the requester's secret for checking on the request
+	Code      string    `json:"code,omitempty"`
+	DecidedBy string    `json:"decidedBy,omitempty"`
 }
 
 type Pairing struct {
@@ -73,10 +88,11 @@ type Config struct {
 }
 
 type State struct {
-	Config   Config    `json:"config"`
-	Users    []User    `json:"users"`
-	Devices  []Device  `json:"devices"`
-	Pairings []Pairing `json:"pairings"`
+	Config   Config        `json:"config"`
+	Users    []User        `json:"users"`
+	Devices  []Device      `json:"devices"`
+	Pairings []Pairing     `json:"pairings"`
+	Requests []JoinRequest `json:"joinRequests,omitempty"`
 }
 
 // Store serialises access to the state file.

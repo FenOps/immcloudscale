@@ -1,6 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -149,4 +152,55 @@ func TestInfoGivesTheTailscaleAddressButNeverTheKey(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"tailscaleIp":"100.101.102.103"`) || strings.Contains(w.Body.String(), "tskey") {
 		t.Fatalf("%s", w.Body)
 	}
+}
+
+func TestJoinEndpointsAndMemberManagementNeedAnAdminPhone(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	// Not set up: requests are refused politely.
+	if w := do(h, "POST", "/api/v1/join", `{"name":"dana"}`, false); w.Code != 400 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	s.Store.Update(func(st *state.State) error {
+		st.Config.ImmichAdminPass = "x"
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	w := do(h, "POST", "/api/v1/join", `{"name":"dana","device":"Pixel"}`, false)
+	if w.Code != 201 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	var created struct{ ID, Token string }
+	json.Unmarshal(w.Body.Bytes(), &created)
+
+	r := httptest.NewRequest("GET", "/api/v1/join/"+created.ID, nil)
+	r.Header.Set("X-ICS-Token", created.Token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"status":"pending"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+
+	manage := func(secret string) int {
+		r := httptest.NewRequest("GET", "/api/v1/manage/requests", nil)
+		r.RemoteAddr = "192.168.1.30:5000"
+		r.Header.Set("Authorization", "Device dev_a:"+secret)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := manage("wrong"); c != 401 {
+		t.Fatalf("wrong secret: %d", c)
+	}
+	if c := manage("secret"); c != 403 {
+		t.Fatalf("not an admin yet: %d", c)
+	}
+	s.SetAdmin("camille", true)
+	if c := manage("secret"); c != 200 {
+		t.Fatalf("admin phone: %d", c)
+	}
+}
+
+func hashForTest(t string) string {
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:])
 }

@@ -495,15 +495,18 @@ var ErrUserGone = errors.New("the person this code was made for has been removed
 
 type PairResult struct {
 	DeviceID string `json:"deviceId"`
-	Server   struct {
+	// DeviceToken lets the phone prove it's this device (for admins managing members from the app).
+	DeviceToken string `json:"deviceToken"`
+	Server      struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 		// ID identifies this server; the phone checks it before sending credentials on Wi-Fi without the VPN.
 		ID string `json:"id"`
 	} `json:"server"`
 	User struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name    string `json:"name"`
+		Email   string `json:"email"`
+		IsAdmin bool   `json:"isAdmin"`
 	} `json:"user"`
 	Immich struct {
 		URL    string `json:"url"`
@@ -598,7 +601,11 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 		ok = true // nothing to give back
 		return res, ErrUserGone
 	}
-	dev := state.Device{ID: "dev_" + strings.ToLower(state.Secret(10)), User: u.Name, Name: name, PublicKey: strings.TrimSpace(req.WGPublicKey), Created: s.Now()}
+	deviceToken := state.Secret(32)
+	dev := state.Device{
+		ID: "dev_" + strings.ToLower(state.Secret(10)), User: u.Name, Name: name, PublicKey: strings.TrimSpace(req.WGPublicKey),
+		Created: s.Now(), TokenHash: hashToken(deviceToken),
+	}
 
 	im := s.immich(c)
 	tok, err := im.Login(ctx, u.Email, u.Password)
@@ -653,9 +660,9 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	}
 
 	host, _ := os.Hostname()
-	res.DeviceID = dev.ID
+	res.DeviceID, res.DeviceToken = dev.ID, deviceToken
 	res.Server.Name, res.Server.Version, res.Server.ID = host, Version, c.ServerID
-	res.User.Name, res.User.Email = u.Name, u.Email
+	res.User.Name, res.User.Email, res.User.IsAdmin = u.Name, u.Email, u.IsAdmin
 	res.Immich.URL = fmt.Sprintf("http://%s:%d", c.LANAddress, c.ImmichPort)
 	res.Immich.APIKey = key.Secret
 	res.Nextcloud.URL = fmt.Sprintf("http://%s:%d", c.LANAddress, c.NextcloudPort)
