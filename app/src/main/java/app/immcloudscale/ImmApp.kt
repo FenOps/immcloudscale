@@ -13,6 +13,7 @@ import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
+import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.tailscale.TailscaleManager
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.VpnStatus
@@ -61,6 +62,7 @@ class AppGraph(val context: Context) {
         tailscale.onNetwork(home)
     }
     val offline = OfflineStore(context)
+    val members = MembersClient(http) { settingsState.value }
 
     /**
      * Pairs with an ImmCloudScale server: the WireGuard key pair is made here and only the public

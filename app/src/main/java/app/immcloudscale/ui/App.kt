@@ -52,6 +52,7 @@ import app.immcloudscale.graph
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.ui.account.AccountDialog
 import app.immcloudscale.ui.account.FreeUpPrompt
+import app.immcloudscale.ui.account.MembersScreen
 import app.immcloudscale.ui.account.PairLinkDialog
 import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.ServersScreen
@@ -192,6 +193,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
             )
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
+        composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
         composable("backup") { BackupScreen(onBack = { nav.popBackStack() }, onOpenNetwork = { nav.popBackStack(); tab = Tab.Network }) }
         composable("servers") {
             ServersScreen(onBack = { nav.popBackStack() }, onNetwork = { tab = Tab.Network; nav.popBackStack("main", false) }, onDone = {})
@@ -207,6 +209,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         onServers = { nav.navigate("servers") },
         onBackup = { nav.navigate("backup") },
         onNetwork = { tab = Tab.Network },
+        onMembers = { nav.navigate("members") },
     )
     if (newAlbum) NewAlbumDialog(onDismiss = { newAlbum = false }) { name ->
         newAlbum = false

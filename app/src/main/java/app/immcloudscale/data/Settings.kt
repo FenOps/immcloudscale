@@ -85,6 +85,15 @@ data class AppSettings(
     val pairedDeviceId: String = "",
     /** The server's ID from pairing; checked before sending credentials on Wi-Fi without the VPN. */
     val pairedServerId: String = "",
+    /** This phone's secret from pairing: signs member management requests (admins). */
+    val deviceToken: String = "",
+    val isAdmin: Boolean = false,
+
+    /** A request to join a server, waiting for an admin (set before this phone is paired). */
+    val joinServer: String = "",
+    val joinId: String = "",
+    val joinToken: String = "",
+    val joinName: String = "",
 ) {
     val immichConfigured get() = immichUrl.isNotBlank() && immichToken.isNotBlank()
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
@@ -123,6 +132,12 @@ class SettingsStore(private val context: Context) {
         val pairedServerName = stringPreferencesKey("paired_server_name")
         val pairedDeviceId = stringPreferencesKey("paired_device_id")
         val pairedServerId = stringPreferencesKey("paired_server_id")
+        val deviceToken = stringPreferencesKey("device_token")
+        val isAdmin = booleanPreferencesKey("is_admin")
+        val joinServer = stringPreferencesKey("join_server")
+        val joinId = stringPreferencesKey("join_id")
+        val joinToken = stringPreferencesKey("join_token")
+        val joinName = stringPreferencesKey("join_name")
         val tsEnabled = booleanPreferencesKey("ts_enabled")
         val tsServerIp = stringPreferencesKey("ts_server_ip")
         val tsAuthKey = stringPreferencesKey("ts_auth_key")
@@ -168,6 +183,12 @@ class SettingsStore(private val context: Context) {
             pairedServerName = p[K.pairedServerName] ?: "",
             pairedDeviceId = p[K.pairedDeviceId] ?: "",
             pairedServerId = p[K.pairedServerId] ?: "",
+            deviceToken = p[K.deviceToken] ?: "",
+            isAdmin = p[K.isAdmin] ?: false,
+            joinServer = p[K.joinServer] ?: "",
+            joinId = p[K.joinId] ?: "",
+            joinToken = p[K.joinToken] ?: "",
+            joinName = p[K.joinName] ?: "",
             tsEnabled = p[K.tsEnabled] ?: false,
             tsServerIp = p[K.tsServerIp] ?: "",
             tsAuthKey = p[K.tsAuthKey] ?: "",
@@ -223,6 +244,8 @@ class SettingsStore(private val context: Context) {
             p[K.filesGrid] = n.filesGrid; p[K.photoColumns] = n.photoColumns.toString()
             p[K.pairedServer] = n.pairedServer; p[K.pairedServerName] = n.pairedServerName
             p[K.pairedDeviceId] = n.pairedDeviceId; p[K.pairedServerId] = n.pairedServerId
+            p[K.deviceToken] = n.deviceToken; p[K.isAdmin] = n.isAdmin
+            p[K.joinServer] = n.joinServer; p[K.joinId] = n.joinId; p[K.joinToken] = n.joinToken; p[K.joinName] = n.joinName
             p[K.tsEnabled] = n.tsEnabled; p[K.tsServerIp] = n.tsServerIp
             p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
             p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()

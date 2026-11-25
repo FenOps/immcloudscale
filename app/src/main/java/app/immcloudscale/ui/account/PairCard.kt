@@ -78,6 +78,7 @@ fun PairCard(onPaired: () -> Unit) {
     var code by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var joining by remember { mutableStateOf(false) }
 
     fun pair(srv: String, c: String) {
         busy = true; error = null
@@ -114,6 +115,10 @@ fun PairCard(onPaired: () -> Unit) {
                 OutlinedButton(onClick = { scope.launch { g.settings.update { it.copy(pairedServer = "") } } }) { Text("Pair again") }
                 return@Column
             }
+            if (s.joinId.isNotBlank()) {
+                JoinWaiting(s, onPaired)
+                return@Column
+            }
             Text("Scan the code shown by `ics-server setup` or the server's admin console. Photos, files and the home VPN are set up in one go.")
             Button(onClick = { scanPairingCode(ctx, { pair(it.server, it.code) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
@@ -134,8 +139,10 @@ fun PairCard(onPaired: () -> Unit) {
                 if (busy) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(8.dp)) }
                 Text("Pair")
             }
+            TextButton(onClick = { joining = true }, enabled = !busy) { Text("New here? Ask to join") }
         }
     }
+    if (joining) JoinDialog { joining = false }
 }
 
 /** Confirmation shown when a pairing link (QR scanned with the camera) opens the app. */

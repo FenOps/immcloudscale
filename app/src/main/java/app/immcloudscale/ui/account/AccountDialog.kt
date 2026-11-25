@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Icon
@@ -51,7 +52,7 @@ import app.immcloudscale.ui.components.formatBytes
 
 /** Google's account card, adapted: who you are on each server, backup, storage, and the VPN. */
 @Composable
-fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> Unit, onNetwork: () -> Unit) {
+fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> Unit, onNetwork: () -> Unit, onMembers: () -> Unit = {}) {
     val g = LocalContext.current.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
     val vpn by g.vpn.state.collectAsStateWithLifecycle()
@@ -60,9 +61,13 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
     LaunchedEffect(Unit) {
         if (s.immichConfigured) immichStorage = runCatching { g.immich.storage() }.getOrNull()
         if (s.nextcloudConfigured) quota = runCatching { g.nextcloud.quota() }.getOrNull()
+        // Someone may have made this person an admin (or not) since pairing.
+        if (s.deviceToken.isNotBlank()) runCatching { g.members.me() }.onSuccess { me ->
+            if (me.isAdmin != s.isAdmin) g.settings.update { it.copy(isAdmin = me.isAdmin) }
+        }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        AccountCard(s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork)
+        AccountCard(s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers)
     }
 }
 
@@ -76,6 +81,7 @@ fun AccountCard(
     onServers: () -> Unit,
     onBackup: () -> Unit,
     onNetwork: () -> Unit,
+    onMembers: () -> Unit = {},
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -130,6 +136,13 @@ fun AccountCard(
                 leadingContent = { Icon(Icons.Outlined.Hub, null) },
                 headlineContent = { Text(if (vpnConnected) "Connected to home" else "Home VPN") },
                 supportingContent = { Text(if (s.vpnConfigured) (if (vpnConnected) "WireGuard tunnel is up" else "Not connected") else "Not set up") },
+            )
+            if (s.isAdmin) ListItem(
+                modifier = Modifier.clickable { onDismiss(); onMembers() },
+                colors = rowColors,
+                leadingContent = { Icon(Icons.Outlined.Group, null) },
+                headlineContent = { Text("Members") },
+                supportingContent = { Text("Approve sign-up requests and choose admins") },
             )
             Text(
                 "Your photos and files stay on your own server",
