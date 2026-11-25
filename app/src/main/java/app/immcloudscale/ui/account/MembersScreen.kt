@@ -86,8 +86,7 @@ fun MembersScreen(onBack: () -> Unit) {
     suspend fun load() {
         ui = runCatching {
             MembersUi(g.members.requests().filter { it.status == "pending" }, g.members.members(), runCatching { g.members.features() }.getOrNull(), false)
-        }
-            .getOrElse { MembersUi(loading = false, error = it.message ?: "Couldn't reach your server") }
+        }.getOrElse { MembersUi(loading = false, error = it.message ?: "Couldn't reach your server") }
     }
     fun act(block: suspend () -> Unit) = scope.launch {
         runCatching { block() }.onFailure { snack.showSnackbar(it.message ?: "Something went wrong") }
@@ -219,7 +218,6 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
                     )
                 }
             }
-
         }
     }
 }

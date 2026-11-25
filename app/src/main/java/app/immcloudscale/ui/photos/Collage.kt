@@ -3,6 +3,7 @@ package app.immcloudscale.ui.photos
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -46,7 +47,7 @@ fun collageCells(n: Int): List<RectF> {
 /** Draws [photos] into a square collage with thin white gaps, each photo cropped to fill its cell. */
 fun drawCollage(photos: List<Bitmap>, size: Int = 2048, gap: Int = 12): Bitmap {
     val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val c = Canvas(out).apply { drawColor(android.graphics.Color.WHITE) }
+    val c = Canvas(out).apply { drawColor(Color.WHITE) }
     val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     collageCells(photos.size).zip(photos).forEach { (cell, b) ->
         val dst = RectF(cell.left * size + gap / 2f, cell.top * size + gap / 2f, cell.right * size - gap / 2f, cell.bottom * size - gap / 2f)

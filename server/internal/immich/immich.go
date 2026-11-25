@@ -153,7 +153,7 @@ func (c *Client) CurrentSessionID(ctx context.Context, token string) (string, er
 		ID      string `json:"id"`
 		Current bool   `json:"current"`
 	}
-	if err := c.do(ctx, "GET", "/sessions", token, nil, &sessions); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/sessions", token, nil, &sessions); err != nil {
 		return "", err
 	}
 	for _, s := range sessions {
@@ -166,7 +166,7 @@ func (c *Client) CurrentSessionID(ctx context.Context, token string) (string, er
 
 // DeleteSession signs that session out (it may already be gone).
 func (c *Client) DeleteSession(ctx context.Context, userToken, id string) error {
-	err := c.do(ctx, "DELETE", "/sessions/"+id, userToken, nil, nil)
+	err := c.do(ctx, http.MethodDelete, "/sessions/"+id, userToken, nil, nil)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == 404 {
 		return nil
@@ -175,5 +175,5 @@ func (c *Client) DeleteSession(ctx context.Context, userToken, id string) error 
 }
 
 func (c *Client) Logout(ctx context.Context, token string) error {
-	return c.do(ctx, "POST", "/auth/logout", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/auth/logout", token, nil, nil)
 }

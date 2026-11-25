@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -174,7 +175,7 @@ fun NetworkScreen(onAccount: () -> Unit, bottomPadding: PaddingValues) {
         onEnabled = vm::setTsEnabled,
         onConnect = vm::tsConnect,
         onDisconnect = vm::tsDisconnect,
-        onSignIn = { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } },
+        onSignIn = { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
         onSignOut = vm::tsSignOut,
     )
     NetworkContent(vpn, s, ui, vm.summary(), vm.publicKey(), actions, snack, bottomPadding, remoteCard = {

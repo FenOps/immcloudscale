@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.SettingsStore
+import app.immcloudscale.tsbridge.Tsbridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -42,14 +43,14 @@ interface TailscaleBridge {
 /** The gomobile-built bridge. Its native library loads on first use, never in unit tests. */
 object GoTailscaleBridge : TailscaleBridge {
     override fun start(dir: String, hostname: String, authKey: String, controlUrl: String) =
-        app.immcloudscale.tsbridge.Tsbridge.start(dir, hostname, authKey, controlUrl)
-    override fun stop() = app.immcloudscale.tsbridge.Tsbridge.stop()
-    override fun logout() = app.immcloudscale.tsbridge.Tsbridge.logout()
-    override fun setRoute(lanHost: String, tailnetHost: String) = app.immcloudscale.tsbridge.Tsbridge.setRoute(lanHost, tailnetHost)
-    override fun proxyPort(): Int = app.immcloudscale.tsbridge.Tsbridge.proxyPort().toInt()
-    override fun proxyToken(): String = app.immcloudscale.tsbridge.Tsbridge.proxyToken()
-    override fun status(): String = app.immcloudscale.tsbridge.Tsbridge.status()
-    override fun logs(): String = app.immcloudscale.tsbridge.Tsbridge.logs()
+        Tsbridge.start(dir, hostname, authKey, controlUrl)
+    override fun stop() = Tsbridge.stop()
+    override fun logout() = Tsbridge.logout()
+    override fun setRoute(lanHost: String, tailnetHost: String) = Tsbridge.setRoute(lanHost, tailnetHost)
+    override fun proxyPort(): Int = Tsbridge.proxyPort().toInt()
+    override fun proxyToken(): String = Tsbridge.proxyToken()
+    override fun status(): String = Tsbridge.status()
+    override fun logs(): String = Tsbridge.logs()
 }
 
 enum class TsStatus { Off, Starting, NeedsLogin, Connected, Error }

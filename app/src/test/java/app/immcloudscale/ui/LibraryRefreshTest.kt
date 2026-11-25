@@ -1,6 +1,7 @@
 package app.immcloudscale.ui
 
 import android.content.Context
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration
 import androidx.work.testing.SynchronousExecutor
@@ -21,7 +22,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.SQLiteMode
-import android.os.Looper
 
 /** Lists opened before pairing (or before anything was backed up) must fill in once there is something to show. */
 @RunWith(RobolectricTestRunner::class)

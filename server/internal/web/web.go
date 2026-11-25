@@ -26,12 +26,11 @@ import (
 var indexHTML []byte
 
 type Handler struct {
-	S         *core.Server
-	pairLimit *limiter // wrong pairing codes per IP
-	authLimit *limiter // wrong admin passwords per IP
-	joinLimit *limiter // join requests per IP
-	// locked-folder sessions per phone
-	sessionLimit *limiter
+	S            *core.Server
+	pairLimit    *limiter // wrong pairing codes per IP
+	authLimit    *limiter // wrong admin passwords per IP
+	joinLimit    *limiter // join requests per IP
+	sessionLimit *limiter // locked-folder sessions per phone
 	// wrong phone secrets per IP (separate from the console, so a misbehaving phone can't lock the admin out)
 	deviceLimit *limiter
 }

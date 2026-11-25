@@ -1,6 +1,8 @@
 package app.immcloudscale.ui.account
 
+import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -52,7 +54,7 @@ fun FreeUpSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         val f = found
         found = null
-        if (r.resultCode == android.app.Activity.RESULT_OK && f != null) onMessage("Freed ${formatBytes(f.bytes)} on this phone")
+        if (r.resultCode == Activity.RESULT_OK && f != null) onMessage("Freed ${formatBytes(f.bytes)} on this phone")
     }
     ListItem(
         modifier = Modifier.clickable(enabled = !checking && s.immichConfigured) {
@@ -97,7 +99,7 @@ fun FreeUpSection(s: AppSettings, update: ((AppSettings) -> AppSettings) -> Unit
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         TextButton(
-            onClick = { runCatching { ctx.startActivity(Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA).setData(android.net.Uri.fromParts("package", ctx.packageName, null))) } },
+            onClick = { runCatching { ctx.startActivity(Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA).setData(Uri.fromParts("package", ctx.packageName, null))) } },
             modifier = Modifier.padding(horizontal = 8.dp),
         ) { Text("Allow media management") }
     }

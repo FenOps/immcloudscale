@@ -124,10 +124,10 @@ func (s *Server) JoinStatus(id, token string) (status, code string, err error) {
 			paired = true
 		}
 	}
-	if valid || paired {
-		if paired {
-			return "approved", "", nil
-		}
+	if paired {
+		return "approved", "", nil
+	}
+	if valid {
 		return "approved", req.Code, nil
 	}
 	p, err := s.StartPairing(req.Name)

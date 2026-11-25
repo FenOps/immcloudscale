@@ -1,8 +1,8 @@
 package app.immcloudscale.ui.collections
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,10 +94,7 @@ fun LockedFolderScreen(onBack: () -> Unit) {
     val snack = remember { SnackbarHostState() }
 
     suspend fun open() {
-        ui = runCatching {
-            val a = g.immich.lockedAssets(session, 1).items
-            LockedUi.Open(a)
-        }.getOrElse { LockedUi.Problem(it.message ?: "Couldn't open the locked folder") }
+        ui = runCatching { LockedUi.Open(g.immich.lockedAssets(session, 1).items) }.getOrElse { LockedUi.Problem(it.message ?: "Couldn't open the locked folder") }
     }
 
     LaunchedEffect(Unit) {

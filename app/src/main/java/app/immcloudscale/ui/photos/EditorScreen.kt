@@ -11,7 +11,6 @@ import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +57,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -66,12 +66,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import app.immcloudscale.AppGraph
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.graph
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
@@ -251,7 +253,7 @@ private val PEN_COLORS = listOf(
 private val ACTIVE_TOOL = Color(0xFFA8C7FA)
 
 @Composable
-private fun ToolButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+private fun ToolButton(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.selectable(active, role = Role.Tab, onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -283,7 +285,7 @@ internal fun applyCrop(b: Bitmap, r: Rect): Bitmap {
 }
 
 /** The original, scaled down to at most about 3000 pixels a side; the preview if the original can't be decoded. */
-private fun loadForEditing(http: okhttp3.OkHttpClient, original: String, preview: String): Bitmap? {
+private fun loadForEditing(http: OkHttpClient, original: String, preview: String): Bitmap? {
     fun fetch(url: String) = http.newCall(Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
     for (url in listOf(original, preview)) {
         val bytes = runCatching { fetch(url) }.getOrNull() ?: continue
@@ -298,7 +300,7 @@ private fun loadForEditing(http: okhttp3.OkHttpClient, original: String, preview
 }
 
 /** Uploads the edited picture as a new photo dated like the original, so it sits right next to it. */
-private suspend fun saveCopy(g: app.immcloudscale.AppGraph, asset: AssetDto, b: Bitmap) {
+private suspend fun saveCopy(g: AppGraph, asset: AssetDto, b: Bitmap) {
     val bytes = withContext(Dispatchers.Default) { ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray() }
     val name = asset.originalFileName.substringBeforeLast('.').ifBlank { "photo" } + "-edited.jpg"
     val taken = runCatching { Instant.parse(asset.fileCreatedAt) }.getOrDefault(Instant.now())
