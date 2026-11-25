@@ -10,7 +10,7 @@ Licensed AGPL-3.0-only (see LICENSE).
 - `tools/phone-setup.sh`: installs the APK and pairs a phone over adb (`--server … --code …`).
 
 ## Installing on a server
-- Supported: Ubuntu 22.04/24.04, Debian 12; amd64/arm64. Check before starting; stop and explain otherwise.
+- Supported: Ubuntu 22.04/24.04/26.04, Debian 12; amd64/arm64. Check before starting; stop and explain otherwise.
 - Install with `curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash -s -- <setup options>`,
   or `sudo ./server/deploy/install.sh` from a clone of https://github.com/FenOps/immcloudscale.
 - Your shell can't answer sudo password prompts. If `sudo -n true` fails, ask the person to create

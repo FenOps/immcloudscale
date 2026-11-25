@@ -14,7 +14,7 @@ by scanning a QR code: no server URLs, passwords, API keys or WireGuard configs 
 
 ## Install
 
-On Ubuntu 22.04/24.04 or Debian 12 (amd64 or arm64):
+On Ubuntu 22.04/24.04/26.04 or Debian 12 (amd64 or arm64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash

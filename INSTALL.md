@@ -41,7 +41,7 @@ Wherever you see 🤖, you can let **Claude** do that step for you instead.
 
 ## Step 1: Put Ubuntu on the server (about 20 minutes)
 
-**Skip this step** if the server already runs Ubuntu 22.04, Ubuntu 24.04 or Debian 12.
+**Skip this step** if the server already runs Ubuntu 22.04, 24.04 or 26.04, or Debian 12.
 
 <details>
 <summary><b>On a PC, laptop or mini PC</b></summary>
