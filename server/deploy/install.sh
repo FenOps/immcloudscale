@@ -94,6 +94,12 @@ if [ -z "$DEB" ] && [ "${ICS_FROM_SOURCE:-}" != 1 ]; then
   URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
     | grep -o "https://[^\"]*immcloudscale-server_[^\"]*_${ARCH}.deb" | head -1 || true)
   if [ -z "$URL" ]; then
+    # The API allows 60 requests an hour per address; the release page redirect has no such limit.
+    TAG=$(curl -fsSI "https://github.com/$REPO/releases/latest" 2>/dev/null \
+      | sed -n 's|^[Ll]ocation: .*/releases/tag/\(v[0-9][0-9.]*\).*|\1|p' | head -1 || true)
+    [ -n "$TAG" ] && URL="https://github.com/$REPO/releases/download/$TAG/immcloudscale-server_${TAG#v}_${ARCH}.deb"
+  fi
+  if [ -z "$URL" ]; then
     echo "   no release found; building from source instead"
   elif curl -fsSL --retry 3 -o "$TMP/ics.deb" "$URL"; then
     DEB="$TMP/ics.deb"
