@@ -26,6 +26,8 @@ func New(base string) *Client {
 type OCSError struct {
 	Status, Code int
 	Message      string
+	// Parsed is false when the reply wasn't an OCS envelope (e.g. an HTML error page from a proxy).
+	Parsed bool
 }
 
 func (e *OCSError) Error() string { return fmt.Sprintf("nextcloud: %s (code %d)", e.Message, e.Code) }
@@ -73,7 +75,7 @@ func (c *Client) ocs(ctx context.Context, method, path, user, pass string, form 
 	m := env.OCS.Meta
 	// OCS v1 reports success as 100, v2 as 200.
 	if m.StatusCode != 100 && m.StatusCode != 200 {
-		return &OCSError{Status: resp.StatusCode, Code: m.StatusCode, Message: m.Message}
+		return &OCSError{Status: resp.StatusCode, Code: m.StatusCode, Message: m.Message, Parsed: true}
 	}
 	if data != nil && len(env.OCS.Data) > 0 {
 		return json.Unmarshal(env.OCS.Data, data)
@@ -108,7 +110,7 @@ func (c *Client) CreateUser(ctx context.Context, admin, adminPass, user, pass, d
 func (c *Client) UserExists(ctx context.Context, admin, adminPass, user string) (bool, error) {
 	err := c.ocs(ctx, http.MethodGet, "/ocs/v1.php/cloud/users/"+url.PathEscape(user), admin, adminPass, nil, nil)
 	var oe *OCSError
-	if errors.As(err, &oe) && (oe.Code == 404 || oe.Code == 998 || oe.Status == http.StatusNotFound) {
+	if errors.As(err, &oe) && oe.Parsed && (oe.Code == 404 || oe.Code == 998) {
 		return false, nil
 	}
 	return err == nil, err

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Everything the app remembers. Lives in app-private storage (backups are disabled in the manifest). */
@@ -139,7 +140,7 @@ class SettingsStore(private val context: Context) {
 
     suspend fun current(): AppSettings = state.value
 
-    private val writeLock = kotlinx.coroutines.sync.Mutex()
+    private val writeLock = Mutex()
 
     // Serialised so the in-memory copy always ends up equal to the newest saved settings.
     suspend fun update(block: (AppSettings) -> AppSettings) = writeLock.withLock { save(block) }

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -600,9 +601,8 @@ func TestEndpointFollowsTheLANAddressWhenNoPublicAddressIsKnown(t *testing.T) {
 func TestRejectedAdminSessionIsRenewed(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	ctx := context.Background()
-	c := s.Store.Read().Config
 	s.tokMu.Lock()
-	s.tok, s.tokUntil = "stale-token", s.Now().Add(time.Hour)
+	s.tok, s.tokUntil, s.tokChecked = "stale-token", s.Now().Add(time.Hour), time.Time{}
 	s.tokMu.Unlock()
 	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
 		t.Fatalf("a rejected cached session must be replaced: %v", err)
@@ -610,5 +610,37 @@ func TestRejectedAdminSessionIsRenewed(t *testing.T) {
 	if s.tok == "stale-token" {
 		t.Fatal("token not renewed")
 	}
-	_ = c
+}
+
+func TestRemoveUserKeepsThePersonWhenNextcloudStillHasThem(t *testing.T) {
+	s, f, _ := newTestServer(t)
+	ctx := context.Background()
+	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
+		t.Fatal(err)
+	}
+	s.NextcloudURL = func(state.Config) string { return "http://127.0.0.1:1" } // Nextcloud unreachable
+	if err := s.RemoveUser(ctx, "sam"); err == nil {
+		t.Fatal("a failed Nextcloud delete must be reported")
+	}
+	if st := s.Store.Read(); st.FindUser("sam") == nil {
+		t.Fatal("the person must stay listed so the admin can retry")
+	}
+	_ = f
+}
+
+func TestPairForARemovedPersonIsRefused(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.StartPairing("sam")
+	// The person disappears from state while the code is still valid (e.g. removed mid-pairing).
+	s.Store.Update(func(st *state.State) error {
+		st.Users = st.Users[:1]
+		return nil
+	})
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code}); !errors.Is(err, ErrUserGone) {
+		t.Fatalf("got %v", err)
+	}
 }

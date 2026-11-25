@@ -43,6 +43,10 @@ if [ -z "$LINK" ] && [ -n "$CODE" ]; then
   case "$SERVER" in *://*) ;; *) SERVER="http://$SERVER" ;; esac
   HOSTPORT=${SERVER#*://}
   case "$HOSTPORT" in
+    \[*) ;;
+    *:*:*) die "write an IPv6 address in brackets, e.g. --server [fe80::1]" ;;
+  esac
+  case "$HOSTPORT" in
     \[*\]:*) ;;                              # [IPv6]:port
     \[*\]) SERVER="$SERVER:8790" ;;          # [IPv6]
     *:*) ;;                                   # host:port
@@ -51,8 +55,8 @@ if [ -z "$LINK" ] && [ -n "$CODE" ]; then
   ENC=$(printf '%s' "$SERVER" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's#/#%2F#g' -e 's/\[/%5B/g' -e 's/\]/%5D/g')
   LINK="immcloudscale://pair?code=$CODE&server=$ENC"
 fi
-if [ -n "$NAS" ]; then
-  [ -n "$PERSON" ] || die "--person is required with --nas"
+if [ -n "$NAS" ] && [ -z "$LINK" ]; then
+  [ -n "$PERSON" ] || die "--person is required with --nas (or give --server/--code)"
   case "$PERSON" in *[!a-z0-9._-]*) die "--person must be a user name like alex" ;; esac
 fi
 if [ -n "$APK" ] && [ ! -f "$APK" ]; then die "APK not found: $APK"; fi
@@ -60,6 +64,10 @@ if [ -n "$LINK" ]; then
   case "$LINK" in immcloudscale://pair\?*) ;; *) die "not a pairing link: $LINK" ;; esac
   case "$LINK" in *"'"*) die "the pairing link contains a quote character" ;; esac
 fi
+
+# With SSH access, remember the paired phones now, so a new one can be recognised afterwards.
+BEFORE=""
+if [ -n "$NAS" ]; then BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort); fi
 
 # Pick the phone.
 DEVICES=$(adb devices | awk 'NR>1 && $2=="device" {print $1}')
@@ -82,7 +90,6 @@ fi
 if [ -z "$LINK" ] && [ -n "$NAS" ]; then
   [ -n "$PERSON" ] || die "--person is required with --nas"
   say "Getting a pairing code for $PERSON from $NAS"
-  BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort)
   JSON=$(ssh "$NAS" "$SUDO ics-server pair $(printf %q "$PERSON") --json")
   LINK=$(printf '%s' "$JSON" | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
   [ -n "$LINK" ] || die "couldn't read the pairing link: $JSON"
@@ -100,7 +107,7 @@ if [ -n "$LINK" ]; then
       NEW=$(comm -13 <(printf '%s\n' "$BEFORE") <(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort))
       if [ -n "$NEW" ]; then
         printf '\n'; say "Paired! The phone now has photos, files and the home VPN."
-        ssh "$NAS" "$SUDO ics-server devices" | tail -1
+        ssh "$NAS" "$SUDO ics-server devices" | awk -v id="$(printf '%s' "$NEW" | head -1)" 'NR==1 || $1==id' 
         PAIRED=1
         break
       fi

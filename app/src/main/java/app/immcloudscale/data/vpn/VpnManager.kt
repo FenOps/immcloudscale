@@ -228,13 +228,23 @@ class VpnManager(
         _state.value = _state.value.copy(network = name)
         // The network itself, not its name: Android may reveal the Wi-Fi name later, which isn't a move.
         val key = current?.key?.toString() ?: "none"
-        if (key == lastKey) return
+        val net = current?.key
+        if (key == lastKey) {
+            // Same network, but Android revealed its Wi-Fi name only now: decide again (a trusted name may mean home).
+            if (ssid != null && ssid != lastSsid) {
+                lastSsid = ssid
+                scope.launch { decisions.withLock { onNetworkChanged(key, wifi, ssid, net) } }
+            }
+            return
+        }
         lastKey = key
+        lastSsid = ssid
         userDisconnected = false // a new network: auto-connect may act again
         onNetworkKey(key)
-        val net = current?.key
         scope.launch { decisions.withLock { onNetworkChanged(key, wifi, ssid, net) } }
     }
+
+    @Volatile private var lastSsid: String? = null
 
     private val decisions = Mutex()
 

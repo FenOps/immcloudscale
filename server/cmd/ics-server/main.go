@@ -156,6 +156,9 @@ func main() {
 				x.Config.Endpoint = *endpoint
 			}
 			if *lan != "" {
+				if *endpoint == "" && x.Config.Endpoint == x.Config.LANAddress {
+					x.Config.Endpoint = *lan // no public address was known: the VPN endpoint was the LAN address
+				}
 				x.Config.LANAddress, x.Config.LANManual = *lan, true
 			}
 			return nil
@@ -471,8 +474,12 @@ func openFirewall(s *core.Server) {
 
 // validHost accepts a DNS name or an IP address (no port, no spaces).
 func validHost(h string) bool {
-	if net.ParseIP(strings.Trim(h, "[]")) != nil {
-		return true
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		ip := net.ParseIP(h[1 : len(h)-1])
+		return ip != nil && ip.To4() == nil // IPv6 in brackets
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.To4() != nil // IPv6 must be written in brackets, e.g. [2001:db8::1]
 	}
 	if len(h) == 0 || len(h) > 253 {
 		return false

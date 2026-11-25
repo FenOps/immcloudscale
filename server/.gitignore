@@ -1,1 +1,4 @@
 dist/
+
+# Scratch output (e.g. saved API responses) must never be committed
+/*.json

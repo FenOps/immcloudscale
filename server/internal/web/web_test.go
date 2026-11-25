@@ -125,3 +125,10 @@ func TestInfoIsCheapAndHasServerID(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+func TestBadKeyIsAClientError(t *testing.T) {
+	h := newHandler(t)
+	if w := do(h, "POST", "/api/v1/pair", `{"code":"ABCD-EFGH","wgPublicKey":"not-a-key"}`, false); w.Code != 400 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+}

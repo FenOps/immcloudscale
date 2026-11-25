@@ -31,8 +31,10 @@ class HomeGuard(
     fun check(url: HttpUrl) {
         val s = settings()
         if (s.pairedServer.isBlank() || s.pairedServerId.isBlank()) return // hand-configured servers: user's choice
-        // Only the paired server's own address is checked (it hands out the same LAN address for all services).
-        if (!url.host.equals(s.pairedServer.toHttpUrlOrNull()?.host, ignoreCase = true)) return
+        // The addresses this pairing set up (the server's LAN address for photos and files, and the address the
+        // phone paired through, which may be a name like nas.local). Hand-configured servers clear the pairing.
+        val hosts = listOf(s.pairedServer, s.immichUrl, s.ncUrl).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
+        if (url.host.lowercase() !in hosts) return
         if (!isPrivateHost(url.host)) return // public names (e.g. HTTPS behind a domain) aren't ambiguous
         if (vpnConnected()) return // through the tunnel, private addresses are always home
         // One check at a time: a screen of thumbnails shouldn't send a probe per image.

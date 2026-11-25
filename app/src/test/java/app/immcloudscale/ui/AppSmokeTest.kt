@@ -30,7 +30,6 @@ class AppSmokeTest {
         )
     }
 
-
     @Test fun firstRunAndTabs() {
         compose.onNodeWithText("Welcome to ImmCloudScale").assertExists()
         compose.onNodeWithText("Sign in with browser").assertExists()

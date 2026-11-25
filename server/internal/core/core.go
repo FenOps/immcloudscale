@@ -41,9 +41,10 @@ type Server struct {
 	// PortFree checks ports on first setup; nil means "assume free" (tests).
 	PortFree func(port int, udp bool) bool
 
-	tokMu    sync.Mutex
-	tok      string
-	tokUntil time.Time
+	tokMu      sync.Mutex
+	tok        string
+	tokUntil   time.Time
+	tokChecked time.Time
 }
 
 // adminToken logs in as the hidden Immich service admin, reusing the session for a while
@@ -51,14 +52,14 @@ type Server struct {
 func (s *Server) adminToken(ctx context.Context, c state.Config) (string, error) {
 	s.tokMu.Lock()
 	defer s.tokMu.Unlock()
-	if s.tok != "" && s.Now().Before(s.tokUntil) && s.tokValid(ctx, c) {
+	if s.tok != "" && s.Now().Before(s.tokUntil) && (s.Now().Sub(s.tokChecked) < time.Minute || s.tokValid(ctx, c)) {
 		return s.tok, nil
 	}
 	t, err := s.immich(c).Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass)
 	if err != nil {
 		return "", err
 	}
-	s.tok, s.tokUntil = t, s.Now().Add(30*time.Minute)
+	s.tok, s.tokUntil, s.tokChecked = t, s.Now().Add(30*time.Minute), s.Now()
 	return t, nil
 }
 
@@ -67,7 +68,11 @@ func (s *Server) adminToken(ctx context.Context, c state.Config) (string, error)
 func (s *Server) tokValid(ctx context.Context, c state.Config) bool {
 	var ae *immich.APIError
 	_, err := s.immich(c).Storage(ctx, s.tok)
-	return !(errors.As(err, &ae) && ae.Status == 401)
+	if errors.As(err, &ae) && ae.Status == 401 {
+		return false
+	}
+	s.tokChecked = s.Now()
+	return true
 }
 
 func New(st *state.Store) *Server {

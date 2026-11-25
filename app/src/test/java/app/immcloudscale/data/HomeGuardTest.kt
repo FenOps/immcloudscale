@@ -42,6 +42,13 @@ class HomeGuardTest {
         assertEquals(2, probes)
     }
 
+    @Test fun pairedThroughAHostNameStillGuardsTheLanAddress() {
+        val viaName = paired.copy(pairedServer = "http://nas.local:8790")
+        val guard = HomeGuard({ viaName }, { false }, probe = { "someone-elses-device" })
+        val e = runCatching { guard.check("http://192.168.1.50:2283/api/users/me".toHttpUrl()) }.exceptionOrNull()
+        assertTrue("the Immich LAN address must still be checked", e is IOException)
+    }
+
     @Test fun onlyThePairedServersAddressIsChecked() {
         // A server set up by hand at another LAN address isn't checked against the paired one.
         HomeGuard({ paired }, { false }, probe = { error("must not probe") }).check("http://192.168.2.10:2283/api".toHttpUrl())
