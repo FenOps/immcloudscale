@@ -4,13 +4,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.material3.MaterialTheme
 import coil3.compose.AsyncImage
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
 import kotlin.math.abs
 
 /**
@@ -25,13 +31,22 @@ fun RemoteImage(
     contentScale: ContentScale = ContentScale.Crop,
     contentDescription: String? = null,
     background: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    /** An Immich session to load it with (the locked folder), instead of the app's API key. */
+    session: String? = null,
 ) {
     if (LocalInspectionMode.current || url == null) {
         Box(modifier.background(placeholderBrush(key)))
         return
     }
+    val ctx = LocalContext.current
+    val model: Any = if (session == null) url else remember(url, session) {
+        ImageRequest.Builder(ctx).data(url)
+            .httpHeaders(NetworkHeaders.Builder().set("Authorization", "Bearer $session").build())
+            // Never cached: locked photos mustn't stay on the phone once the folder locks again.
+            .memoryCachePolicy(CachePolicy.DISABLED).diskCachePolicy(CachePolicy.DISABLED).build()
+    }
     Box(modifier.background(background)) {
-        AsyncImage(model = url, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())
+        AsyncImage(model = model, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())
     }
 }
 

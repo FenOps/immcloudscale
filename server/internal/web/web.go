@@ -19,19 +19,24 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/FenOps/immcloudscale/server/internal/core"
+	"github.com/FenOps/immcloudscale/server/internal/state"
 )
 
 //go:embed ui/index.html
 var indexHTML []byte
 
 type Handler struct {
-	S         *core.Server
-	pairLimit *limiter // wrong pairing codes per IP
-	authLimit *limiter // wrong admin passwords per IP
+	S            *core.Server
+	pairLimit    *limiter // wrong pairing codes per IP
+	authLimit    *limiter // wrong admin passwords per IP
+	joinLimit    *limiter // join requests per IP
+	sessionLimit *limiter // locked-folder sessions per phone
+	// wrong phone secrets per IP (separate from the console, so a misbehaving phone can't lock the admin out)
+	deviceLimit *limiter
 }
 
 func New(s *core.Server) *Handler {
-	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute)}
+	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute), joinLimit: newLimiter(5, 10*time.Minute), sessionLimit: newLimiter(10, time.Hour), deviceLimit: newLimiter(10, 10*time.Minute)}
 }
 
 // PairLink is what the QR code holds; scanning it with the phone's camera opens the app.
@@ -48,6 +53,71 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/info", h.info)
 	mux.HandleFunc("POST /api/v1/pair", h.pair)
+	mux.HandleFunc("POST /api/v1/join", h.join)
+	mux.HandleFunc("GET /api/v1/join/{id}", h.joinStatus)
+
+	// Phones manage members with the secret they got at pairing; only admins' phones get past adminOnly.
+	mux.Handle("GET /api/v1/me", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		pending := 0
+		if u.IsAdmin {
+			for _, x := range h.S.Requests() {
+				if x.Status == "pending" {
+					pending++
+				}
+			}
+		}
+		writeJSON(w, 200, map[string]any{"name": u.Name, "isAdmin": u.IsAdmin, "pendingRequests": pending})
+	}))
+	mux.Handle("POST /api/v1/me/session", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		dev := deviceID(r)
+		if !h.sessionLimit.allow(dev) {
+			writeErr(w, 429, errors.New("too many sign-ins from this phone; try again later"))
+			return
+		}
+		h.sessionLimit.fail(dev) // every session counts
+		tok, err := h.S.DeviceSession(r.Context(), dev)
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"accessToken": tok})
+	}))
+	mux.Handle("GET /api/v1/manage/features", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.Features())
+	}))
+	mux.Handle("POST /api/v1/manage/features", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ MachineLearning *bool }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if in.MachineLearning == nil {
+			writeErr(w, 400, errors.New("say whether machineLearning should be on or off"))
+			return
+		}
+		if err := h.S.SetMachineLearning(*in.MachineLearning); err != nil {
+			writeErr(w, 409, err)
+			return
+		}
+		writeJSON(w, 202, h.S.Features())
+	}))
+	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.Requests())
+	}))
+	mux.Handle("POST /api/v1/manage/requests/{id}/approve", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		h.approve(w, r, u.Name)
+	}))
+	mux.Handle("POST /api/v1/manage/requests/{id}/decline", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		h.decline(w, r, u.Name)
+	}))
+	mux.Handle("GET /api/v1/manage/users", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.Members())
+	}))
+	mux.Handle("POST /api/v1/manage/users/{name}/admin", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		h.setAdmin(w, r)
+	}))
+	mux.Handle("POST /api/v1/manage/users/{name}/pair", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		h.startPairing(w, r.PathValue("name"))
+	}))
 
 	admin := http.NewServeMux()
 	admin.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -82,13 +152,18 @@ func (h *Handler) Routes() http.Handler {
 		if !readJSON(w, r, &in) {
 			return
 		}
-		p, err := h.S.StartPairing(in.User)
-		if err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		writeJSON(w, 201, map[string]any{"code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": PairLink(h.baseURL(), p.Code)})
+		h.startPairing(w, in.User)
 	})
+	admin.HandleFunc("GET /api/admin/requests", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, h.S.Requests())
+	})
+	admin.HandleFunc("POST /api/admin/requests/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+		h.approve(w, r, "admin console")
+	})
+	admin.HandleFunc("POST /api/admin/requests/{id}/decline", func(w http.ResponseWriter, r *http.Request) {
+		h.decline(w, r, "admin console")
+	})
+	admin.HandleFunc("POST /api/admin/users/{name}/admin", h.setAdmin)
 	admin.HandleFunc("GET /api/admin/qr", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		png, err := qrcode.Encode(PairLink(h.baseURL(), code), qrcode.Medium, 320)
@@ -116,8 +191,117 @@ func (h *Handler) Routes() http.Handler {
 		}()
 		writeJSON(w, 202, map[string]string{"status": "updating"})
 	})
+	// Phone API paths that don't exist: a plain 404, not the console's password prompt.
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, 404, errors.New("no such API")) })
 	mux.Handle("/", h.adminAuth(sameOriginOnly(admin)))
 	return securityHeaders(mux)
+}
+
+func (h *Handler) startPairing(w http.ResponseWriter, user string) {
+	p, err := h.S.StartPairing(user)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"code": p.Code, "expires": p.Expires, "server": h.baseURL(), "link": PairLink(h.baseURL(), p.Code)})
+}
+
+func (h *Handler) approve(w http.ResponseWriter, r *http.Request, by string) {
+	req, err := h.S.ApproveJoin(r.Context(), r.PathValue("id"), by)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"request": req, "server": h.baseURL(), "link": PairLink(h.baseURL(), req.Code)})
+}
+
+func (h *Handler) decline(w http.ResponseWriter, r *http.Request, by string) {
+	if err := h.S.DeclineJoin(r.PathValue("id"), by); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (h *Handler) setAdmin(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Admin bool }
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := h.S.SetAdmin(r.PathValue("name"), in.Admin); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// join takes a request for an account from someone's app on the home network (or the tailnet).
+func (h *Handler) join(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !h.joinLimit.allow(ip) {
+		writeErr(w, 429, errors.New("too many requests from this device; wait a few minutes"))
+		return
+	}
+	var in struct{ Name, Email, Device string }
+	if !readJSON(w, r, &in) {
+		return
+	}
+	h.joinLimit.fail(ip) // every request counts, accepted or not
+	id, token, err := h.S.RequestJoin(in.Name, in.Email, in.Device)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, map[string]string{"id": id, "token": token})
+}
+
+// joinStatus lets the requester's app check its request; once approved it gets the pairing code.
+func (h *Handler) joinStatus(w http.ResponseWriter, r *http.Request) {
+	status, code, err := h.S.JoinStatus(r.PathValue("id"), r.Header.Get("X-ICS-Token"))
+	if errors.Is(err, core.ErrBadRequestToken) {
+		writeErr(w, 404, err)
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	out := map[string]string{"status": status, "server": h.baseURL()}
+	if code != "" {
+		out["code"] = code
+	}
+	writeJSON(w, 200, out)
+}
+
+// deviceID is the phone a deviceAuth-checked request came from.
+func deviceID(r *http.Request) string {
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Device ")
+	id, _, _ := strings.Cut(cred, ":")
+	return id
+}
+
+// deviceAuth checks "Authorization: Device <id>:<secret>" (the phone's secret from pairing).
+func (h *Handler) deviceAuth(adminOnly bool, next func(http.ResponseWriter, *http.Request, state.User)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		if !h.deviceLimit.allow(ip) {
+			writeErr(w, 429, errors.New("too many attempts, try again later"))
+			return
+		}
+		cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Device ")
+		id, secret, _ := strings.Cut(cred, ":")
+		u, err := h.S.DeviceUser(id, secret)
+		if err != nil {
+			h.deviceLimit.fail(ip)
+			writeErr(w, 401, err)
+			return
+		}
+		if adminOnly && !u.IsAdmin {
+			writeErr(w, 403, core.ErrNotAdmin)
+			return
+		}
+		next(w, r, u)
+	})
 }
 
 // sameOriginOnly blocks cross-site requests: browsers resend Basic auth automatically, so without this
@@ -162,7 +346,17 @@ func (h *Handler) adminAuth(next http.Handler) http.Handler {
 func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
 	c := h.S.Store.Read().Config
 	host, _ := os.Hostname()
-	writeJSON(w, 200, map[string]any{"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID})
+	info := map[string]any{
+		"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID,
+		"machineLearning": c.MachineLearning, // face recognition, smart search and duplicates need it
+	}
+	// The Tailscale address only (never the auth key): phones paired before Tailscale was set up learn it here.
+	if h.S.TailscaleIP != nil {
+		if ip := h.S.TailscaleIP(); ip != "" {
+			info["tailscaleIp"] = ip
+		}
+	}
+	writeJSON(w, 200, info)
 }
 
 func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {

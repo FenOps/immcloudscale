@@ -24,7 +24,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 const ncAdmin = "ics-admin"
 
@@ -40,6 +40,8 @@ type Server struct {
 	WaitTimeout  time.Duration
 	// PortFree checks ports on first setup; nil means "assume free" (tests).
 	PortFree func(port int, udp bool) bool
+	// TailscaleIP is this machine's Tailscale address, "" when it has none; nil means no Tailscale (tests).
+	TailscaleIP func() string
 
 	tokMu      sync.Mutex
 	tok        string
@@ -86,6 +88,7 @@ func New(st *state.Store) *Server {
 		Log:          log.New(os.Stderr, "", log.LstdFlags),
 		WaitTimeout:  20 * time.Minute,
 		PortFree:     PortFree,
+		TailscaleIP:  cachedTailscaleIP(tailscaleIPCmd),
 	}
 }
 
@@ -336,7 +339,10 @@ var userRe = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,31}$`)
 
 func (s *Server) AddUser(ctx context.Context, name, email string, admin bool) (state.User, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if !userRe.MatchString(name) || name == ncAdmin {
+	if reservedName(name) {
+		return state.User{}, fmt.Errorf("%q is reserved; pick another name", name)
+	}
+	if !userRe.MatchString(name) {
 		return state.User{}, fmt.Errorf("user names are 2-32 lowercase letters, digits, '.', '_' or '-', starting with a letter")
 	}
 	st := s.Store.Read()
@@ -345,6 +351,11 @@ func (s *Server) AddUser(ctx context.Context, name, email string, admin bool) (s
 	}
 	if st.FindUser(name) != nil {
 		return state.User{}, fmt.Errorf("user %q already exists", name)
+	}
+	for _, r := range st.Requests {
+		if r.Name == name && r.Status == "pending" && !r.Approving {
+			return state.User{}, fmt.Errorf("someone asked to join as %q from the app; approve or decline that request first", name)
+		}
 	}
 	if email == "" {
 		email = name + "@immcloudscale.local"
@@ -492,15 +503,18 @@ var ErrUserGone = errors.New("the person this code was made for has been removed
 
 type PairResult struct {
 	DeviceID string `json:"deviceId"`
-	Server   struct {
+	// DeviceToken lets the phone prove it's this device (for admins managing members from the app).
+	DeviceToken string `json:"deviceToken"`
+	Server      struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 		// ID identifies this server; the phone checks it before sending credentials on Wi-Fi without the VPN.
 		ID string `json:"id"`
 	} `json:"server"`
 	User struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name    string `json:"name"`
+		Email   string `json:"email"`
+		IsAdmin bool   `json:"isAdmin"`
 	} `json:"user"`
 	Immich struct {
 		URL    string `json:"url"`
@@ -518,6 +532,7 @@ type PairResult struct {
 		AllowedIPs      string `json:"allowedIps"`
 		DNS             string `json:"dns"`
 	} `json:"wireguard,omitempty"`
+	Tailscale *TailscaleInfo `json:"tailscale,omitempty"`
 }
 
 var ErrBadCode = errors.New("that pairing code is wrong or has expired")
@@ -594,7 +609,11 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 		ok = true // nothing to give back
 		return res, ErrUserGone
 	}
-	dev := state.Device{ID: "dev_" + strings.ToLower(state.Secret(10)), User: u.Name, Name: name, PublicKey: strings.TrimSpace(req.WGPublicKey), Created: s.Now()}
+	deviceToken := state.Secret(32)
+	dev := state.Device{
+		ID: "dev_" + strings.ToLower(state.Secret(10)), User: u.Name, Name: name, PublicKey: strings.TrimSpace(req.WGPublicKey),
+		Created: s.Now(), TokenHash: hashToken(deviceToken),
+	}
 
 	im := s.immich(c)
 	tok, err := im.Login(ctx, u.Email, u.Password)
@@ -649,9 +668,9 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	}
 
 	host, _ := os.Hostname()
-	res.DeviceID = dev.ID
+	res.DeviceID, res.DeviceToken = dev.ID, deviceToken
 	res.Server.Name, res.Server.Version, res.Server.ID = host, Version, c.ServerID
-	res.User.Name, res.User.Email = u.Name, u.Email
+	res.User.Name, res.User.Email, res.User.IsAdmin = u.Name, u.Email, u.IsAdmin
 	res.Immich.URL = fmt.Sprintf("http://%s:%d", c.LANAddress, c.ImmichPort)
 	res.Immich.APIKey = key.Secret
 	res.Nextcloud.URL = fmt.Sprintf("http://%s:%d", c.LANAddress, c.NextcloudPort)
@@ -669,6 +688,7 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 			AllowedIPs: wg.ClientAllowedIPs(c.WGSubnet, c.LANSubnet),
 		}
 	}
+	res.Tailscale = s.tailscaleInfo()
 	s.Log.Printf("Paired %q for %s (VPN %s)", name, u.Name, dev.Address)
 	ok = true
 	// The same phone paired again (e.g. after a new endpoint): retire its old entry and credentials.
@@ -705,14 +725,23 @@ func (s *Server) userToken(ctx context.Context, c state.Config, u *state.User) (
 
 // revokeCredentials deletes a phone's Immich API key and Nextcloud app password.
 func (s *Server) revokeCredentials(ctx context.Context, c state.Config, u *state.User, dev state.Device) error {
-	if dev.ImmichKeyID != "" {
+	if dev.ImmichKeyID != "" || dev.ImmichSessionID != "" {
 		tok, err := s.userToken(ctx, c, u)
 		if err != nil {
 			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
 		}
+		im := s.immich(c)
+		defer im.Logout(context.WithoutCancel(ctx), tok) // the sign-in used just for this
 		var ae *immich.APIError
-		if err := s.immich(c).DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
-			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+		if dev.ImmichKeyID != "" {
+			if err := im.DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
+				return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+			}
+		}
+		if dev.ImmichSessionID != "" {
+			if err := im.DeleteSession(ctx, tok, dev.ImmichSessionID); err != nil {
+				return fmt.Errorf("couldn't sign the phone out of its locked folder: %w", err)
+			}
 		}
 	}
 	if dev.NCAppPassword != "" {
@@ -780,9 +809,12 @@ type Status struct {
 	Immich    bool            `json:"immichReady"`
 	Nextcloud bool            `json:"nextcloudReady"`
 	VPNUp     bool            `json:"vpnUp"`
-	Storage   *immich.Storage `json:"storage,omitempty"`
-	Users     []PublicUser    `json:"users"`
-	Devices   []DeviceStatus  `json:"devices"`
+	// TailscaleIP is set when this server is on a tailnet; TailscaleKey says whether phones join it on their own.
+	TailscaleIP  string          `json:"tailscaleIp,omitempty"`
+	TailscaleKey bool            `json:"tailscaleKey"`
+	Storage      *immich.Storage `json:"storage,omitempty"`
+	Users        []PublicUser    `json:"users"`
+	Devices      []DeviceStatus  `json:"devices"`
 }
 
 type PublicConfig struct {
@@ -813,6 +845,9 @@ func (s *Server) Status(ctx context.Context) Status {
 	host, _ := os.Hostname()
 	out := Status{Version: Version, Hostname: host, SetUp: c.ImmichAdminPass != ""}
 	out.Config = PublicConfig{c.LANAddress, c.LANSubnet, c.Endpoint, c.WGPort, c.WGSubnet, c.ImmichPort, c.NextcloudPort, c.DataDir, c.MachineLearning, c.VPNEnabled}
+	if ts := s.tailscaleInfo(); ts != nil {
+		out.TailscaleIP, out.TailscaleKey = ts.IP, ts.AuthKey != ""
+	}
 	if !out.SetUp {
 		return out
 	}

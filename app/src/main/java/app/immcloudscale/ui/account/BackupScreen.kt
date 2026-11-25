@@ -76,7 +76,7 @@ private val mediaPermissions = when {
 /** Google Photos' "Backup" settings page, driving the Immich backup worker. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun BackupScreen(onBack: () -> Unit) {
+fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
@@ -191,6 +191,15 @@ fun BackupScreen(onBack: () -> Unit) {
                     }
                 }
             }
+
+            SectionHeader("Back up when I'm on")
+            BackupWhereChooser(s, { anywhere -> update { chooseBackupWhere(it, anywhere) } }, onOpenNetwork, Modifier.padding(horizontal = 16.dp))
+
+            SectionHeader("Schedule")
+            BackupScheduleSection(s) { block -> update(block) }
+
+            SectionHeader("Phone storage")
+            FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
 
             SectionHeader("When to back up")
             Toggle(Icons.Outlined.Wifi, "Only on Wi-Fi", "Don't use mobile data", s.backupWifiOnly) { v -> update { it.copy(backupWifiOnly = v) } }

@@ -19,14 +19,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Serializable
 data class PairResult(
     val deviceId: String,
+    val deviceToken: String = "",
     val server: ServerInfo,
     val user: UserInfo,
     val immich: ImmichInfo,
     val nextcloud: NextcloudInfo,
     val wireguard: WireGuardInfo? = null,
+    val tailscale: TailscaleInfo? = null,
 ) {
     @Serializable data class ServerInfo(val name: String = "", val version: String = "", val id: String = "")
-    @Serializable data class UserInfo(val name: String, val email: String = "")
+    @Serializable data class UserInfo(val name: String, val email: String = "", val isAdmin: Boolean = false)
     @Serializable data class ImmichInfo(val url: String, val apiKey: String)
     @Serializable data class NextcloudInfo(val url: String, val user: String, val appPassword: String)
     @Serializable data class WireGuardInfo(
@@ -36,6 +38,8 @@ data class PairResult(
         val allowedIps: String,
         val dns: String = "",
     )
+    /** Present when the server is on a tailnet; authKey lets the app join it without a sign-in. */
+    @Serializable data class TailscaleInfo(val ip: String, val authKey: String = "", val controlUrl: String = "")
 }
 
 @Serializable
@@ -124,6 +128,15 @@ object Pairing {
             ),
             pairedServer = normalizeServer(server), pairedDeviceId = r.deviceId, pairedServerName = r.server.name,
             pairedServerId = r.server.id,
+            deviceToken = r.deviceToken, isAdmin = r.user.isAdmin,
+            joinServer = "", joinId = "", joinToken = "", joinName = "",
+            // Remote access comes on by itself when the server offers Tailscale: away from home the app connects
+            // on its own (with the server's key) or asks to sign in once.
+            tsEnabled = if (r.tailscale != null) true else s.tsEnabled,
+            tsServerIp = r.tailscale?.ip ?: s.tsServerIp,
+            tsAuthKey = r.tailscale?.authKey ?: s.tsAuthKey,
+            tsControlUrl = r.tailscale?.controlUrl ?: s.tsControlUrl,
+            backupAnywhere = if (r.tailscale != null) true else s.backupAnywhere,
         )
     }
 }

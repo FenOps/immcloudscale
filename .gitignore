@@ -9,3 +9,6 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+
+# Built by app/tailscale/build-aar.sh
+app/libs/

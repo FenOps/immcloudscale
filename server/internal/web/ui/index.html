@@ -80,6 +80,15 @@ dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
     <div class="tiles" id="services"><div class="muted">Loading…</div></div>
   </section>
 
+  <section class="card" id="requestsCard" hidden>
+    <h2>Sign-up requests</h2>
+    <p class="muted">People asked to join from the ImmCloudScale app. Approving creates their accounts; their app then connects by itself.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th>Phone</th><th>Asked</th><th></th></tr></thead>
+      <tbody id="requests"></tbody>
+    </table></div>
+  </section>
+
   <section class="card">
     <h2><span class="grow">People</span></h2>
     <div class="scroll"><table>
@@ -160,12 +169,22 @@ async function refresh() {
   ].join("");
 
   $("users").innerHTML = (s.users || []).map((u) => `<tr>
-    <td><b>${esc(u.name)}</b>${u.isAdmin ? ' <span class="pill">owner</span>' : ""}</td>
+    <td><b>${esc(u.name)}</b>${u.isAdmin ? ' <span class="pill">admin</span>' : ""}
+      <br><button class="text" data-admin="${esc(u.name)}" data-on="${u.isAdmin ? "" : "1"}">${u.isAdmin ? "Remove admin" : "Make admin"}</button></td>
     <td><span class="mono">${esc(u.email)}</span><br><button class="text" data-reveal="${esc(u.password)}">Show password</button></td>
     <td>${u.devices} ${u.devices === 1 ? "phone" : "phones"}</td>
     <td style="text-align:right"><button class="tonal" data-pair="${esc(u.name)}">Pair a phone</button>
       ${u.isAdmin ? "" : `<button class="danger" data-deluser="${esc(u.name)}">Remove</button>`}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">No people yet.</td></tr>`;
+
+  try {
+    const reqs = (await api("GET", "/api/admin/requests")).filter((r) => r.status === "pending");
+    $("requestsCard").hidden = reqs.length === 0;
+    $("requests").innerHTML = reqs.map((r) => `<tr>
+      <td><b>${esc(r.name)}</b><div class="muted">${esc(r.email)}</div></td><td>${esc(r.device)}</td><td class="muted">${esc(ago(r.created))}</td>
+      <td style="text-align:right"><button class="tonal" data-approve="${esc(r.id)}">Approve</button>
+        <button class="danger" data-decline="${esc(r.id)}">Decline</button></td></tr>`).join("");
+  } catch (e) { /* older server: no requests */ }
 
   $("devices").innerHTML = (s.devices || []).map((d) => `<tr>
     <td>${esc(d.name)}<div class="muted">paired ${esc(ago(d.created))}</div></td><td>${esc(d.user)}</td>
@@ -198,6 +217,17 @@ document.addEventListener("click", async (e) => {
       $("serverUrl").textContent = "Server: " + p.server;
       $("expires").textContent = "Valid for 15 minutes, one phone";
       $("pairDlg").showModal();
+    } else if (t.dataset.approve) {
+      const a = await api("POST", "/api/admin/requests/" + encodeURIComponent(t.dataset.approve) + "/approve");
+      $("qr").src = "/api/admin/qr?code=" + encodeURIComponent(a.request.code);
+      $("code").textContent = a.request.code;
+      $("serverUrl").textContent = "Server: " + a.server;
+      $("expires").textContent = `${a.request.name}'s app connects by itself. Or scan this within 15 minutes.`;
+      $("pairDlg").showModal(); refresh();
+    } else if (t.dataset.decline && confirm("Decline this request? No account is created.")) {
+      await api("POST", "/api/admin/requests/" + encodeURIComponent(t.dataset.decline) + "/decline"); refresh();
+    } else if (t.dataset.admin !== undefined && confirm(t.dataset.on ? `Make ${t.dataset.admin} an admin? Admins can approve sign-ups and manage members.` : `Remove admin rights from ${t.dataset.admin}?`)) {
+      await api("POST", "/api/admin/users/" + encodeURIComponent(t.dataset.admin) + "/admin", { admin: !!t.dataset.on }); refresh();
     } else if (t.dataset.revoke && confirm("Revoke this phone? It loses access to photos, files and the VPN.")) {
       await api("DELETE", "/api/admin/devices/" + encodeURIComponent(t.dataset.revoke)); refresh();
     } else if (t.dataset.deluser && confirm(`Remove ${t.dataset.deluser}? This permanently deletes their Immich and Nextcloud accounts, including all their photos and files, and disconnects their phones.`)) {

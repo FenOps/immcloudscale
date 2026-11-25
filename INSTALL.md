@@ -302,7 +302,44 @@ its permissions already allowed, and pairs it.
 
 ## Step 6: Use it away from home (10 minutes)
 
-At home everything already works. To use the app from anywhere, your router has to let the VPN in.
+At home everything already works. To reach your photos and files from anywhere, pick one of two ways.
+**Option A works on every home connection** (no router settings) and is the one most people should use.
+
+### Option A: Remote access with Tailscale (recommended)
+
+Tailscale is a free service that connects your phone to your server from anywhere. It runs **inside the ImmCloudScale app**,
+so you don't need the Tailscale app on your phone, and it works even when your internet provider shares one address
+between customers ("CGNAT"), where port forwarding can't.
+
+**1. Put the server on Tailscale** (once). On the server run:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+`tailscale up` shows a link: open it on your phone or computer and sign in (a free personal account is fine).
+Then run `sudo ics-server tailscale` to check: it shows the server's Tailscale address.
+
+**2. Let phones join without signing in** (recommended, 3 minutes). Without this, every phone has to sign in to Tailscale once.
+1. Open [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys) → **Generate auth key**.
+2. Switch on **Reusable** and **Ephemeral**, and under **Tags** choose a tag such as `tag:immcloudscale-phone`.
+   (If Tailscale says the tag doesn't exist, add `"tagOwners": {"tag:immcloudscale-phone": ["autogroup:admin"]}` in
+   **Access controls** first.)
+3. On the server run `sudo ics-server tailscale --auth-key tskey-auth-…` (paste the whole key).
+4. In **Access controls**, let that tag reach only your server: anyone with the key can add a device to your Tailscale.
+   🤖 Not sure how? Ask Claude on the server: *"Write a Tailscale access rule so tag:immcloudscale-phone can only reach this server."*
+
+**3. Pair the phones again** (admin console → **Pair a phone**, or in the app: Account → Manage your servers → **Pair again**).
+Pairing hands the phone what it needs; Remote access then switches on by itself.
+
+**4. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data and open ImmCloudScale. The **Network** tab says
+**Connected from outside** after a few seconds, and your photos load. To back up away from home too, choose **Anywhere**
+at the top of the Photos page.
+
+### Option B: your own VPN with port forwarding
+
+Only if your home has a public internet address. Your router has to let the VPN in.
 
 **1. Forward one port on your router.** Open the router's admin page (often `http://192.168.1.1` or `http://192.168.0.1`; the address is on the
 router's sticker) and find **Port forwarding**. It's sometimes called "Virtual server", "NAT" or "Port mapping". Add a rule:
@@ -325,14 +362,10 @@ Save. Forward **only** this one port; never the 2283, 8080 or 8790 ports.
    *"Set up the DuckDNS updater for alexhome with token <your token>"*.
 4. Pair your phones again (admin console → **Pair a phone**) so they learn the new name.
 
-**3. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data. Open ImmCloudScale → **Network** tab → switch it **on**.
-It should say **Connected to home**. Then open the **Photos** tab: your photos load.
+**3. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data. Open ImmCloudScale → **Network** tab → switch the VPN **on**.
 
-**4. Make it automatic (recommended).** On the **Network** tab, switch on **Auto-connect away from home**. Then, while you're at home on Wi-Fi,
-tap **Add current Wi-Fi as trusted**. The phone now connects to home by itself whenever you leave, and disconnects when you're back.
-
-> **Still not connecting?** Some internet providers (especially mobile-broadband and some fibre providers) don't give your home a public address
-> ("CGNAT"), and then port forwarding can't work. Ask your provider for a "public IPv4 address", or ask Claude: *"Is my home connection behind CGNAT?"*
+> **Port forwarding didn't help?** Compare the "WAN IP" on your router's status page with [whatismyip.com](https://whatismyip.com).
+> If they differ, your provider shares one address between customers ("CGNAT") and port forwarding can't work: use Option A.
 
 ---
 
@@ -340,14 +373,25 @@ tap **Add current Wi-Fi as trusted**. The phone now connects to home by itself w
 
 * **Photos** and **Collections** work like Google Photos. Backup runs on its own (by default only on Wi-Fi).
 * **Files** works like Google Drive: tap **New** to upload or make a folder; **⋮** on a file to share a link, star it or keep it offline.
-* **Network** shows whether you're connected to home.
+* **Network** shows whether you're connected from outside (Remote access).
+* **Delete** always asks first; deleting a photo also moves this phone's copy to the phone's trash (30 days to restore).
+* **Free up space** (Photos → cloud icon → Phone storage) removes photos that are safely backed up from the phone.
 * On a computer, use **Photos (web)** and **Files (web)** from Step 3 in a browser, signing in with your web sign-in.
 
 ## Add family members
 
+**Easiest:** they install the app, connect to your home Wi-Fi, and tap **New here? Ask to join**. You (or any admin) approve
+it in the app (tap your profile picture → **Members**) or in the admin console, and their app connects by itself.
+
+Or do it yourself:
 1. Admin console → **People** → type a name → **Add person**. Their web sign-in appears in the list.
-2. Next to their name, tap **Pair a phone**, and on their phone follow **Step 5**.
-3. Lost a phone? Admin console → **Phones** → **Revoke**. It loses access immediately.
+2. Next to their name, tap **Pair a phone**, and on their phone follow **Step 5** (they can also pick a screenshot of the QR code
+   from the gallery).
+3. Lost a phone? Admin console → **Phones** → **Revoke**. It loses access immediately. If it used Tailscale, also remove it at
+   [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
+
+The person who installed the server is an admin. To make someone else an admin: in the app, **Members** → the **Admin** switch,
+or on the server `sudo ics-server user admin <name>`.
 
 ---
 

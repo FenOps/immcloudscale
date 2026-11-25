@@ -3,13 +3,15 @@ package app.immcloudscale.data.backup
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import android.provider.Settings
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
@@ -24,9 +26,11 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
+import app.immcloudscale.MainActivity
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
+import app.immcloudscale.ui.components.formatBytes
 import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
@@ -34,7 +38,10 @@ import okio.BufferedSink
 import okio.source
 import java.io.FileNotFoundException
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
 /** A photo or video on the phone, from MediaStore. */
@@ -106,8 +113,33 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private val app get() = applicationContext as ImmApp
 
     override suspend fun doWork(): Result {
+        try {
+            return backUp()
+        } finally {
+            // A scheduled run books the next one, even when this one failed (after this run, so it doesn't cancel itself).
+            if (SCHEDULED_TAG in tags) schedule(applicationContext, app.graph.settings.current(), fromWorker = true)
+        }
+    }
+
+    private suspend fun backUp(): Result {
         val s = app.graph.settings.current()
         if (!s.immichConfigured) return Result.success()
+        // Away from home, back up only when the person chose "Anywhere", through Tailscale (started here if needed).
+        // Tailscale stays up afterwards like it does for the app on screen; it stops by itself back at home.
+        val ts = app.graph.tailscale
+        if (s.pairedServer.isNotBlank() && !ts.checkHome()) {
+            if (!s.backupAnywhere) return Result.success(workDataOf(KEY_ERROR to "Waiting for your home Wi-Fi"))
+            if (!ts.ensureConnected()) {
+                return Result.success(workDataOf(KEY_ERROR to "Away from home: turn on Remote access in the Network tab to back up"))
+            }
+        }
+        val result = upload(s)
+        runCatching { findDeletedElsewhere() }.onFailure { Log.w("BackupWorker", "checking deletions", it) }
+        if (s.freeUpAuto) runCatching { offerFreeUp(s) }.onFailure { Log.w("BackupWorker", "free up space", it) }
+        return result
+    }
+
+    private suspend fun upload(s: AppSettings): Result {
         // Look back a day past the last file handled: MediaStore can add items with an older DATE_ADDED
         // (e.g. a long video finishing), and files sharing one second could be cut off. Re-checking is cheap:
         // the server says which checksums it already has, so nothing is uploaded twice.
@@ -118,7 +150,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.success(workDataOf(KEY_UPLOADED to 0))
         }
         runCatching { setForeground(foreground(0, media.size)) }
-        val deviceId = "immcloudscale-" + (Settings.Secure.getString(applicationContext.contentResolver, Settings.Secure.ANDROID_ID) ?: "android")
+        val deviceId = PhoneCopies.deviceId(applicationContext)
         var uploaded = 0
         var skipped = 0
         var done = 0
@@ -158,6 +190,56 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
         app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis(), backupSkipped = skipped) }
         return Result.success(workDataOf(KEY_UPLOADED to uploaded, KEY_SKIPPED to skipped))
+    }
+
+    /**
+     * Photos this phone backed up that were deleted in the library since the last look (in the app on another
+     * device, or on the web) are still on this phone. Remember them and tell the person: moving them to the
+     * phone's trash needs Android's confirmation, which only the app on screen can ask for.
+     */
+    private suspend fun findDeletedElsewhere() {
+        val graph = app.graph
+        val checkedAt = System.currentTimeMillis()
+        val since = Instant.ofEpochMilli(graph.settings.current().trashSyncedAt)
+        val trashed = graph.immich.trashedFrom(PhoneCopies.deviceId(applicationContext), since)
+        val known = PhoneCopies.backedUp(applicationContext, trashed)
+        val still = PhoneCopies.find(applicationContext, known.keys, known)
+            .mapNotNull { it.lastPathSegment?.toLongOrNull() }.map { PhoneCopies.key(it, known.getValue(it)) }
+        graph.settings.update { it.copy(trashSyncedAt = checkedAt, phoneTrashPending = it.phoneTrashPending + still) }
+        if (still.isNotEmpty()) notifyDeletedElsewhere(graph.settings.current().phoneTrashPending.size)
+    }
+
+    /** Automatic "Free up space": remembers what can go and asks the app (on screen) to remove it. */
+    private suspend fun offerFreeUp(s: AppSettings) {
+        val f = findFreeUp(applicationContext, app.graph.immich, s.freeUpKeepDays)
+        if (f.sizes.isEmpty()) return
+        app.graph.settings.update { it.copy(freeUpPending = f.keys) }
+        notify(44, "Free up ${formatBytes(f.bytes)}", "${f.sizes.size} backed-up photos and videos can be removed from this phone. Tap to free up space.")
+    }
+
+    private fun notifyDeletedElsewhere(count: Int) = notify(
+        43,
+        if (count == 1) "A deleted photo is still on this phone" else "$count deleted photos are still on this phone",
+        "Tap to move them to the phone's trash too",
+    )
+
+    private fun notify(id: Int, title: String, text: String) {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL_SYNC, "Phone storage", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(
+            applicationContext, 0,
+            Intent(applicationContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = NotificationCompat.Builder(applicationContext, CHANNEL_SYNC)
+            .setSmallIcon(android.R.drawable.ic_menu_delete)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        runCatching { nm.notify(id, n) }
     }
 
     /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
@@ -214,20 +296,50 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_SKIPPED = "skipped"
         const val KEY_ERROR = "error"
         const val NOW = "backup-now"
-        private const val PERIODIC = "backup-periodic"
+        const val PERIODIC = "backup-periodic"
+        const val SCHEDULED = "backup-scheduled"
+        private const val SCHEDULED_TAG = "scheduled"
         private const val CHANNEL = "backup"
+        private const val CHANNEL_SYNC = "deleted"
+
+        /**
+         * Time until the next scheduled backup: the first of [days] (1 = Monday … 7 = Sunday) at [minuteOfDay]
+         * that is still ahead of [now].
+         */
+        fun untilNextRun(days: Set<Int>, minuteOfDay: Int, now: LocalDateTime): Duration {
+            val at = LocalTime.of(minuteOfDay / 60, minuteOfDay % 60)
+            for (ahead in 0..7L) {
+                val day = now.toLocalDate().plusDays(ahead)
+                val run = day.atTime(at)
+                if (day.dayOfWeek.value in days && run.isAfter(now)) return Duration.between(now, run)
+            }
+            return Duration.ofDays(1)
+        }
 
         private fun constraints(s: AppSettings) = Constraints.Builder()
             .setRequiredNetworkType(if (s.backupWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
             .setRequiresCharging(s.backupChargingOnly)
             .build()
 
-        fun schedule(context: Context, s: AppSettings) {
+        fun schedule(context: Context, s: AppSettings, fromWorker: Boolean = false) {
             val wm = WorkManager.getInstance(context)
             if (!s.backupEnabled || !s.immichConfigured) {
                 wm.cancelUniqueWork(PERIODIC)
+                wm.cancelUniqueWork(SCHEDULED)
                 return
             }
+            if (s.backupDays.isNotEmpty()) {
+                // Chosen days and time: one run at the next slot, which books the one after.
+                wm.cancelUniqueWork(PERIODIC)
+                val wait = untilNextRun(s.backupDays, s.backupTime, LocalDateTime.now())
+                wm.enqueueUniqueWork(
+                    SCHEDULED, if (fromWorker) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE,
+                    OneTimeWorkRequestBuilder<BackupWorker>().setInitialDelay(wait.toMillis(), TimeUnit.MILLISECONDS)
+                        .setConstraints(constraints(s)).addTag(SCHEDULED_TAG).build(),
+                )
+                return
+            }
+            wm.cancelUniqueWork(SCHEDULED)
             wm.enqueueUniquePeriodicWork(
                 PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
                 PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS).setConstraints(constraints(s)).build(),

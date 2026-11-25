@@ -32,6 +32,25 @@ type Device struct {
 	ImmichKeyID   string    `json:"immichKeyId"`
 	NCAppPassword string    `json:"ncAppPassword"`
 	Created       time.Time `json:"created"`
+	// TokenHash is the SHA-256 of the secret the phone got at pairing; it signs the phone's member-management requests.
+	TokenHash string `json:"tokenHash,omitempty"`
+	// ImmichSessionID is the session handed to the phone for the locked folder; it's signed out on revoke.
+	ImmichSessionID string `json:"immichSessionId,omitempty"`
+}
+
+// JoinRequest is someone asking, from the app, for an account; an admin approves or declines it.
+type JoinRequest struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Device    string    `json:"device"`
+	Created   time.Time `json:"created"`
+	Status    string    `json:"status"`    // pending, approved, declined
+	TokenHash string    `json:"tokenHash"` // SHA-256 of the requester's secret for checking on the request
+	Code      string    `json:"code,omitempty"`
+	DecidedBy string    `json:"decidedBy,omitempty"`
+	// Approving marks an approval that started creating this person's accounts, so a retry can finish it.
+	Approving bool `json:"approving,omitempty"`
 }
 
 type Pairing struct {
@@ -66,13 +85,18 @@ type Config struct {
 	ImmichAdminPass  string `json:"immichAdminPassword"`
 	AdminPassword    string `json:"adminPassword"` // for the ics-server web console
 	ServerID         string `json:"serverId"`      // random, stable; lets phones recognise this server
+
+	// Handed to phones at pairing so the app joins the tailnet without a sign-in (optional).
+	TailscaleAuthKey    string `json:"tailscaleAuthKey,omitempty"`
+	TailscaleControlURL string `json:"tailscaleControlUrl,omitempty"`
 }
 
 type State struct {
-	Config   Config    `json:"config"`
-	Users    []User    `json:"users"`
-	Devices  []Device  `json:"devices"`
-	Pairings []Pairing `json:"pairings"`
+	Config   Config        `json:"config"`
+	Users    []User        `json:"users"`
+	Devices  []Device      `json:"devices"`
+	Pairings []Pairing     `json:"pairings"`
+	Requests []JoinRequest `json:"joinRequests,omitempty"`
 }
 
 // Store serialises access to the state file.

@@ -10,6 +10,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -53,13 +55,28 @@ class FilesViewModel(private val g: AppGraph) : ViewModel() {
     private val _state = MutableStateFlow(FilesState(offlinePaths = g.offline.all().map { it.first }.toSet()))
     val state = _state.asStateFlow()
     private var job: Job? = null
+    private var loadedAt = 0L
 
-    init { load() }
+    init {
+        // Reload whenever the server connection changes, so a list opened before pairing doesn't stay empty.
+        viewModelScope.launch {
+            g.settingsState.map { Triple(it.ncUrl, it.ncUser, it.ncAppPassword) }.distinctUntilChanged().collect { load() }
+        }
+    }
+
+    /** Reload when coming back to the screen after a while. */
+    fun loadIfStale(maxAgeMs: Long = 30_000) {
+        if (System.currentTimeMillis() - loadedAt > maxAgeMs && !_state.value.loading) load()
+    }
 
     fun load() {
         job?.cancel()
         val s = _state.value
-        if (!g.settingsState.value.nextcloudConfigured) return
+        loadedAt = System.currentTimeMillis()
+        if (!g.settingsState.value.nextcloudConfigured) {
+            _state.update { it.copy(items = emptyList(), loading = false, error = null) }
+            return
+        }
         _state.update { it.copy(loading = true, error = null) }
         job = viewModelScope.launch {
             try {

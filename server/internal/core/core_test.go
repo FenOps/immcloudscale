@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -641,5 +642,182 @@ func TestPairForARemovedPersonIsRefused(t *testing.T) {
 	})
 	if _, err := s.Pair(ctx, PairRequest{Code: p.Code}); !errors.Is(err, ErrUserGone) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestPairingHandsOutTailscaleWhenTheServerIsOnATailnet(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	pair := func() (PairResult, error) {
+		_, pub, _ := wg.NewKeyPair()
+		p, _ := s.StartPairing("camille")
+		return s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "Pixel", WGPublicKey: pub})
+	}
+
+	res, err := pair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tailscale != nil {
+		t.Fatalf("no tailnet, but got %+v", res.Tailscale)
+	}
+
+	s.TailscaleIP = func() string { return "100.101.102.103" }
+	res, err = pair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tailscale == nil || res.Tailscale.IP != "100.101.102.103" || res.Tailscale.AuthKey != "" {
+		t.Fatalf("%+v", res.Tailscale)
+	}
+
+	if err := s.SetTailscaleKey("tskey-auth-example-0123456789", ""); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = pair()
+	if res.Tailscale == nil || res.Tailscale.AuthKey != "tskey-auth-example-0123456789" {
+		t.Fatalf("%+v", res.Tailscale)
+	}
+	if st := s.Status(ctx); st.TailscaleIP != "100.101.102.103" || !st.TailscaleKey {
+		t.Fatalf("status: %s %v", st.TailscaleIP, st.TailscaleKey)
+	}
+}
+
+func TestJoinRequestApprovedGivesThePhoneACode(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+
+	id, token, err := s.RequestJoin("Dana", "dana@example.com", "Pixel 8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.RequestJoin("dana", "", "Pixel 8"); err == nil {
+		t.Fatal("a second request with the same name was accepted")
+	}
+	if _, _, err := s.RequestJoin("camille", "", "x"); err == nil {
+		t.Fatal("a request for an existing person was accepted")
+	}
+	if _, _, err := s.JoinStatus(id, "wrong"); err != ErrBadRequestToken {
+		t.Fatalf("wrong token: %v", err)
+	}
+	if st, code, _ := s.JoinStatus(id, token); st != "pending" || code != "" {
+		t.Fatalf("got %s %q", st, code)
+	}
+	req, err := s.ApproveJoin(ctx, id, "camille")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Store.Read(); st.FindUser("dana") == nil || req.Code == "" {
+		t.Fatalf("approval didn't create the person or a code: %+v", req)
+	}
+	st, code, err := s.JoinStatus(id, token)
+	if err != nil || st != "approved" || code != req.Code {
+		t.Fatalf("got %s %q %v", st, code, err)
+	}
+	// The requester's app pairs with it; afterwards no code is handed out again.
+	_, pub, _ := wg.NewKeyPair()
+	res, err := s.Pair(ctx, PairRequest{Code: code, DeviceName: "Pixel 8", WGPublicKey: pub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.User.Name != "dana" || res.User.IsAdmin || res.DeviceToken == "" {
+		t.Fatalf("%+v", res.User)
+	}
+	if st, code, _ := s.JoinStatus(id, token); st != "approved" || code != "" {
+		t.Fatalf("after pairing: %s %q", st, code)
+	}
+	if _, err := s.ApproveJoin(ctx, id, "camille"); err == nil {
+		t.Fatal("approved twice")
+	}
+}
+
+func TestExpiredApprovalCodeIsRenewedUntilThePhonePairs(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	id, token, _ := s.RequestJoin("eli", "", "phone")
+	req, _ := s.ApproveJoin(context.Background(), id, "camille")
+	s.Now = func() time.Time { return now.Add(PairingTTL + time.Minute) }
+	_, code, err := s.JoinStatus(id, token)
+	if err != nil || code == "" || code == req.Code {
+		t.Fatalf("expected a fresh code, got %q (old %q) %v", code, req.Code, err)
+	}
+}
+
+func TestDeclinedRequestAndAdmins(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	id, token, _ := s.RequestJoin("finn", "", "phone")
+	if err := s.DeclineJoin(id, "camille"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, _ := s.JoinStatus(id, token); st != "declined" {
+		t.Fatalf("got %s", st)
+	}
+	if st := s.Store.Read(); st.FindUser("finn") != nil {
+		t.Fatal("declined request created a person")
+	}
+
+	// The last admin can't step down; with a second admin they can.
+	if err := s.SetAdmin("camille", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range s.Store.Read().Users {
+		if u.Name != "camille" && u.IsAdmin {
+			if err := s.SetAdmin(u.Name, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.SetAdmin("camille", false); err == nil {
+		t.Fatal("removed the last admin")
+	}
+}
+
+func TestDeviceSecretIdentifiesThePhone(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	_, pub, _ := wg.NewKeyPair()
+	p, _ := s.StartPairing("camille")
+	res, err := s.Pair(context.Background(), PairRequest{Code: p.Code, DeviceName: "Pixel", WGPublicKey: pub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u, err := s.DeviceUser(res.DeviceID, res.DeviceToken); err != nil || u.Name != "camille" {
+		t.Fatalf("%v %v", u, err)
+	}
+	if _, err := s.DeviceUser(res.DeviceID, "guess"); err != ErrBadDevice {
+		t.Fatalf("wrong secret accepted: %v", err)
+	}
+	if strings.Contains(fmt.Sprint(s.Store.Read().Devices), res.DeviceToken) {
+		t.Fatal("the secret itself is stored")
+	}
+}
+
+func TestApprovingALeftoverRequestNeverHandsOverSomeoneElse(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	id, _, err := s.RequestJoin("tom", "", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// While the request waits, nobody can quietly create a "tom" next to it...
+	if _, err := s.AddUser(ctx, "tom", "", false); err == nil {
+		t.Fatal("a person was created with the name of a waiting request")
+	}
+	// ...and if a "tom" exists anyway (made before this fix, or by hand), approving must refuse.
+	s.Store.Update(func(st *state.State) error { st.Users = append(st.Users, state.User{Name: "tom"}); return nil })
+	if _, err := s.ApproveJoin(ctx, id, "camille"); err == nil {
+		t.Fatal("approving gave the requester the existing tom's account")
+	}
+	if p := s.Store.Read().Pairings; len(p) != 0 {
+		t.Fatalf("a pairing code was made: %+v", p)
+	}
+}
+
+func TestNobodyCanAskToJoinAsAdmin(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	for _, n := range []string{"admin", "Admin", "root", "ics-admin"} {
+		if _, _, err := s.RequestJoin(n, "", "phone"); err == nil {
+			t.Errorf("%q was accepted", n)
+		}
 	}
 }

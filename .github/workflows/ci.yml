@@ -22,6 +22,16 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # Tailscale runs inside the app from a Go library (app/tailscale), built with gomobile and the NDK.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/tailscale/go.mod
+          cache-dependency-path: app/tailscale/go.sum
+      - name: Tailscale bridge tests
+        working-directory: app/tailscale
+        run: go vet ./... && go test ./...
+      - name: Android NDK
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
       - name: Signing key (optional repository secrets)
         env:
           KEYSTORE_B64: ${{ secrets.ICS_KEYSTORE_B64 }}

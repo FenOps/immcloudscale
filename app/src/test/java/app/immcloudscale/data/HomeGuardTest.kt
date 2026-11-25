@@ -75,6 +75,33 @@ class HomeGuardTest {
         server.shutdown()
     }
 
+    @Test fun requestsWithTheirOwnCredentialsAreCheckedToo() {
+        // Members management and the locked folder send their own Authorization header (device secret, session).
+        val server = MockWebServer().apply { start() }
+        val base = server.url("/").toString().trimEnd('/')
+        val s = paired.copy(immichUrl = base, pairedServer = base)
+        val http = buildHttpClient({ s }, HomeGuard({ s }, { false }, probe = { "wrong" }))
+        val req = Request.Builder().url("$base/api/v1/manage/users").header("Authorization", "Device dev_x:secret").build()
+        assertTrue(runCatching { http.newCall(req).execute() }.isFailure)
+        assertEquals(0, server.requestCount)
+        server.shutdown()
+    }
+
+    @Test fun tailscaleBeingOnDoesntExcuseADirectConnection() {
+        // A route that would be Tailscale, but this request goes direct: the guard still applies.
+        val server = MockWebServer().apply { start() }
+        val base = server.url("/").toString().trimEnd('/')
+        val s = paired.copy(immichUrl = base, pairedServer = base)
+        val route = object : HomeRoute {
+            override fun proxy() = null
+            override fun token() = "t"
+        }
+        val http = buildHttpClient({ s }, HomeGuard({ s }, { false }, probe = { "wrong" }), route)
+        assertTrue(runCatching { http.newCall(Request.Builder().url("$base/api/users/me").build()).execute() }.isFailure)
+        assertEquals(0, server.requestCount)
+        server.shutdown()
+    }
+
     @Test fun credentialsDontFollowRedirectsToOtherHosts() {
         val other = MockWebServer().apply { enqueue(MockResponse().setBody("ok")); start() }
         val immich = MockWebServer().apply {

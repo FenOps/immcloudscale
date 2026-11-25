@@ -39,6 +39,14 @@ data class AppSettings(
     val vpnAutoConnect: Boolean = false,
     val vpnTrustedSsids: Set<String> = emptySet(),
 
+    /** Remote access through Tailscale, run inside the app: connects by itself away from home. */
+    val tsEnabled: Boolean = false,
+    /** The server's Tailscale address, from pairing or the server's info page. */
+    val tsServerIp: String = "",
+    /** From pairing when the server has a key: joins the tailnet without signing in. */
+    val tsAuthKey: String = "",
+    val tsControlUrl: String = "",
+
     val backupEnabled: Boolean = false,
     val backupWifiOnly: Boolean = true,
     val backupChargingOnly: Boolean = false,
@@ -48,6 +56,25 @@ data class AppSettings(
     val lastBackupAt: Long = 0L,
     /** Files the last backup run couldn't send (unsupported type, unreadable). */
     val backupSkipped: Int = 0,
+    /** Back up away from home too (through Tailscale), not only on the home Wi-Fi. */
+    val backupAnywhere: Boolean = false,
+    /** Days to back up on, 1 (Monday) to 7; empty means whenever there's something new. */
+    val backupDays: Set<Int> = emptySet(),
+    /** Time of day for scheduled backups, in minutes after midnight. */
+    val backupTime: Int = 2 * 60,
+
+    /** "system", "light" or "dark". */
+    val theme: String = "system",
+
+    /** Phone copies ("id-size", see PhoneCopies.key) of photos deleted in the library elsewhere, waiting for the phone's trash. */
+    val phoneTrashPending: Set<String> = emptySet(),
+    /** When backup last looked for photos deleted elsewhere (epoch ms). */
+    val trashSyncedAt: Long = 0L,
+    /** After each backup, offer to remove backed-up photos older than [freeUpKeepDays] from the phone. */
+    val freeUpAuto: Boolean = false,
+    val freeUpKeepDays: Int = 30,
+    /** Backed-up phone copies ("id-size") waiting to be removed to free space. */
+    val freeUpPending: Set<String> = emptySet(),
 
     val filesGrid: Boolean = false,
     val photoColumns: Int = 4,
@@ -58,6 +85,19 @@ data class AppSettings(
     val pairedDeviceId: String = "",
     /** The server's ID from pairing; checked before sending credentials on Wi-Fi without the VPN. */
     val pairedServerId: String = "",
+    /** This phone's secret from pairing: signs member management requests (admins). */
+    val deviceToken: String = "",
+    val isAdmin: Boolean = false,
+
+    /** A request to join a server, waiting for an admin (set before this phone is paired). */
+    val joinServer: String = "",
+    val joinId: String = "",
+    val joinToken: String = "",
+    val joinName: String = "",
+    /** Immich session for the locked folder (from the server; API keys can't open it). */
+    val lockedSession: String = "",
+    /** Whether the server runs Immich's machine learning (faces, smart search, duplicates), from its info page. */
+    val serverMachineLearning: Boolean = true,
 ) {
     val immichConfigured get() = immichUrl.isNotBlank() && immichToken.isNotBlank()
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
@@ -96,6 +136,27 @@ class SettingsStore(private val context: Context) {
         val pairedServerName = stringPreferencesKey("paired_server_name")
         val pairedDeviceId = stringPreferencesKey("paired_device_id")
         val pairedServerId = stringPreferencesKey("paired_server_id")
+        val deviceToken = stringPreferencesKey("device_token")
+        val isAdmin = booleanPreferencesKey("is_admin")
+        val joinServer = stringPreferencesKey("join_server")
+        val joinId = stringPreferencesKey("join_id")
+        val joinToken = stringPreferencesKey("join_token")
+        val joinName = stringPreferencesKey("join_name")
+        val lockedSession = stringPreferencesKey("locked_session")
+        val serverMl = booleanPreferencesKey("server_ml")
+        val tsEnabled = booleanPreferencesKey("ts_enabled")
+        val tsServerIp = stringPreferencesKey("ts_server_ip")
+        val tsAuthKey = stringPreferencesKey("ts_auth_key")
+        val tsControlUrl = stringPreferencesKey("ts_control_url")
+        val backupAnywhere = booleanPreferencesKey("backup_anywhere")
+        val backupDays = stringSetPreferencesKey("backup_days")
+        val backupTime = stringPreferencesKey("backup_time")
+        val theme = stringPreferencesKey("theme")
+        val phoneTrashPending = stringSetPreferencesKey("phone_trash_pending")
+        val trashSyncedAt = longPreferencesKey("trash_synced_at")
+        val freeUpAuto = booleanPreferencesKey("free_up_auto")
+        val freeUpKeepDays = stringPreferencesKey("free_up_keep_days")
+        val freeUpPending = stringSetPreferencesKey("free_up_pending")
     }
 
     private fun read(p: Preferences) =
@@ -128,6 +189,27 @@ class SettingsStore(private val context: Context) {
             pairedServerName = p[K.pairedServerName] ?: "",
             pairedDeviceId = p[K.pairedDeviceId] ?: "",
             pairedServerId = p[K.pairedServerId] ?: "",
+            deviceToken = p[K.deviceToken] ?: "",
+            isAdmin = p[K.isAdmin] ?: false,
+            joinServer = p[K.joinServer] ?: "",
+            joinId = p[K.joinId] ?: "",
+            joinToken = p[K.joinToken] ?: "",
+            joinName = p[K.joinName] ?: "",
+            lockedSession = p[K.lockedSession] ?: "",
+            serverMachineLearning = p[K.serverMl] ?: true,
+            tsEnabled = p[K.tsEnabled] ?: false,
+            tsServerIp = p[K.tsServerIp] ?: "",
+            tsAuthKey = p[K.tsAuthKey] ?: "",
+            tsControlUrl = p[K.tsControlUrl] ?: "",
+            backupAnywhere = p[K.backupAnywhere] ?: false,
+            backupDays = p[K.backupDays]?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet(),
+            backupTime = p[K.backupTime]?.toIntOrNull() ?: 2 * 60,
+            theme = p[K.theme] ?: "system",
+            phoneTrashPending = p[K.phoneTrashPending] ?: emptySet(),
+            trashSyncedAt = p[K.trashSyncedAt] ?: 0L,
+            freeUpAuto = p[K.freeUpAuto] ?: false,
+            freeUpKeepDays = p[K.freeUpKeepDays]?.toIntOrNull() ?: 30,
+            freeUpPending = p[K.freeUpPending] ?: emptySet(),
         )
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { read(it) }
@@ -170,6 +252,16 @@ class SettingsStore(private val context: Context) {
             p[K.filesGrid] = n.filesGrid; p[K.photoColumns] = n.photoColumns.toString()
             p[K.pairedServer] = n.pairedServer; p[K.pairedServerName] = n.pairedServerName
             p[K.pairedDeviceId] = n.pairedDeviceId; p[K.pairedServerId] = n.pairedServerId
+            p[K.deviceToken] = n.deviceToken; p[K.isAdmin] = n.isAdmin
+            p[K.joinServer] = n.joinServer; p[K.joinId] = n.joinId; p[K.joinToken] = n.joinToken; p[K.joinName] = n.joinName
+            p[K.lockedSession] = n.lockedSession; p[K.serverMl] = n.serverMachineLearning
+            p[K.tsEnabled] = n.tsEnabled; p[K.tsServerIp] = n.tsServerIp
+            p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
+            p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()
+            p[K.backupTime] = n.backupTime.toString(); p[K.theme] = n.theme
+            p[K.phoneTrashPending] = n.phoneTrashPending; p[K.trashSyncedAt] = n.trashSyncedAt
+            p[K.freeUpAuto] = n.freeUpAuto; p[K.freeUpKeepDays] = n.freeUpKeepDays.toString()
+            p[K.freeUpPending] = n.freeUpPending
         }
         saved?.let { state.value = it }
     }

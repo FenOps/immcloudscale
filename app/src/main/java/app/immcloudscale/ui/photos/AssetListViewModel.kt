@@ -10,6 +10,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -32,14 +34,25 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     val state: StateFlow<AssetListState> = _state.asStateFlow()
     private var page = 1
     private var job: Job? = null
+    private var loadedAt = 0L
 
     init {
-        refresh()
+        // Reload whenever the server connection changes (pairing, signing in, switching servers), not just once:
+        // a list loaded before pairing, or straight after it with an empty library, would otherwise stay empty.
+        viewModelScope.launch {
+            graph.settingsState.map { it.immichUrl to it.immichToken }.distinctUntilChanged().collect { refresh() }
+        }
+    }
+
+    /** Reload when coming back to the screen after a while, so photos backed up meanwhile show up. */
+    fun refreshIfStale(maxAgeMs: Long = 30_000) {
+        if (System.currentTimeMillis() - loadedAt > maxAgeMs && !_state.value.loading) refresh()
     }
 
     fun refresh() {
         job?.cancel()
         page = 1
+        loadedAt = System.currentTimeMillis()
         _state.update { it.copy(refreshing = it.assets.isNotEmpty(), endReached = false, error = null) }
         if (query == AssetQuery.Timeline) viewModelScope.launch {
             runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
@@ -51,7 +64,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         val s = _state.value
         if (!reset && (s.loading || s.endReached)) return
         if (!graph.settingsState.value.immichConfigured) {
-            _state.update { it.copy(loading = false, refreshing = false, endReached = true) }
+            _state.update { it.copy(assets = emptyList(), memories = emptyList(), loading = false, refreshing = false, endReached = true) }
             return
         }
         _state.update { it.copy(loading = true) }
@@ -75,12 +88,13 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
-    private fun act(label: String, removeFromList: Boolean, block: suspend (List<String>) -> Unit) {
+    private fun act(label: String, removeFromList: Boolean, onDone: () -> Unit = {}, block: suspend (List<String>) -> Unit) {
         val ids = _state.value.selected.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
             try {
                 block(ids)
+                onDone()
                 _state.update { s ->
                     s.copy(
                         selected = emptySet(),
@@ -99,7 +113,9 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         _state.update { s -> s.copy(assets = s.assets.map { a -> if (a.id in it) a.copy(isFavorite = fav) else a }) }
     }
     fun archiveSelected(archive: Boolean = true) = act(if (archive) "Archived" else "Unarchived", true) { graph.immich.setArchived(it, archive) }
-    fun trashSelected() = act("Moved to trash:", true) { graph.immich.delete(it) }
+    /** [onDone] runs once the server has them in its trash (the phone's copies follow then). */
+    fun trashSelected(onDone: () -> Unit = {}) = act("Moved to trash:", true, onDone) { graph.immich.delete(it) }
+    fun lockSelected(onDone: () -> Unit = {}) = act("Moved to Locked folder:", true, onDone) { graph.immich.setVisibility(it, "locked") }
     fun deleteForeverSelected() = act("Deleted", true) { graph.immich.delete(it, force = true) }
     fun restoreSelected() = act("Restored", true) { graph.immich.restore(it) }
     fun addSelectedToAlbum(albumId: String) = act("Added to album:", false) { graph.immich.addToAlbum(albumId, it) }

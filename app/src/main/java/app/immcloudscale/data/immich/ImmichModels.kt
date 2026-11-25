@@ -66,6 +66,9 @@ data class AssetDto(
     val thumbhash: String? = null,
     val exifInfo: ExifInfo? = null,
     val people: List<PersonDto> = emptyList(),
+    /** Which phone uploaded it, and that phone's ID for the file (see PhoneCopies). */
+    val deviceId: String = "",
+    val deviceAssetId: String = "",
 ) {
     val isVideo get() = type == "VIDEO"
     /** "0:00:12.345000" → "0:12" for the tile badge. */
@@ -81,6 +84,12 @@ data class AssetDto(
             return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
         }
 }
+
+@Serializable
+data class DuplicateGroup(val duplicateId: String, val assets: List<AssetDto> = emptyList())
+
+@Serializable
+data class LockStatus(val pinCode: Boolean = false, val isElevated: Boolean = false)
 
 @Serializable
 data class AssetPage(val items: List<AssetDto> = emptyList(), val nextPage: String? = null, val total: Int = 0)

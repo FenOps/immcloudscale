@@ -16,8 +16,8 @@ android {
         applicationId = "app.immcloudscale"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     // Release signing: storeFile / storePassword / keyAlias / keyPassword in keystore.properties
@@ -75,9 +75,10 @@ android {
             // Optional live check against a running ics-server: ICS_E2E_SERVER=http://host:8790 ICS_E2E_CODE=XXXX-XXXX
             System.getenv("ICS_E2E_SERVER")?.let { v -> it.environment("ICS_E2E_SERVER", v) }
             System.getenv("ICS_E2E_CODE")?.let { v -> it.environment("ICS_E2E_CODE", v) }
+            System.getenv("ICS_E2E_ADMIN_CODE")?.let { v -> it.environment("ICS_E2E_ADMIN_CODE", v) }
             // Screenshots of the real app: ./gradlew :app:testDebugUnitTest --tests '*AppGuiTest*' -Pgui
             if (project.hasProperty("gui")) it.systemProperty("gui.out", layout.buildDirectory.dir("gui").get().asFile.path)
-            else it.exclude("**/AppGuiTest*")
+            else it.exclude("**/*GuiTest*")
         }
     }
 }
@@ -116,6 +117,12 @@ dependencies {
     // Userspace WireGuard (wireguard-go) behind Android's VpnService
     implementation("com.wireguard.android:tunnel:1.0.20230706")
 
+    // Tailscale inside the app (built from app/tailscale by the buildTailscale task below)
+    implementation(files("libs/tsbridge.aar"))
+
+    // Reading a pairing QR code from a picture in the gallery
+    implementation("com.google.zxing:core:3.5.3")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
@@ -126,3 +133,13 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// Tailscale runs inside the app from a small Go library (app/tailscale), built with gomobile into
+// libs/tsbridge.aar. Needs Go and the Android NDK; rebuilt only when its sources change.
+val buildTailscale by tasks.registering(Exec::class) {
+    description = "Builds the Tailscale bridge library"
+    inputs.files(fileTree("tailscale") { include("*.go", "go.mod", "go.sum", "build-aar.sh"); exclude("*_test.go") })
+    outputs.file(layout.projectDirectory.file("libs/tsbridge.aar"))
+    commandLine("bash", file("tailscale/build-aar.sh").path)
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildTailscale) }

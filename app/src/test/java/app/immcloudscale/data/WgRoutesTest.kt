@@ -7,7 +7,14 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+// Robolectric: WireGuard's parser looks up Android's address parsing, which plain JVM runs only have by accident
+// (it depends on which tests ran before in the same process).
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class WgRoutesTest {
     @Test fun exitNodeRoutesEverything() {
         assertEquals(listOf("0.0.0.0/0", "::/0"), WgRoutes.allowedIps(listOf("10.8.0.0/24"), listOf("10.8.0.2/24"), fullTunnel = true))

@@ -57,6 +57,8 @@ class VpnManager(
     private val scope: CoroutineScope,
     /** Told an identifier of the current underlying network whenever it changes (see HomeGuard). */
     private val onNetworkKey: (String) -> Unit = {},
+    /** Told whether the phone is at home after each network change, with the server's info page when it answered. */
+    private val onHome: (Boolean, String?) -> Unit = { _, _ -> },
 ) {
     private val backend by lazy { GoBackend(context.applicationContext) }
     private val mutex = Mutex()
@@ -253,28 +255,29 @@ class VpnManager(
     private suspend fun onNetworkChanged(key: String, wifi: Boolean, ssid: String?, network: Network?) {
         if (key != lastKey) return // the phone has already moved on to another network
         val s = settings.current()
-        if (!s.vpnAutoConnect || !s.vpnConfigured || network == null || permissionIntent() != null) return
         // Home is a trusted Wi-Fi name, or (works without location permission) a Wi-Fi where our own server
         // answers directly, asked over that Wi-Fi itself rather than through the tunnel.
-        val home = wifi && (
-            (ssid != null && s.vpnTrustedSsids.any { it.equals(ssid, ignoreCase = true) }) ||
-                (s.pairedServerId.isNotBlank() && serverAnswersOn(network, s.pairedServer, s.pairedServerId))
-            )
+        val info = if (wifi && network != null && s.pairedServer.isNotBlank()) serverInfoOn(network, s.pairedServer) else null
+        val answers = info != null && s.pairedServerId.isNotBlank() && info.contains("\"id\":\"${s.pairedServerId}\"")
+        val home = wifi && ((ssid != null && s.vpnTrustedSsids.any { it.equals(ssid, ignoreCase = true) }) || answers)
         if (key != lastKey) return // changed while checking
+        onHome(home, info?.takeIf { answers })
+        if (!s.vpnAutoConnect || !s.vpnConfigured || network == null || permissionIntent() != null) return
         val status = state.value.status
         if (home && status == VpnStatus.Connected) disconnect()
         // An earlier failed attempt (Error) mustn't stop auto-connect for good: try again on this network.
         if (!home && (status == VpnStatus.Disconnected || status == VpnStatus.Error) && !userDisconnected) connect()
     }
 
-    private suspend fun serverAnswersOn(network: Network, server: String, id: String): Boolean = withContext(Dispatchers.IO) {
+    /** The server's info page fetched over [network] itself (not a tunnel), or null when it doesn't answer. */
+    private suspend fun serverInfoOn(network: Network, server: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             val client = OkHttpClient.Builder().socketFactory(network.socketFactory)
                 .callTimeout(3, TimeUnit.SECONDS).followRedirects(false).build()
             client.newCall(Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { r ->
-                r.isSuccessful && r.body?.string()?.contains("\"id\":\"$id\"") == true
+                if (r.isSuccessful) r.body?.string() else null
             }
-        }.getOrDefault(false)
+        }.getOrNull()
     }
 
     @SuppressLint("MissingPermission")

@@ -1,6 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -16,6 +19,11 @@ import (
 )
 
 func newHandler(t *testing.T) http.Handler {
+	_, h := newServerAndHandler(t)
+	return h
+}
+
+func newServerAndHandler(t *testing.T) (*core.Server, http.Handler) {
 	st, _ := state.Open(filepath.Join(t.TempDir(), "s.json"))
 	st.Update(func(s *state.State) error {
 		s.Config.AdminPassword = "pw"
@@ -28,7 +36,8 @@ func newHandler(t *testing.T) http.Handler {
 	s.Log = log.New(io.Discard, "", 0)
 	s.ImmichURL = func(state.Config) string { return "http://127.0.0.1:1" }
 	s.NextcloudURL = func(state.Config) string { return "http://127.0.0.1:1" }
-	return New(s).Routes()
+	s.TailscaleIP = nil // never the test machine's own Tailscale
+	return s, New(s).Routes()
 }
 
 func do(h http.Handler, method, path, body string, auth bool) *httptest.ResponseRecorder {
@@ -130,5 +139,84 @@ func TestBadKeyIsAClientError(t *testing.T) {
 	h := newHandler(t)
 	if w := do(h, "POST", "/api/v1/pair", `{"code":"ABCD-EFGH","wgPublicKey":"not-a-key"}`, false); w.Code != 400 {
 		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestInfoGivesTheTailscaleAddressButNeverTheKey(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.TailscaleIP = func() string { return "100.101.102.103" }
+	if err := s.SetTailscaleKey("tskey-auth-example-0123456789", ""); err != nil {
+		t.Fatal(err)
+	}
+	w := do(h, "GET", "/api/v1/info", "", false)
+	if !strings.Contains(w.Body.String(), `"tailscaleIp":"100.101.102.103"`) || strings.Contains(w.Body.String(), "tskey") {
+		t.Fatalf("%s", w.Body)
+	}
+}
+
+func TestJoinEndpointsAndMemberManagementNeedAnAdminPhone(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	// Not set up: requests are refused politely.
+	if w := do(h, "POST", "/api/v1/join", `{"name":"dana"}`, false); w.Code != 400 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	s.Store.Update(func(st *state.State) error {
+		st.Config.ImmichAdminPass = "x"
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	w := do(h, "POST", "/api/v1/join", `{"name":"dana","device":"Pixel"}`, false)
+	if w.Code != 201 {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	var created struct{ ID, Token string }
+	json.Unmarshal(w.Body.Bytes(), &created)
+
+	r := httptest.NewRequest("GET", "/api/v1/join/"+created.ID, nil)
+	r.Header.Set("X-ICS-Token", created.Token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"status":"pending"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+
+	manage := func(secret string) int {
+		r := httptest.NewRequest("GET", "/api/v1/manage/requests", nil)
+		r.RemoteAddr = "192.168.1.30:5000"
+		r.Header.Set("Authorization", "Device dev_a:"+secret)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := manage("wrong"); c != 401 {
+		t.Fatalf("wrong secret: %d", c)
+	}
+	if c := manage("secret"); c != 403 {
+		t.Fatalf("not an admin yet: %d", c)
+	}
+	s.SetAdmin("camille", true)
+	if c := manage("secret"); c != 200 {
+		t.Fatalf("admin phone: %d", c)
+	}
+}
+
+func hashForTest(t string) string {
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestMembersListNeverIncludesPasswords(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.Store.Update(func(st *state.State) error {
+		st.Users = []state.User{{Name: "camille", Password: "web-secret-1", IsAdmin: true}, {Name: "tom", Password: "web-secret-2"}}
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	r := httptest.NewRequest("GET", "/api/v1/manage/users", nil)
+	r.Header.Set("Authorization", "Device dev_a:secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"tom"`) || strings.Contains(rec.Body.String(), "web-secret") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

@@ -38,9 +38,14 @@ Usage: ics-server <command> [options]
   user add <name>       add a person (Immich + Nextcloud accounts)   [--email]
   user list             list people and their web sign-in passwords
   user remove <name>    delete a person's accounts, photos and files [--yes]
+  user admin <name>     let a person approve sign-ups and manage members [--off]
+  requests              list sign-up requests from the app; approve or decline them
+                                                        [--approve <id> --decline <id>]
   devices               list paired phones
   revoke <device-id>    disconnect a phone (VPN, photo and file access)
   config                change settings                             [--endpoint --lan-ip]
+  tailscale             remote access through Tailscale: show it, or store a key so the app
+                        joins without signing in            [--auth-key --control-url --remove-key]
   admin-password        print the admin console password
   update                download and apply new Immich / Nextcloud images
   version
@@ -127,6 +132,15 @@ func main() {
 			}
 			check(s.RemoveUser(ctx, args[2]))
 			fmt.Println("Removed", args[2])
+		case "admin":
+			need(args, 3, "ics-server user admin <name> [--off]")
+			on := !(len(args) > 3 && args[3] == "--off")
+			check(s.SetAdmin(args[2], on))
+			if on {
+				fmt.Printf("%s is now an admin: they can approve sign-up requests and manage members in the app.\n", args[2])
+			} else {
+				fmt.Printf("%s is no longer an admin.\n", args[2])
+			}
 		default:
 			fail("unknown user command %q", args[1])
 		}
@@ -141,6 +155,32 @@ func main() {
 		need(args, 2, "ics-server revoke <device-id>")
 		check(s.Revoke(ctx, args[1]))
 		fmt.Println("Revoked", args[1])
+		if s.Store.Read().Config.TailscaleAuthKey != "" {
+			fmt.Println("If that phone used Tailscale, also remove it at https://login.tailscale.com/admin/machines.")
+		}
+	case "tailscale":
+		tailscaleCmd(s, args[1:])
+	case "requests":
+		fs := flag.NewFlagSet("requests", flag.ExitOnError)
+		approve := fs.String("approve", "", "approve the request with this ID")
+		decline := fs.String("decline", "", "decline the request with this ID")
+		check(fs.Parse(args[1:]))
+		switch {
+		case *approve != "":
+			req, err := s.ApproveJoin(ctx, *approve, "command line")
+			check(err)
+			fmt.Printf("Approved %s. Their app pairs by itself; or give them this code: %s\n", req.Name, req.Code)
+		case *decline != "":
+			check(s.DeclineJoin(*decline, "command line"))
+			fmt.Println("Declined.")
+		default:
+			w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tNAME\tEMAIL\tPHONE\tSTATUS\tASKED")
+			for _, r := range s.Requests() {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Name, r.Email, r.Device, r.Status, r.Created.Format("2006-01-02 15:04"))
+			}
+			w.Flush()
+		}
 	case "config":
 		fs := flag.NewFlagSet("config", flag.ExitOnError)
 		endpoint := fs.String("endpoint", "", "public host name or IP phones use to reach the VPN")
@@ -450,6 +490,14 @@ func status(ctx context.Context, s *core.Server) {
 	} else {
 		fmt.Printf("  VPN (WireGuard)     off (set up without the VPN)\n")
 	}
+	switch {
+	case st.TailscaleIP != "" && st.TailscaleKey:
+		fmt.Printf("  Tailscale           running   %s (phones join on their own)\n", st.TailscaleIP)
+	case st.TailscaleIP != "":
+		fmt.Printf("  Tailscale           running   %s (phones sign in with Tailscale)\n", st.TailscaleIP)
+	default:
+		fmt.Printf("  Tailscale           not set up (see: ics-server tailscale)\n")
+	}
 	if st.Storage != nil {
 		fmt.Printf("  Disk                %s of %s used\n", st.Storage.DiskUse, st.Storage.DiskSize)
 	}
@@ -468,6 +516,10 @@ func openFirewall(s *core.Server) {
 	}
 	c := s.Store.Read().Config
 	rules := [][]string{{"allow", fmt.Sprintf("%d/udp", c.WGPort)}}
+	// Phones on the tailnet (Tailscale's own interface; harmless when Tailscale isn't installed).
+	for _, p := range []int{c.ImmichPort, c.NextcloudPort, c.AdminPort} {
+		rules = append(rules, []string{"allow", "in", "on", "tailscale0", "to", "any", "port", fmt.Sprint(p), "proto", "tcp"})
+	}
 	for _, src := range []string{c.LANSubnet, c.WGSubnet} {
 		if src == "" {
 			continue
@@ -480,6 +532,65 @@ func openFirewall(s *core.Server) {
 		_ = exec.Command("ufw", r...).Run()
 	}
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
+}
+
+// tailscaleCmd shows remote access through Tailscale and stores the key phones join with.
+func tailscaleCmd(s *core.Server, args []string) {
+	fs := flag.NewFlagSet("tailscale", flag.ExitOnError)
+	key := fs.String("auth-key", "", "a reusable Tailscale auth key (tskey-auth-...) that paired phones join with")
+	control := fs.String("control-url", "", "your Headscale address (leave out for Tailscale)")
+	remove := fs.Bool("remove-key", false, "stop giving phones the auth key; they sign in with Tailscale instead")
+	check(fs.Parse(args))
+	if *key != "" && *remove {
+		fail("use either --auth-key or --remove-key")
+	}
+	if *control != "" && *key == "" {
+		fail("--control-url goes with --auth-key (the Headscale key)")
+	}
+	if *key != "" {
+		if strings.ContainsAny(*key, " \t\n") || len(*key) < 20 || len(*key) > 200 {
+			fail("that doesn't look like an auth key; copy the whole key (it starts with tskey-auth-)")
+		}
+		if *control == "" && !strings.HasPrefix(*key, "tskey-") {
+			fail("Tailscale keys start with tskey-; for Headscale, also give --control-url")
+		}
+		if *control != "" && !strings.HasPrefix(*control, "https://") && !strings.HasPrefix(*control, "http://") {
+			fail("--control-url needs the full address, e.g. https://headscale.example.org")
+		}
+		check(s.SetTailscaleKey(*key, *control))
+		fmt.Println("Saved. Phones get the key when they pair (once Tailscale runs here); phones paired earlier get it after pairing again.")
+		fmt.Println("Anyone with this key can add devices to your tailnet: make it a tagged key and limit the tag in your")
+		fmt.Println("tailnet's access rules to this server's ports (Immich, Nextcloud, pairing). See INSTALL.md, Remote access.")
+	}
+	if *remove {
+		if s.Store.Read().Config.TailscaleAuthKey == "" {
+			fmt.Println("No key was saved.")
+		} else {
+			check(s.SetTailscaleKey("", ""))
+			fmt.Println("Removed. Phones now sign in with Tailscale to connect from outside.")
+		}
+	}
+	ip := ""
+	if s.TailscaleIP != nil {
+		ip = s.TailscaleIP()
+	}
+	if ip == "" {
+		fmt.Print(`Tailscale isn't running on this server, so phones can't use it yet. To set it up:
+  curl -fsSL https://tailscale.com/install.sh | sh
+  sudo tailscale up
+Then run: sudo ics-server tailscale
+`)
+		return
+	}
+	c := s.Store.Read().Config
+	fmt.Printf("Tailscale is running: this server is %s on your tailnet.\n", ip)
+	if c.TailscaleAuthKey != "" {
+		fmt.Println("Phones join on their own with the saved key.")
+	} else {
+		fmt.Print(`Phones sign in with your Tailscale account in the app. To skip that, create a reusable key at
+https://login.tailscale.com/admin/settings/keys and run: sudo ics-server tailscale --auth-key <key>
+`)
+	}
 }
 
 // validHost accepts a DNS name or an IP address (no port, no spaces).

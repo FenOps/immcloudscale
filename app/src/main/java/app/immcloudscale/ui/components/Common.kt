@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
@@ -65,6 +66,12 @@ fun LetterAvatar(name: String, size: Dp = 32.dp, modifier: Modifier = Modifier, 
 @Composable
 fun CenteredLoading(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+}
+
+/** Gives an empty or error screen something to scroll, so pull to refresh still works on it. */
+@Composable
+fun Pullable(content: @Composable () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize()) { item { Box(Modifier.fillParentMaxSize()) { content() } } }
 }
 
 @Composable

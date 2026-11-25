@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
@@ -33,6 +34,7 @@ import app.immcloudscale.graph
 import app.immcloudscale.ui.components.CenteredLoading
 import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.ErrorState
+import app.immcloudscale.ui.components.Pullable
 import kotlinx.coroutines.launch
 
 /**
@@ -58,7 +60,15 @@ fun AssetBrowser(
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(vm) {
+        vm.refreshIfStale()
+        onPauseOrDispose {}
+    }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmTrash by remember { mutableStateOf(false) }
+    var collage by remember { mutableStateOf(false) }
+    var confirmLock by remember { mutableStateOf(false) }
+    val phoneTrash = rememberPhoneTrash()
     val sections = remember(st.assets) { groupByDay(st.assets) }
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
@@ -80,8 +90,10 @@ fun AssetBrowser(
                     onAddToAlbum = { albumPicker = true },
                     onFavorite = { vm.favoriteSelected(!st.assets.filter { it.id in st.selected }.all { it.isFavorite }) },
                     onArchive = { vm.archiveSelected(vm.query != AssetQuery.Archive) },
-                    onDelete = { if (vm.query == AssetQuery.Trash) confirmDelete = true else vm.trashSelected() },
+                    onDelete = { if (vm.query == AssetQuery.Trash) confirmDelete = true else confirmTrash = true },
                     onRestore = vm::restoreSelected,
+                    onCollage = { collage = true },
+                    onLock = { confirmLock = true },
                 )
             } else topBar()
         },
@@ -90,9 +102,9 @@ fun AssetBrowser(
         PullToRefreshBox(st.refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
             when {
                 st.assets.isEmpty() && st.loading -> CenteredLoading()
-                st.assets.isEmpty() && st.error != null -> ErrorState(st.error!!, vm::refresh)
+                st.assets.isEmpty() && st.error != null -> Pullable { ErrorState(st.error!!, vm::refresh) }
                 st.assets.isEmpty() && header == null ->
-                    EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody)
+                    Pullable { EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody) }
                 else -> AssetGrid(
                     sections = sections,
                     columns = settings.photoColumns,
@@ -122,6 +134,40 @@ fun AssetBrowser(
         onPick = { albumPicker = false; vm.addSelectedToAlbum(it.id) },
         onCreate = { albumPicker = false; vm.newAlbumFromSelected(it) },
     )
+    if (collage) AlertDialog(
+        onDismissRequest = { collage = false },
+        title = { Text("Make a collage?") },
+        text = { Text("The ${st.selected.size} photos are put together into one new square picture in your library. The originals stay as they are.") },
+        confirmButton = {
+            TextButton(onClick = {
+                collage = false
+                val chosen = st.assets.filter { it.id in st.selected }
+                vm.clearSelection()
+                scope.launch {
+                    snack.showSnackbar(runCatching { makeCollage(g, chosen) }.fold({ vm.refresh(); "Collage added to your photos" }, { it.message ?: "Couldn't make the collage" }))
+                }
+            }) { Text("Make collage") }
+        },
+        dismissButton = { TextButton(onClick = { collage = false }) { Text("Cancel") } },
+    )
+    if (confirmLock) AlertDialog(
+        onDismissRequest = { confirmLock = false },
+        title = { Text("Move ${st.selected.size} to Locked folder?") },
+        text = { Text("They're hidden from your timeline, albums, search and other apps, and open only with your PIN (Collections → Locked folder). This phone's copies move to the phone's trash.") },
+        confirmButton = {
+            TextButton(onClick = {
+                confirmLock = false
+                val chosen = st.assets.filter { it.id in st.selected }
+                vm.lockSelected { phoneTrash(chosen) }
+            }) { Text("Move to Locked folder") }
+        },
+        dismissButton = { TextButton(onClick = { confirmLock = false }) { Text("Cancel") } },
+    )
+    if (confirmTrash) TrashConfirmDialog(st.selected.size, onDismiss = { confirmTrash = false }, onConfirm = {
+        confirmTrash = false
+        val chosen = st.assets.filter { it.id in st.selected }
+        vm.trashSelected { phoneTrash(chosen) }
+    })
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text("Delete forever?") },

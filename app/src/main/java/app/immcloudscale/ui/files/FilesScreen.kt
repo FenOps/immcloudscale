@@ -89,6 +89,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.nextcloud.CloudFile
 import app.immcloudscale.graph
@@ -96,6 +97,7 @@ import app.immcloudscale.ui.components.CenteredLoading
 import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.ErrorState
 import app.immcloudscale.ui.components.LetterAvatar
+import app.immcloudscale.ui.components.Pullable
 import app.immcloudscale.ui.components.RemoteImage
 import app.immcloudscale.ui.components.formatBytes
 import app.immcloudscale.ui.components.formatDate
@@ -142,6 +144,10 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
         return
     }
     val vm = graphViewModel { FilesViewModel(it) }
+    LifecycleResumeEffect(vm) {
+        vm.loadIfStale()
+        onPauseOrDispose {}
+    }
     val st by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var sheetFor by remember { mutableStateOf<CloudFile?>(null) }
@@ -308,8 +314,8 @@ fun FilesContent(
                 val listPad = PaddingValues(bottom = bottomPadding.calculateBottomPadding() + 88.dp)
                 when {
                     items.isEmpty() && st.loading -> CenteredLoading()
-                    items.isEmpty() && st.error != null -> ErrorState(st.error, a.onRefresh)
-                    items.isEmpty() -> EmptyForTab(st)
+                    items.isEmpty() && st.error != null -> Pullable { ErrorState(st.error, a.onRefresh) }
+                    items.isEmpty() -> Pullable { EmptyForTab(st) }
                     grid -> LazyVerticalGrid(
                         GridCells.Adaptive(160.dp), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = listPad.calculateBottomPadding()),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp),

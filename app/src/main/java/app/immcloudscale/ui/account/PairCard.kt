@@ -1,6 +1,9 @@
 package app.immcloudscale.ui.account
 
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,10 +46,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
+import app.immcloudscale.data.pairing.QrImage
 import app.immcloudscale.graph
 import app.immcloudscale.ui.theme.GoogleColors
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Scans a pairing QR with Google's code scanner; reports a parsed link or an error message. */
 fun scanPairingCode(context: android.content.Context, onLink: (PairLink) -> Unit, onError: (String) -> Unit) {
@@ -71,6 +78,7 @@ fun PairCard(onPaired: () -> Unit) {
     var code by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var joining by remember { mutableStateOf(false) }
 
     fun pair(srv: String, c: String) {
         busy = true; error = null
@@ -82,24 +90,46 @@ fun PairCard(onPaired: () -> Unit) {
         }
     }
 
+    // A QR code saved as a picture (a screenshot of the admin console, a photo of the setup screen).
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val link = withContext(Dispatchers.IO) { runCatching { QrImage.read(ctx, uri) }.getOrNull() }?.let(Pairing::parseLink)
+            if (link != null) pair(link.server, link.code)
+            else error = "No ImmCloudScale pairing code found in that picture. Try a sharper screenshot, or type the code."
+        }
+    }
+
     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Dns, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text("ImmCloudScale Server", style = MaterialTheme.typography.titleMedium)
-                    Text("Recommended", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    if (s.pairedServer.isBlank() && s.joinId.isBlank()) {
+                        Text("Recommended", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
                 }
                 if (s.pairedServer.isNotBlank()) Icon(Icons.Filled.CheckCircle, "Paired", tint = GoogleColors.Online)
             }
             if (s.pairedServer.isNotBlank()) {
-                Text("Paired with ${s.pairedServerName.ifBlank { s.pairedServer }} as ${s.immichUserName}. Photos, files and the VPN are set up.")
+                Text("Paired with ${s.pairedServerName.ifBlank { s.pairedServer }} as ${s.immichUserName}. Photos, files and remote access are set up.")
                 OutlinedButton(onClick = { scope.launch { g.settings.update { it.copy(pairedServer = "") } } }) { Text("Pair again") }
                 return@Column
             }
-            Text("Scan the code shown by `ics-server setup` or the server's admin console. Photos, files and the home VPN are set up in one go.")
+            if (s.joinId.isNotBlank()) {
+                JoinWaiting(s, onPaired)
+                return@Column
+            }
+            Text("Scan the code shown on the server's setup screen or admin console. Photos, files and remote access are set up in one go.")
             Button(onClick = { scanPairingCode(ctx, { pair(it.server, it.code) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
+            }
+            OutlinedButton(
+                onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                enabled = !busy, modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Outlined.Image, null); Spacer(Modifier.width(8.dp)); Text("Use a QR picture from the gallery")
             }
             Text("or type them in", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(server, { server = it }, label = { Text("Server address") }, placeholder = { Text("192.168.1.50") }, singleLine = true,
@@ -111,8 +141,10 @@ fun PairCard(onPaired: () -> Unit) {
                 if (busy) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(8.dp)) }
                 Text("Pair")
             }
+            TextButton(onClick = { joining = true }, enabled = !busy) { Text("New here? Ask to join") }
         }
     }
+    if (joining) JoinDialog { joining = false }
 }
 
 /** Confirmation shown when a pairing link (QR scanned with the camera) opens the app. */
