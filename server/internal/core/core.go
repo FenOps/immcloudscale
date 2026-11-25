@@ -589,6 +589,8 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 			if p.Code == code && p.Expires.After(now) {
 				pairing = p
 				st.Pairings = append(st.Pairings[:i], st.Pairings[i+1:]...) // single use
+				// Marked while the store is locked, so a cancel always finds the code somewhere.
+				s.codeInFlight(code, true)
 				return nil
 			}
 		}
@@ -597,7 +599,6 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	if err != nil {
 		return res, err
 	}
-	s.codeInFlight(code, true)
 	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry, unless an
 	// admin cancelled it in the meantime.
 	ok := false
@@ -619,6 +620,11 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	if u == nil {
 		ok = true // nothing to give back
 		return res, ErrUserGone
+	}
+	if pairing.CreatedBy != "" && u.IsAdmin {
+		// An invite made before its person became an admin: admins' phones are paired at home, not by forwarded links.
+		ok = true
+		return res, fmt.Errorf("%s is an admin now; pair the phone at home instead of with this invite", u.Name)
 	}
 	deviceToken := state.Secret(32)
 	dev := state.Device{

@@ -59,10 +59,13 @@ func (s *Server) CancelInvite(code string) error {
 	if err != nil {
 		return err
 	}
-	if !found && !s.cancelInFlight(code) {
-		return errors.New("that invite was already used or has expired")
+	if found {
+		return nil
 	}
-	return nil
+	if s.cancelInFlight(code) {
+		return errors.New("someone is joining with this invite right now: if they finish, they're in (remove their phone under Phones); otherwise it stays cancelled")
+	}
+	return errors.New("that invite was already used or has expired")
 }
 
 // codeInFlight marks a code as being redeemed (on) or done (off); when done it reports whether it was cancelled.

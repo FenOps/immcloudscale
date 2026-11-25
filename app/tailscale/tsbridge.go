@@ -74,10 +74,12 @@ func Start(dir, hostname, authKey, controlURL string) error {
 	return nil
 }
 
-// Stop leaves the tailnet until the next Start. The phone stays signed in.
+// Stop leaves the tailnet until the next Start. The phone stays signed in. Routes are forgotten: they belong to
+// the tailnet that was connected, and the next Start sets its own.
 func Stop() {
 	mu.Lock()
 	defer mu.Unlock()
+	routes = map[string]string{}
 	if srv == nil {
 		return
 	}

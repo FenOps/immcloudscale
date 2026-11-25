@@ -100,7 +100,9 @@ class TailscaleManager(
     /** The server being joined through an invite (its home address), routed through Tailscale until paired. */
     @Volatile var inviteServer: String? = null
         private set
-    @Volatile private var inviting = false
+    /** An invite join is running: the phone's own Tailscale stays off and only the invited server is routed. */
+    @Volatile var inviting = false
+        private set
     @Volatile private var homeBeforeInvite = true
 
     /**
@@ -110,9 +112,15 @@ class TailscaleManager(
      */
     suspend fun connectForInvite(server: String, ip: String, key: String, controlUrl: String, onSignIn: (String) -> Unit) {
         val host = server.toHttpUrlOrNull()?.host ?: throw IOException("That invite has no server address")
-        stop() // the phone's own tailnet, if it was connected
+        val s = settings.current()
+        if (listOf(s.pairedServer, s.immichUrl, s.ncUrl).any { it.toHttpUrlOrNull()?.host.equals(host, ignoreCase = true) }) {
+            // Same address as this phone's server, but reached through someone else's tailnet: refuse.
+            throw IOException("This phone already uses a server at $host. To join it again, use \"Pair again\" at home instead.")
+        }
+        // Mark first, so nothing restarts the phone's own Tailscale between stopping it and starting the invite's.
         homeBeforeInvite = _home.value
         inviting = true
+        stopNow() // the phone's own tailnet, if it was connected (this also forgets its routes)
         inviteServer = server
         _home.value = false
         connect(inviteDir(), hostname(settings.current()), key, controlUrl) { bridge.setRoute(host, ip) }
@@ -210,6 +218,7 @@ class TailscaleManager(
 
     /** Joins the tailnet and waits until connected, a sign-in is needed, or it fails. */
     suspend fun start() = lock.withLock {
+        if (inviting) return@withLock // the invite's temporary connection is in use
         val s = settings.current()
         if (s.tsServerIp.isBlank()) {
             _state.value = TsState(TsStatus.Error, error = "Your server isn't on Tailscale yet. On the server run: sudo ics-server tailscale")
@@ -262,7 +271,12 @@ class TailscaleManager(
         }
     }
 
-    suspend fun stop() = lock.withLock {
+    /** Stops the phone's Tailscale (not an invite join in progress, which ends with [inviteDone]). */
+    suspend fun stop() {
+        if (!inviting) stopNow()
+    }
+
+    private suspend fun stopNow() = lock.withLock {
         withContext(Dispatchers.IO) { runCatching { bridge.stop() } }
         _state.value = TsState(TsStatus.Off)
     }
@@ -278,6 +292,7 @@ class TailscaleManager(
      * (switched off, needs a sign-in in the app, or no internet).
      */
     suspend fun ensureConnected(): Boolean {
+        if (inviting) return false // not the paired server's tailnet: wait until the invite join is over
         if (atHome) return true
         val s = settings.current()
         if (!s.tsEnabled) return false
