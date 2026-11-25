@@ -55,10 +55,10 @@ private fun visual(kind: FileKind, shared: Boolean): Pair<ImageVector, Color?> =
     FileKind.Doc -> Icons.Filled.Description to GoogleColors.Doc
     FileKind.Sheet -> Icons.Filled.TableChart to GoogleColors.Sheet
     FileKind.Slides -> Icons.Filled.Slideshow to GoogleColors.Slide
-    FileKind.Archive -> Icons.Filled.FolderZip to GoogleColors.Folder
+    FileKind.Archive -> Icons.Filled.FolderZip to null
     FileKind.Code -> Icons.Filled.Code to GoogleColors.Doc
     FileKind.Text -> Icons.AutoMirrored.Filled.Article to GoogleColors.Doc
-    FileKind.Other -> Icons.Filled.InsertDriveFile to GoogleColors.Folder
+    FileKind.Other -> Icons.Filled.InsertDriveFile to null
 }
 
 @Composable

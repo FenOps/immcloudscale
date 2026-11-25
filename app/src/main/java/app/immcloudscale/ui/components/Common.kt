@@ -50,7 +50,7 @@ fun Pinwheel(size: Dp = 24.dp, modifier: Modifier = Modifier) {
 @Composable
 fun LetterAvatar(name: String, size: Dp = 32.dp, modifier: Modifier = Modifier, contentDescription: String = "Account and settings") {
     val palette = listOf(Color(0xFF1A73E8), Color(0xFFD93025), Color(0xFF188038), Color(0xFFE37400), Color(0xFF9334E6), Color(0xFF007B83))
-    val c = palette[abs(name.hashCode()) % palette.size]
+    val c = palette[abs(name.trim().lowercase().hashCode()) % palette.size]
     Box(
         modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,

@@ -93,6 +93,7 @@ fun ViewerScreen(onBack: () -> Unit) {
     var info by remember { mutableStateOf<AssetDto?>(null) }
     var menu by remember { mutableStateOf(false) }
     var albumPicker by remember { mutableStateOf(false) }
+    var confirmForever by remember { mutableStateOf<AssetDto?>(null) }
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
     val trash = ViewerSession.query == AssetQuery.Trash
@@ -168,7 +169,7 @@ fun ViewerScreen(onBack: () -> Unit) {
             ) {
                 if (current != null && trash) {
                     BarAction(Icons.AutoMirrored.Outlined.Undo, "Restore") { run { g.immich.restore(listOf(current.id)); remove(current, "Restored") } }
-                    BarAction(Icons.Outlined.DeleteOutline, "Delete") { run { g.immich.delete(listOf(current.id), force = true); remove(current, "Deleted") } }
+                    BarAction(Icons.Outlined.DeleteOutline, "Delete") { confirmForever = current }
                 } else if (current != null) {
                     BarAction(Icons.Outlined.Share, "Share") { run { shareAssets(ctx, listOf(current)) } }
                     BarAction(Icons.Outlined.Info, "Info") { info = current }
@@ -177,6 +178,21 @@ fun ViewerScreen(onBack: () -> Unit) {
             }
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+    }
+
+    confirmForever?.let { a ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmForever = null },
+            title = { Text("Delete forever?") },
+            text = { Text("This photo will be permanently deleted from your server.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmForever = null
+                    run { g.immich.delete(listOf(a.id), force = true); remove(a, "Deleted") }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmForever = null }) { Text("Cancel") } },
+        )
     }
 
     info?.let { a ->
@@ -212,6 +228,7 @@ fun InfoSheet(a: AssetDto) {
         Text("Details", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         e?.description?.takeIf { it.isNotBlank() }?.let { Text(it, Modifier.padding(horizontal = 16.dp)) }
         ListItem(
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.Image, null) },
             headlineContent = { Text(a.originalFileName) },
             supportingContent = {
@@ -223,6 +240,7 @@ fun InfoSheet(a: AssetDto) {
             },
         )
         if (e?.make != null || e?.model != null) ListItem(
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.CameraAlt, null) },
             headlineContent = { Text(listOfNotNull(e.make, e.model).joinToString(" ")) },
             supportingContent = {
@@ -233,11 +251,13 @@ fun InfoSheet(a: AssetDto) {
             },
         )
         if (e?.city != null) ListItem(
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.LocationOn, null) },
             headlineContent = { Text(listOfNotNull(e.city, e.state, e.country).joinToString(", ")) },
             supportingContent = { if (e.latitude != null) Text("%.5f, %.5f".format(e.latitude, e.longitude)) },
         )
         if (a.people.isNotEmpty()) ListItem(
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
             headlineContent = { Text("People") },
             supportingContent = { Text(a.people.mapNotNull { it.name.ifBlank { null } }.joinToString(", ").ifEmpty { "Unnamed" }) },
         )

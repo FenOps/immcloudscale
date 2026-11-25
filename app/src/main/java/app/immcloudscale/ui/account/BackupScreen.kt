@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -109,7 +110,8 @@ fun BackupScreen(onBack: () -> Unit) {
         onDispose { lifecycle.lifecycle.removeObserver(obs) }
     }
 
-    Scaffold(topBar = {
+    val snack = remember { androidx.compose.material3.SnackbarHostState() }
+    Scaffold(snackbarHost = { androidx.compose.material3.SnackbarHost(snack) }, topBar = {
         TopAppBar(
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             title = { Text("Backup") },
@@ -206,10 +208,17 @@ fun BackupScreen(onBack: () -> Unit) {
                         label = { Text(f) },
                     )
                 }
-                if (folders.isEmpty()) Text("Allow access to photos to see your folders", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (folders.isEmpty()) androidx.compose.material3.TextButton(onClick = { perms.launch(mediaPermissions) }) {
+                    Text("Allow access to photos to choose folders")
+                }
             }
             ListItem(
-                modifier = Modifier.clickable { update { it.copy(backupSince = 0) } },
+                modifier = Modifier.clickable {
+                    update { it.copy(backupSince = 0) }
+                    if (s.backupEnabled) BackupWorker.runNow(ctx, s)
+                    scope.launch { snack.showSnackbar(if (s.backupEnabled) "Checking all photos again" else "All photos will be checked when backup is on") }
+                },
+                leadingContent = { Icon(Icons.Outlined.Sync, null) },
                 headlineContent = { Text("Re-check everything") },
                 supportingContent = { Text("Compare all photos on this phone with the server again. Already-uploaded ones are skipped.") },
             )
