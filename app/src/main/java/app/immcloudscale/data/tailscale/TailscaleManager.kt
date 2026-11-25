@@ -119,7 +119,7 @@ class TailscaleManager(
         try {
             joinInvite(server, ip, key, controlUrl, onSignIn)
         } catch (e: Throwable) {
-            inviteDone()
+            runCatching { inviteDone() }.exceptionOrNull()?.let(e::addSuppressed) // keep the real reason
             throw e
         }
     }
@@ -150,7 +150,8 @@ class TailscaleManager(
 
     /**
      * Ends an invite join, whether it worked or not: the route goes, the temporary identity is stopped and
-     * deleted, and the phone's own Tailscale comes back as the network calls for it.
+     * deleted, and the phone's own Tailscale comes back as the network calls for it. Call it only after
+     * [connectForInvite] returned normally: it ends whichever join is running.
      */
     suspend fun inviteDone() = withContext(NonCancellable) { // also when the screen that started the join has gone
         if (!inviteClaimed.get()) return@withContext // nothing of ours to end (a refused join, or already done)
@@ -171,9 +172,12 @@ class TailscaleManager(
             }
         } finally {
             inviting = false
-            inviteClaimed.set(false)
+            try {
+                onNetwork(homeBeforeInvite)
+            } finally {
+                inviteClaimed.set(false) // after the network state is back, so a next join saves the right one
+            }
         }
-        onNetwork(homeBeforeInvite)
         scope.launch { checkHome() } // the phone may now be paired with the invite's server, on another network
     }
 

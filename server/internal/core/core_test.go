@@ -32,6 +32,7 @@ type fakeServices struct {
 	// failKeys makes creating API keys fail; keyGate (when set) holds that request until it's closed.
 	failKeys bool
 	keyGate  chan struct{}
+	keyAsked chan struct{} // when set, gets a value when a key request reaches the gate
 }
 
 func (f *fakeServices) id() string { f.nextID++; return "id" + string(rune('a'+f.nextID)) }
@@ -115,6 +116,9 @@ func (f *fakeServices) immich() http.Handler {
 	})
 	mux.HandleFunc("POST /api/api-keys", func(w http.ResponseWriter, r *http.Request) {
 		if f.keyGate != nil {
+			if f.keyAsked != nil {
+				f.keyAsked <- struct{}{}
+			}
 			<-f.keyGate
 		}
 		if f.failKeys {
@@ -912,16 +916,14 @@ func TestAnInviteDoesntPairSomeoneMadeAdminWhilePairing(t *testing.T) {
 	f.mu.Lock()
 	keys := len(f.keys)
 	f.mu.Unlock()
-	f.keyGate = make(chan struct{})
+	f.keyGate, f.keyAsked = make(chan struct{}), make(chan struct{}, 1)
 	done := make(chan error)
 	go func() {
 		_, pub, _ := wg.NewKeyPair()
 		_, err := s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "x", WGPublicKey: pub})
 		done <- err
 	}()
-	for i := 0; i < 2000 && len(s.Invites()) > 0; i++ { // until the pairing has taken the code
-		time.Sleep(time.Millisecond)
-	}
+	<-f.keyAsked // past the early admin check, making the phone's Immich key
 	if err := s.SetAdmin("tom", true); err != nil {
 		t.Fatal(err)
 	}
