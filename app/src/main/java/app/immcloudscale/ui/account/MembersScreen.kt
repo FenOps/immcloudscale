@@ -314,4 +314,3 @@ private fun InviteDialog(onDismiss: () -> Unit, onInvite: (String, String) -> Un
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
-

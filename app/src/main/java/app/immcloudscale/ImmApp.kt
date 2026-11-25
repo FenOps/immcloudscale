@@ -81,9 +81,9 @@ class AppGraph(val context: Context) {
         val (priv, pub) = app.immcloudscale.data.vpn.VpnManager.newKeyPair()
         val name = listOf(android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, android.os.Build.MODEL)
             .distinct().joinToString(" ").take(60)
-        val result = app.immcloudscale.data.pairing.Pairing.pair(http, server, code, name, pub, settingsState.value.pairedDeviceId)
+        val result = Pairing.pair(http, server, code, name, pub, settingsState.value.pairedDeviceId)
         vpn.disconnect()
-        settings.update { app.immcloudscale.data.pairing.Pairing.apply(it, result, priv, server) }
+        settings.update { Pairing.apply(it, result, priv, server) }
     }
 
     /**
