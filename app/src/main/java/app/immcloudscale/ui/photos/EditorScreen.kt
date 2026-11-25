@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -105,6 +106,9 @@ fun EditorScreen(onBack: () -> Unit) {
         if (bitmap == null) error = "Couldn't open this photo for editing"
     }
 
+    // The phone's back gesture asks too, not only the arrow on screen.
+    BackHandler(enabled = changed && !confirmLeave) { confirmLeave = true }
+
     // Rotating or cropping draws the strokes into the picture first, so they stay where they were drawn.
     fun bake(): Bitmap {
         val b = bitmap!!
@@ -199,7 +203,7 @@ fun EditorScreen(onBack: () -> Unit) {
                 PEN_COLORS.forEach { c ->
                     Box(
                         Modifier.padding(6.dp).size(32.dp).background(c, CircleShape)
-                            .then(if (c == pen) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
+                            .border(if (c == pen) 3.dp else 1.dp, if (c == pen) Color.White else Color.Gray, CircleShape)
                             .clickable { pen = c },
                     )
                 }

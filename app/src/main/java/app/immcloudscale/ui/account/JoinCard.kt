@@ -8,9 +8,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.HourglassTop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,8 +37,10 @@ import androidx.compose.ui.unit.dp
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.pairing.JoinTicket
 import app.immcloudscale.graph
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** "Ask to join": someone new asks the server's admins for an account, from the home Wi-Fi. */
 @Composable
@@ -49,7 +56,7 @@ fun JoinDialog(onDismiss: () -> Unit) {
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Ask to join") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("An admin of the server approves your request; then this app connects by itself. Be on the same Wi-Fi as the server.")
                 OutlinedTextField(server, { server = it }, label = { Text("Server address") }, placeholder = { Text("192.168.1.49") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
@@ -102,7 +109,7 @@ fun JoinWaiting(s: AppSettings, onPaired: () -> Unit) {
                     if (st.status == "declined") return@LaunchedEffect
                 }
                 .onFailure { error = "Can't reach the server right now; still waiting" }
-            delay(5_000)
+            withContext(Dispatchers.IO) { delay(5_000) } // real time, not the screen's frame clock
         }
     }
     val clear = { scope.launch { g.settings.update { it.copy(joinServer = "", joinId = "", joinToken = "", joinName = "") } } }
@@ -113,7 +120,9 @@ fun JoinWaiting(s: AppSettings, onPaired: () -> Unit) {
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            // A request can wait a while for an admin: a still hourglass, the spinner only while connecting.
+            if (status == "approved") CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Outlined.HourglassTop, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(12.dp))
             Text(
                 if (status == "approved") "Approved! Connecting…" else "Waiting for an admin to approve ${s.joinName}",

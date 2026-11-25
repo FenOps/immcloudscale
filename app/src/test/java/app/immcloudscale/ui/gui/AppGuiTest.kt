@@ -2,14 +2,22 @@ package app.immcloudscale.ui.gui
 
 import android.content.Context
 import android.os.Looper
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.pressBack
@@ -156,6 +164,84 @@ class AppGuiTest {
             tab("Photos")
             compose.onNodeWithContentDescription("Backup complete").performClick()
             shot("12-backup-settings")
+        }
+    }
+
+    /** The features added in 0.3.0: remote access, backup choices, deleting, editing, members and more. */
+    @Test fun newFeatures() {
+        signIn()
+        val g = ApplicationProvider.getApplicationContext<ImmApp>().graph
+        runBlocking {
+            g.settings.update {
+                it.copy(
+                    vpnConfig = "", pairedServerId = "ics_demo", pairedDeviceId = "dev_demo", deviceToken = "demo", isAdmin = true,
+                    tsServerIp = "100.101.102.103", tsEnabled = true, backupAnywhere = true,
+                )
+            }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            tab("Network")
+            shot("15-network-remote-access")
+            tab("Photos")
+            compose.onNodeWithContentDescription("Backup complete").performClick()
+            compose.onNodeWithText("Where to back up").performScrollTo()
+            shot("16-backup-where-and-schedule")
+            compose.onNodeWithText("On a schedule").performScrollTo().performClick()
+            compose.onNodeWithText("Phone storage").performScrollTo()
+            shot("17-backup-schedule-and-free-up")
+            pressBack()
+            settle(800)
+
+            compose.onAllNodesWithContentDescription("Photo", substring = true)[3].performClick()
+            settle(1500)
+            compose.onNodeWithContentDescription("More").performClick()
+            shot("18-viewer-menu")
+            compose.onNodeWithText("Edit").performClick()
+            settle(2500)
+            compose.onNodeWithText("Mark up").performClick()
+            compose.onNodeWithContentDescription("Photo being edited").performTouchInput {
+                swipe(Offset(width * 0.3f, height * 0.55f), Offset(width * 0.7f, height * 0.4f), 400)
+            }
+            shot("19-editor")
+            pressBack()
+            settle(800)
+            compose.onNodeWithText("Discard").performClick()
+            settle(1000)
+            compose.onNodeWithText("Delete").performClick()
+            shot("20-move-to-trash-asks-first")
+            compose.onNodeWithText("Cancel").performClick()
+            settle(800)
+            compose.onNodeWithContentDescription("Back").performClick()
+            settle(2000)
+
+            compose.onAllNodesWithContentDescription("Photo", substring = true)[1].performTouchInput { longClick() }
+            compose.onAllNodesWithContentDescription("Photo", substring = true)[2].performClick()
+            compose.onAllNodesWithContentDescription("Photo", substring = true)[4].performClick()
+            compose.onNodeWithContentDescription("More").performClick()
+            shot("21-selection-menu")
+            compose.onNodeWithText("Make a collage").performClick()
+            shot("22-collage")
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithContentDescription("Clear selection").performClick()
+            settle(800)
+
+            tab("Collections")
+            compose.onNodeWithText("Duplicates").performClick()
+            shot("23-duplicates")
+            pressBack()
+            settle(800)
+            compose.onNodeWithText("Locked folder").performClick()
+            shot("24-locked-folder")
+            pressBack()
+            settle(800)
+
+            compose.onAllNodesWithContentDescription("Account and settings").onFirst().performClick()
+            shot("25-account-theme-members")
+            compose.onNodeWithText("Theme").performClick()
+            shot("26-theme")
+            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithText("Members").performClick()
+            shot("27-members")
         }
     }
 

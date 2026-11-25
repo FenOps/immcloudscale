@@ -78,7 +78,7 @@ android {
             System.getenv("ICS_E2E_ADMIN_CODE")?.let { v -> it.environment("ICS_E2E_ADMIN_CODE", v) }
             // Screenshots of the real app: ./gradlew :app:testDebugUnitTest --tests '*AppGuiTest*' -Pgui
             if (project.hasProperty("gui")) it.systemProperty("gui.out", layout.buildDirectory.dir("gui").get().asFile.path)
-            else it.exclude("**/AppGuiTest*")
+            else it.exclude("**/*GuiTest*")
         }
     }
 }

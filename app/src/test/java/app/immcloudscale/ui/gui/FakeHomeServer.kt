@@ -121,7 +121,28 @@ class FakeHomeServer {
                 val id = path.split("/")[3]
                 jpeg((if (q.queryParameter("size") == "preview") "preview:" else "thumb:") + id)
             }
+            path.startsWith("/api/assets/") && path.endsWith("/original") -> jpeg("preview:" + path.split("/")[3])
             path.startsWith("/api/assets/") -> json(assetJson(assets.first { it.id == path.substringAfterLast('/') }, detailed = true))
+
+            path == "/api/duplicates" -> json("[" + listOf("a2" to "a3", "a11" to "a12").mapIndexed { i, (x, y) ->
+                """{"duplicateId":"d$i","assets":[${assetJson(assets.first { it.id == x }, detailed = true)},${assetJson(assets.first { it.id == y })}]}"""
+            }.joinToString(",") + "]")
+            path == "/api/auth/status" -> json("""{"pinCode":false,"password":true,"isElevated":false}""")
+
+            // ---- ImmCloudScale server (pairing service) ----
+            path == "/api/v1/info" -> json("""{"product":"immcloudscale","name":"homeserver","id":"ics_demo","setUp":true,"machineLearning":true,"tailscaleIp":"100.101.102.103"}""")
+            path == "/api/v1/me" -> json("""{"name":"camille","isAdmin":true,"pendingRequests":2}""")
+            path == "/api/v1/me/session" -> json("""{"accessToken":"demo-session"}""")
+            path == "/api/v1/manage/requests" -> json("""[
+                {"id":"req_1","name":"lea","email":"lea@example.com","device":"Samsung Galaxy S24","created":"2026-11-25T09:12:00Z","status":"pending"},
+                {"id":"req_2","name":"hugo","email":"","device":"Google Pixel 8","created":"2026-11-25T10:40:00Z","status":"pending"}]""")
+            path == "/api/v1/manage/users" -> json("""[
+                {"name":"camille","email":"camille@example.com","isAdmin":true,"devices":2},
+                {"name":"tom","email":"tom@example.com","isAdmin":false,"devices":1},
+                {"name":"mamie","email":"mamie@example.com","isAdmin":false,"devices":1}]""")
+            path == "/api/v1/manage/features" -> json("""{"machineLearning":true,"memoryGB":3.2,"applying":false}""")
+            path == "/api/v1/join" -> json("""{"id":"req_9","token":"t"}""")
+            path.startsWith("/api/v1/join/") -> json("""{"status":"pending","server":"$base"}""")
 
             // ---- Nextcloud ----
             path == "/nc/status.php" -> json("""{"installed":true,"maintenance":false,"version":"31.0.0"}""")
