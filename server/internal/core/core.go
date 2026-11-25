@@ -40,6 +40,8 @@ type Server struct {
 	WaitTimeout  time.Duration
 	// PortFree checks ports on first setup; nil means "assume free" (tests).
 	PortFree func(port int, udp bool) bool
+	// TailscaleIP is this machine's Tailscale address, "" when it has none; nil means no Tailscale (tests).
+	TailscaleIP func() string
 
 	tokMu      sync.Mutex
 	tok        string
@@ -86,6 +88,7 @@ func New(st *state.Store) *Server {
 		Log:          log.New(os.Stderr, "", log.LstdFlags),
 		WaitTimeout:  20 * time.Minute,
 		PortFree:     PortFree,
+		TailscaleIP:  cachedTailscaleIP(tailscaleIPCmd),
 	}
 }
 
@@ -518,6 +521,7 @@ type PairResult struct {
 		AllowedIPs      string `json:"allowedIps"`
 		DNS             string `json:"dns"`
 	} `json:"wireguard,omitempty"`
+	Tailscale *TailscaleInfo `json:"tailscale,omitempty"`
 }
 
 var ErrBadCode = errors.New("that pairing code is wrong or has expired")
@@ -669,6 +673,7 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 			AllowedIPs: wg.ClientAllowedIPs(c.WGSubnet, c.LANSubnet),
 		}
 	}
+	res.Tailscale = s.tailscaleInfo()
 	s.Log.Printf("Paired %q for %s (VPN %s)", name, u.Name, dev.Address)
 	ok = true
 	// The same phone paired again (e.g. after a new endpoint): retire its old entry and credentials.
@@ -780,9 +785,12 @@ type Status struct {
 	Immich    bool            `json:"immichReady"`
 	Nextcloud bool            `json:"nextcloudReady"`
 	VPNUp     bool            `json:"vpnUp"`
-	Storage   *immich.Storage `json:"storage,omitempty"`
-	Users     []PublicUser    `json:"users"`
-	Devices   []DeviceStatus  `json:"devices"`
+	// TailscaleIP is set when this server is on a tailnet; TailscaleKey says whether phones join it on their own.
+	TailscaleIP  string          `json:"tailscaleIp,omitempty"`
+	TailscaleKey bool            `json:"tailscaleKey"`
+	Storage      *immich.Storage `json:"storage,omitempty"`
+	Users        []PublicUser    `json:"users"`
+	Devices      []DeviceStatus  `json:"devices"`
 }
 
 type PublicConfig struct {
@@ -813,6 +821,9 @@ func (s *Server) Status(ctx context.Context) Status {
 	host, _ := os.Hostname()
 	out := Status{Version: Version, Hostname: host, SetUp: c.ImmichAdminPass != ""}
 	out.Config = PublicConfig{c.LANAddress, c.LANSubnet, c.Endpoint, c.WGPort, c.WGSubnet, c.ImmichPort, c.NextcloudPort, c.DataDir, c.MachineLearning, c.VPNEnabled}
+	if ts := s.tailscaleInfo(); ts != nil {
+		out.TailscaleIP, out.TailscaleKey = ts.IP, ts.AuthKey != ""
+	}
 	if !out.SetUp {
 		return out
 	}

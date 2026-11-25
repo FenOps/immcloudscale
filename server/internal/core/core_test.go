@@ -643,3 +643,41 @@ func TestPairForARemovedPersonIsRefused(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestPairingHandsOutTailscaleWhenTheServerIsOnATailnet(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	pair := func() (PairResult, error) {
+		_, pub, _ := wg.NewKeyPair()
+		p, _ := s.StartPairing("camille")
+		return s.Pair(ctx, PairRequest{Code: p.Code, DeviceName: "Pixel", WGPublicKey: pub})
+	}
+
+	res, err := pair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tailscale != nil {
+		t.Fatalf("no tailnet, but got %+v", res.Tailscale)
+	}
+
+	s.TailscaleIP = func() string { return "100.101.102.103" }
+	res, err = pair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tailscale == nil || res.Tailscale.IP != "100.101.102.103" || res.Tailscale.AuthKey != "" {
+		t.Fatalf("%+v", res.Tailscale)
+	}
+
+	if err := s.SetTailscaleKey("tskey-auth-example-0123456789", ""); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = pair()
+	if res.Tailscale == nil || res.Tailscale.AuthKey != "tskey-auth-example-0123456789" {
+		t.Fatalf("%+v", res.Tailscale)
+	}
+	if st := s.Status(ctx); st.TailscaleIP != "100.101.102.103" || !st.TailscaleKey {
+		t.Fatalf("status: %s %v", st.TailscaleIP, st.TailscaleKey)
+	}
+}

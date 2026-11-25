@@ -66,6 +66,10 @@ type Config struct {
 	ImmichAdminPass  string `json:"immichAdminPassword"`
 	AdminPassword    string `json:"adminPassword"` // for the ics-server web console
 	ServerID         string `json:"serverId"`      // random, stable; lets phones recognise this server
+
+	// Handed to phones at pairing so the app joins the tailnet without a sign-in (optional).
+	TailscaleAuthKey    string `json:"tailscaleAuthKey,omitempty"`
+	TailscaleControlURL string `json:"tailscaleControlUrl,omitempty"`
 }
 
 type State struct {

@@ -16,6 +16,11 @@ import (
 )
 
 func newHandler(t *testing.T) http.Handler {
+	_, h := newServerAndHandler(t)
+	return h
+}
+
+func newServerAndHandler(t *testing.T) (*core.Server, http.Handler) {
 	st, _ := state.Open(filepath.Join(t.TempDir(), "s.json"))
 	st.Update(func(s *state.State) error {
 		s.Config.AdminPassword = "pw"
@@ -28,7 +33,8 @@ func newHandler(t *testing.T) http.Handler {
 	s.Log = log.New(io.Discard, "", 0)
 	s.ImmichURL = func(state.Config) string { return "http://127.0.0.1:1" }
 	s.NextcloudURL = func(state.Config) string { return "http://127.0.0.1:1" }
-	return New(s).Routes()
+	s.TailscaleIP = nil // never the test machine's own Tailscale
+	return s, New(s).Routes()
 }
 
 func do(h http.Handler, method, path, body string, auth bool) *httptest.ResponseRecorder {
@@ -130,5 +136,17 @@ func TestBadKeyIsAClientError(t *testing.T) {
 	h := newHandler(t)
 	if w := do(h, "POST", "/api/v1/pair", `{"code":"ABCD-EFGH","wgPublicKey":"not-a-key"}`, false); w.Code != 400 {
 		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestInfoGivesTheTailscaleAddressButNeverTheKey(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.TailscaleIP = func() string { return "100.101.102.103" }
+	if err := s.SetTailscaleKey("tskey-auth-example-0123456789", ""); err != nil {
+		t.Fatal(err)
+	}
+	w := do(h, "GET", "/api/v1/info", "", false)
+	if !strings.Contains(w.Body.String(), `"tailscaleIp":"100.101.102.103"`) || strings.Contains(w.Body.String(), "tskey") {
+		t.Fatalf("%s", w.Body)
 	}
 }

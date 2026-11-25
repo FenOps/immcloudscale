@@ -162,7 +162,14 @@ func (h *Handler) adminAuth(next http.Handler) http.Handler {
 func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
 	c := h.S.Store.Read().Config
 	host, _ := os.Hostname()
-	writeJSON(w, 200, map[string]any{"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID})
+	info := map[string]any{"product": "immcloudscale", "name": host, "version": core.Version, "setUp": c.ImmichAdminPass != "", "id": c.ServerID}
+	// The Tailscale address only (never the auth key): phones paired before Tailscale was set up learn it here.
+	if h.S.TailscaleIP != nil {
+		if ip := h.S.TailscaleIP(); ip != "" {
+			info["tailscaleIp"] = ip
+		}
+	}
+	writeJSON(w, 200, info)
 }
 
 func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {
