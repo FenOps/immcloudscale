@@ -110,6 +110,13 @@ func main() {
 			w.Flush()
 		case "remove":
 			need(args, 3, "ics-server user remove <name> [--yes]")
+			known := false
+			for _, u := range s.Status(ctx).Users {
+				known = known || u.Name == args[2]
+			}
+			if !known {
+				fail("no user %q (see: ics-server user list)", args[2])
+			}
 			if !(len(args) > 3 && args[3] == "--yes") {
 				fmt.Printf("This deletes %s's Immich and Nextcloud accounts, including all their photos and files, and disconnects their phones.\nType the name again to confirm: ", args[2])
 				var again string
@@ -193,6 +200,9 @@ func setup(ctx context.Context, s *core.Server, args []string) {
 	check(fs.Parse(args))
 	if ip := net.ParseIP(o.LANAddress); o.LANAddress != "" && (ip == nil || ip.To4() == nil) {
 		fail("--lan-ip %q isn't an IPv4 address (e.g. 192.168.1.50)", o.LANAddress)
+	}
+	if o.WGPort != 0 && (o.WGPort < 1 || o.WGPort > 65535) {
+		fail("--vpn-port %d isn't a port number (1-65535)", o.WGPort)
 	}
 	if o.Endpoint != "" && !validHost(o.Endpoint) {
 		fail("--endpoint %q isn't a host name or IP address without a port (e.g. myhome.duckdns.org)", o.Endpoint)

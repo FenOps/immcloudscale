@@ -98,8 +98,8 @@ if [ -z "$LINK" ] && [ -n "$NAS" ]; then
 fi
 
 if [ -n "$LINK" ]; then
-  say "Opening the pairing link on the phone. Tap \"Pair\" on the phone now"
   check_link "$LINK"
+  say "Opening the pairing link on the phone. Tap \"Pair\" on the phone now"
   A shell "am start -a android.intent.action.VIEW -d '$LINK' $PKG" >/dev/null
   if [ -n "$NAS" ]; then
     printf '   waiting for the phone'

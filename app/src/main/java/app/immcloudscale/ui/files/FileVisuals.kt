@@ -2,6 +2,7 @@ package app.immcloudscale.ui.files
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
@@ -9,7 +10,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Slideshow
@@ -58,7 +58,7 @@ private fun visual(kind: FileKind, shared: Boolean): Pair<ImageVector, Color?> =
     FileKind.Archive -> Icons.Filled.FolderZip to null
     FileKind.Code -> Icons.Filled.Code to GoogleColors.Doc
     FileKind.Text -> Icons.AutoMirrored.Filled.Article to GoogleColors.Doc
-    FileKind.Other -> Icons.Filled.InsertDriveFile to null
+    FileKind.Other -> Icons.AutoMirrored.Filled.InsertDriveFile to null
 }
 
 @Composable
