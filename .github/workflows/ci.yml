@@ -30,6 +30,9 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ics.jks"
             echo "ICS_KEYSTORE_FILE=$RUNNER_TEMP/ics.jks" >> "$GITHUB_ENV"
             echo "Signing with the stable key: published APKs update in place."
+          elif [ "${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '') }}" = "true" ]; then
+            echo "::error::Releases must be signed with the permanent key: add the ICS_KEYSTORE_B64, ICS_KEYSTORE_PASSWORD and ICS_KEY_ALIAS repository secrets."
+            exit 1
           else
             echo "::warning::No ICS_KEYSTORE_B64 secret: the APK is signed with a temporary key, so later versions can't install over it."
           fi

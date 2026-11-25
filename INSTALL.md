@@ -361,7 +361,7 @@ tap **Add current Wi-Fi as trusted**. The phone now connects to home by itself w
 | The admin console page doesn't open | Use `http://` (not https) and the port from the box, e.g. `:8790`. Your computer must be on the same Wi-Fi. On the server, `sudo ics-server status` shows what's running. |
 | Phone: "Can't reach the server" | The phone must be on your **home Wi-Fi** to pair, and the server must be on. Check the address and port. |
 | Phone: "That pairing code is wrong or has expired" | Make a new code in the admin console (**Pair a phone**). Codes last 15 minutes. |
-| Phone: "App not installed" | An older ImmCloudScale build is on the phone. Uninstall it first, then install again. |
+| Phone: "App not installed" | An older ImmCloudScale build signed with a different key is on the phone (for example version 0.1.0). Uninstall it first, then install again. Later versions update in place. |
 | Backup says "Only some photos can be backed up" | Tap **Open settings** → Permissions → Photos and videos → **Allow all**. |
 | Works at home but not away | Check Step 6: the rule must be **UDP** 51820 to the right address. If your home address changed, set up DuckDNS. |
 
