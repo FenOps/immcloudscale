@@ -51,7 +51,20 @@ private data class PairRequest(
     val replacesDevice: String = "",
 )
 
-data class PairLink(val server: String, val code: String)
+/**
+ * A pairing link or invite. [expires] is when the code stops working (epoch seconds, 0 if not given).
+ * [tailscaleIp] (and [tailscaleKey], [controlUrl]) let a phone away from home reach the server through Tailscale.
+ */
+data class PairLink(
+    val server: String,
+    val code: String,
+    val expires: Long = 0,
+    val tailscaleIp: String = "",
+    val tailscaleKey: String = "",
+    val controlUrl: String = "",
+) {
+    fun expired(nowSeconds: Long = System.currentTimeMillis() / 1000) = expires > 0 && nowSeconds >= expires
+}
 
 object Pairing {
     const val DEFAULT_PORT = 8790
@@ -75,14 +88,24 @@ object Pairing {
         return if (c.length == 8) c.substring(0, 4) + "-" + c.substring(4) else c
     }
 
-    /** Parses the QR / deep link `immcloudscale://pair?server=…&code=…`. */
+    /** Parses the QR / deep link `immcloudscale://pair?server=…&code=…` (plus exp, ts, tskey and control in invites). */
     fun parseLink(text: String): PairLink? {
         val uri = runCatching { Uri.parse(text.trim()) }.getOrNull() ?: return null
         if (uri.scheme != "immcloudscale" || uri.host != "pair") return null
         val server = uri.getQueryParameter("server") ?: return null
         val code = uri.getQueryParameter("code") ?: return null
-        return PairLink(normalizeServer(server), normalizeCode(code))
+        return PairLink(
+            normalizeServer(server), normalizeCode(code),
+            expires = uri.getQueryParameter("exp")?.toLongOrNull() ?: 0,
+            tailscaleIp = uri.getQueryParameter("ts").orEmpty(),
+            tailscaleKey = uri.getQueryParameter("tskey").orEmpty(),
+            controlUrl = uri.getQueryParameter("control").orEmpty(),
+        )
     }
+
+    /** Finds an invite link inside a pasted message (the link is usually one line among others). */
+    fun findLink(text: String): PairLink? =
+        Regex("""immcloudscale://pair\?\S+""").find(text)?.value?.let { parseLink(it.trimEnd('.', ',', ')', '"', '\'')) }
 
     suspend fun pair(
         http: OkHttpClient, server: String, code: String, deviceName: String, wgPublicKey: String, replacesDevice: String = "",

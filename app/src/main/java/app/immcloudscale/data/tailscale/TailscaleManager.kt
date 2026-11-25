@@ -24,6 +24,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
@@ -95,6 +96,41 @@ class TailscaleManager(
     fun proxyToken(): String = runCatching { bridge.proxyToken() }.getOrDefault("")
 
     fun logs(): String = runCatching { bridge.logs() }.getOrDefault("")
+
+    /** The server being joined through an invite (its home address), routed through Tailscale until paired. */
+    @Volatile var inviteServer: String? = null
+        private set
+
+    /**
+     * Joins through an invite away from home: connects with what the invite carries, then routes the server's
+     * home address through Tailscale. [onSignIn] opens Tailscale's sign-in page when the invite has no key.
+     */
+    suspend fun connectForInvite(server: String, onSignIn: (String) -> Unit) {
+        inviteServer = server
+        _home.value = false
+        start()
+        if (_state.value.status == TsStatus.NeedsLogin) {
+            _state.value.authUrl?.let(onSignIn)
+            // Give the person time to sign in; watchSignIn updates the state when they're done.
+            withTimeoutOrNull(5 * 60_000) { while (_state.value.status == TsStatus.NeedsLogin) delay(1000) }
+        }
+        if (_state.value.status != TsStatus.Connected) {
+            throw IOException(_state.value.error ?: "Couldn't connect to your server through Tailscale. Check the internet connection and try again.")
+        }
+        server.toHttpUrlOrNull()?.host?.let { host ->
+            withContext(Dispatchers.IO) { runCatching { bridge.setRoute(host, settings.current().tsServerIp) } }
+        }
+    }
+
+    /** After pairing (or giving up): the invite's address is a normal paired address now, or not needed. */
+    fun inviteDone() { inviteServer = null }
+
+    /** Whether the server answers at [server] directly from here (then no Tailscale is needed to pair). */
+    suspend fun answersDirectly(server: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            direct.newCall(Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
 
     /** Called when the phone's network changes. */
     fun onNetwork(home: Boolean) {

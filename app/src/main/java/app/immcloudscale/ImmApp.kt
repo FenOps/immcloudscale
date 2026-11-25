@@ -14,6 +14,8 @@ import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.pairing.MembersClient
+import app.immcloudscale.data.pairing.PairLink
+import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.data.tailscale.TailscaleManager
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.VpnStatus
@@ -26,6 +28,7 @@ import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import coil3.video.VideoFrameDecoder
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,6 +55,7 @@ class AppGraph(val context: Context) {
     val http = buildHttpClient({ settingsState.value }, homeGuard, object : HomeRoute {
         override fun proxy() = tailscale.proxy()
         override fun token() = tailscale.proxyToken()
+        override fun extraHosts() = listOfNotNull(tailscale.inviteServer)
     })
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
     val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })
@@ -79,6 +83,26 @@ class AppGraph(val context: Context) {
         val result = app.immcloudscale.data.pairing.Pairing.pair(http, server, code, name, pub, settingsState.value.pairedDeviceId)
         vpn.disconnect()
         settings.update { app.immcloudscale.data.pairing.Pairing.apply(it, result, priv, server) }
+    }
+
+    /**
+     * Pairs from a link or invite. Away from home an invite carries the server's Tailscale details: the app
+     * connects through Tailscale first, then pairs through it. [onSignIn] opens Tailscale's sign-in page when needed.
+     */
+    suspend fun pairWith(link: PairLink, onSignIn: (String) -> Unit = {}) {
+        if (link.expired()) throw IOException("This invite has expired. Ask for a new one.")
+        val server = Pairing.normalizeServer(link.server)
+        try {
+            if (link.tailscaleIp.isNotBlank() && !tailscale.answersDirectly(server)) {
+                settings.update {
+                    it.copy(tsServerIp = link.tailscaleIp, tsAuthKey = link.tailscaleKey, tsControlUrl = link.controlUrl, tsEnabled = true)
+                }
+                tailscale.connectForInvite(server, onSignIn)
+            }
+            pairWithServer(server, link.code)
+        } finally {
+            tailscale.inviteDone()
+        }
     }
 
     /** Uploads a shared/picked file: photos & videos to Immich, anything else to Nextcloud [ncFolder]. */

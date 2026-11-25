@@ -4,6 +4,7 @@ import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.pairing.MembersClient
+import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.WgRoutes
@@ -87,6 +88,22 @@ class PairingTest {
         val e = runCatching { Pairing.pair(OkHttpClient(), server.url("/").toString(), "AAAA-BBBB", "x", "k") }.exceptionOrNull()
         assertEquals("that pairing code is wrong or has expired", e?.message)
         server.shutdown()
+    }
+
+    @Test fun invitesCarryTheirDeadlineAndTailscale() {
+        val l = Pairing.parseLink(
+            "immcloudscale://pair?code=ECS8-WRTS&server=http%3A%2F%2F192.0.2.2%3A8790&exp=1795620000&ts=100.101.102.103&tskey=tskey-auth-k1",
+        )!!
+        assertEquals(1795620000L, l.expires)
+        assertEquals("100.101.102.103", l.tailscaleIp)
+        assertEquals("tskey-auth-k1", l.tailscaleKey)
+        assertTrue(l.expired(1795620000L))
+        assertTrue(!l.expired(1795619999L))
+        assertTrue(!PairLink("http://x:8790", "AAAA-BBBB").expired()) // no deadline given
+        // Pasted as a whole message, the link is found among the other lines.
+        val msg = "You're invited!\n2. Open this link:\nimmcloudscale://pair?server=http%3A%2F%2F192.0.2.2%3A8790&code=ECS8-WRTS&exp=1\nThe link works once."
+        assertEquals("ECS8-WRTS", Pairing.findLink(msg)?.code)
+        assertNull(Pairing.findLink("no link here"))
     }
 
     /** Runs only when pointed at a live server, e.g. ICS_E2E_SERVER=http://192.0.2.2:8790 ICS_E2E_CODE=…. */

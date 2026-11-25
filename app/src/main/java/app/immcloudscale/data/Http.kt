@@ -18,6 +18,8 @@ interface HomeRoute {
     fun proxy(): Proxy?
     /** Sent to the proxy so other apps on the phone can't use it. */
     fun token(): String
+    /** More server addresses to route, e.g. while joining through an invite (not paired yet). */
+    fun extraHosts(): List<String> = emptyList()
 }
 
 /** Sends only the paired server's addresses through [route]; everything else goes direct. */
@@ -25,7 +27,7 @@ class HomeProxySelector(private val settings: () -> AppSettings, private val rou
     override fun select(uri: URI): List<Proxy> {
         val p = route.proxy() ?: return listOf(Proxy.NO_PROXY)
         val s = settings()
-        val hosts = listOf(s.pairedServer, s.immichUrl, s.ncUrl).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
+        val hosts = (listOf(s.pairedServer, s.immichUrl, s.ncUrl) + route.extraHosts()).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
         return if (uri.host?.lowercase() in hosts) listOf(p) else listOf(Proxy.NO_PROXY)
     }
 

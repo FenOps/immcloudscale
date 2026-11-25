@@ -141,6 +141,12 @@ class FakeHomeServer {
                 {"name":"tom","email":"tom@example.com","isAdmin":false,"devices":1},
                 {"name":"mamie","email":"mamie@example.com","isAdmin":false,"devices":1}]""")
             path == "/api/v1/manage/features" -> json("""{"machineLearning":true,"memoryGB":3.2,"applying":false}""")
+            path == "/api/v1/manage/invites" -> json("""[{"name":"nina","code":"Q4TR-7KXD","expires":"${java.time.Instant.now().plusSeconds(11 * 60)}","createdBy":"camille"}]""")
+            path.startsWith("/api/v1/manage/users/") && path.endsWith("/pair") -> {
+                val exp = java.time.Instant.now().plusSeconds(15 * 60)
+                json("""{"code":"K7QX-M2PA","server":"http://192.168.1.49:8790","expires":"$exp",""" +
+                    """"link":"immcloudscale://pair?server=http%3A%2F%2F192.168.1.49%3A8790&code=K7QX-M2PA&exp=${exp.epochSecond}&ts=100.101.102.103"}""")
+            }
             path == "/api/v1/join" -> json("""{"id":"req_9","token":"t"}""")
             path.startsWith("/api/v1/join/") -> json("""{"status":"pending","server":"$base"}""")
 

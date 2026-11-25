@@ -1,5 +1,7 @@
 package app.immcloudscale.ui.account
 
+import android.content.ClipboardManager
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -16,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.QrCodeScanner
@@ -50,6 +53,10 @@ import app.immcloudscale.data.pairing.QrImage
 import app.immcloudscale.graph
 import app.immcloudscale.ui.theme.GoogleColors
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,10 +87,12 @@ fun PairCard(onPaired: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var joining by remember { mutableStateOf(false) }
 
-    fun pair(srv: String, c: String) {
+    val openUrl = { url: String -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }; Unit }
+
+    fun pair(link: PairLink) {
         busy = true; error = null
         scope.launch {
-            runCatching { g.pairWithServer(srv, c) }
+            runCatching { g.pairWith(link, openUrl) }
                 .onSuccess { onPaired() }
                 .onFailure { error = it.message ?: "Pairing failed" }
             busy = false
@@ -95,7 +104,7 @@ fun PairCard(onPaired: () -> Unit) {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val link = withContext(Dispatchers.IO) { runCatching { QrImage.read(ctx, uri) }.getOrNull() }?.let(Pairing::parseLink)
-            if (link != null) pair(link.server, link.code)
+            if (link != null) pair(link)
             else error = "No ImmCloudScale pairing code found in that picture. Try a sharper screenshot, or type the code."
         }
     }
@@ -122,7 +131,7 @@ fun PairCard(onPaired: () -> Unit) {
                 return@Column
             }
             Text("Scan the code shown on the server's setup screen or admin console. Photos, files and remote access are set up in one go.")
-            Button(onClick = { scanPairingCode(ctx, { pair(it.server, it.code) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { scanPairingCode(ctx, { pair(it) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
             }
             OutlinedButton(
@@ -137,9 +146,17 @@ fun PairCard(onPaired: () -> Unit) {
             OutlinedTextField(code, { code = it }, label = { Text("Pairing code") }, placeholder = { Text("K7QX-M2PA") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters), modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            Button(onClick = { pair(server, code) }, enabled = !busy && server.isNotBlank() && Pairing.normalizeCode(code).length == 9) {
+            Button(onClick = { pair(PairLink(server, code)) }, enabled = !busy && server.isNotBlank() && Pairing.normalizeCode(code).length == 9) {
                 if (busy) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(8.dp)) }
                 Text("Pair")
+            }
+            OutlinedButton(onClick = {
+                // An invite sent by message: the whole message can be copied, the link is found inside it.
+                val text = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+                val link = Pairing.findLink(text)
+                if (link != null) pair(link) else error = "Copy the invite message (or its link) first, then tap here."
+            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(8.dp)); Text("Paste an invite")
             }
             TextButton(onClick = { joining = true }, enabled = !busy) { Text("New here? Ask to join") }
         }
@@ -162,7 +179,10 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
             val s = g.settingsState.collectAsStateWithLifecycle().value
             val host = Uri.parse(link.server).host.orEmpty()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("This phone will use the photos, files and home VPN of the ImmCloudScale server at ${link.server}.")
+                Text("This phone will use the photos, files and remote access of the ImmCloudScale server at ${link.server}.")
+                inviteDeadline(link)?.let { (text, over) ->
+                    Text(text, color = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (s.immichConfigured || s.nextcloudConfigured) Text(
                     "This replaces your current setup (${listOf(s.immichUrl, s.ncUrl).filter { it.isNotBlank() }.joinToString(", ")}). " +
                         "Backups will then go to the new server.",
@@ -178,10 +198,11 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy, onClick = {
+            val ctx = LocalContext.current
+            TextButton(enabled = !busy && !link.expired(), onClick = {
                 busy = true; error = null
                 scope.launch {
-                    runCatching { g.pairWithServer(link.server, link.code) }
+                    runCatching { g.pairWith(link) { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } } }
                         .onSuccess { onDone(true) }
                         .onFailure { error = it.message ?: "Pairing failed"; busy = false }
                 }
@@ -190,3 +211,12 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
         dismissButton = { TextButton(enabled = !busy, onClick = { onDone(false) }) { Text("Cancel") } },
     )
 }
+
+/** "Valid until 15:42" for an invite (true when it's already too late), or null when the link has no deadline. */
+fun inviteDeadline(link: PairLink): Pair<String, Boolean>? {
+    if (link.expires <= 0) return null
+    val at = Instant.ofEpochSecond(link.expires).atZone(ZoneId.systemDefault())
+    val time = at.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+    return if (link.expired()) "This invite expired at $time. Ask for a new one." to true else "Valid until $time, once." to false
+}
+

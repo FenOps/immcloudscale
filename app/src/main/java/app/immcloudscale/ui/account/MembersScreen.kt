@@ -3,16 +3,22 @@ package app.immcloudscale.ui.account
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -41,9 +48,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.pairing.Features
+import app.immcloudscale.data.pairing.InviteInfo
 import app.immcloudscale.data.pairing.JoinRequestInfo
 import app.immcloudscale.data.pairing.Member
 import app.immcloudscale.data.pairing.PairCode
@@ -58,6 +67,7 @@ data class MembersUi(
     val requests: List<JoinRequestInfo> = emptyList(),
     val members: List<Member> = emptyList(),
     val features: Features? = null,
+    val invites: List<InviteInfo> = emptyList(),
     val loading: Boolean = true,
     val error: String? = null,
 )
@@ -68,6 +78,8 @@ class MembersActions(
     val onAdmin: (Member, Boolean) -> Unit = { _, _ -> },
     val onPairPhone: (Member) -> Unit = {},
     val onMachineLearning: (Boolean) -> Unit = {},
+    val onInvite: () -> Unit = {},
+    val onCancelInvite: (InviteInfo) -> Unit = {},
     val onBack: () -> Unit = {},
 )
 
@@ -82,10 +94,16 @@ fun MembersScreen(onBack: () -> Unit) {
     var shown by remember { mutableStateOf<Pair<String, PairCode>?>(null) }
     var declining by remember { mutableStateOf<JoinRequestInfo?>(null) }
     var makingAdmin by remember { mutableStateOf<Member?>(null) }
+    var inviting by remember { mutableStateOf(false) }
+    var cancelling by remember { mutableStateOf<InviteInfo?>(null) }
+    val ctx = LocalContext.current
 
     suspend fun load() {
         ui = runCatching {
-            MembersUi(g.members.requests().filter { it.status == "pending" }, g.members.members(), runCatching { g.members.features() }.getOrNull(), false)
+            MembersUi(
+                g.members.requests().filter { it.status == "pending" }, g.members.members(), runCatching { g.members.features() }.getOrNull(),
+                runCatching { g.members.invites() }.getOrDefault(emptyList()), false,
+            )
         }.getOrElse { MembersUi(loading = false, error = it.message ?: "Couldn't reach your server") }
     }
     fun act(block: suspend () -> Unit) = scope.launch {
@@ -101,25 +119,52 @@ fun MembersScreen(onBack: () -> Unit) {
             onDecline = { declining = it },
             onAdmin = { m, on -> if (on) makingAdmin = m else act { g.members.setAdmin(m.name, false) } },
             onPairPhone = { m -> act { shown = m.name to g.members.pairCode(m.name) } },
+            onInvite = { inviting = true },
+            onCancelInvite = { cancelling = it },
             onMachineLearning = { on -> act { g.members.setMachineLearning(on); snack.showSnackbar(if (on) "Turning on; this takes a few minutes" else "Turning off") } },
             onBack = onBack,
         ),
     )
 
     shown?.let { (name, code) ->
+        val deadline = inviteTime(code.expires)
         AlertDialog(
             onDismissRequest = { shown = null },
-            title = { Text("Connect $name's phone") },
+            title = { Text("Invite for $name") },
             text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    Text("If $name asked from the app, it connects by itself. Otherwise scan this in ImmCloudScale, or type the server and code.")
+                Column(
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Send it to $name: it works from anywhere, once. Or let them scan this QR code in ImmCloudScale.")
                     if (code.link.isNotBlank()) QrCode(code.link)
                     Text(code.code, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
-                    Text("Server: ${code.server}", style = MaterialTheme.typography.bodySmall)
-                    Text("Valid for 15 minutes, one phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (deadline.isNotEmpty()) "Valid until $deadline, for one phone" else "Valid for 15 minutes, for one phone",
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text("Server: ${code.server}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
-            confirmButton = { TextButton(onClick = { shown = null }) { Text("Done") } },
+            confirmButton = {
+                Button(onClick = { shareInvite(ctx, me.pairedServerName, code) }) {
+                    Icon(Icons.Outlined.Share, null); Spacer(Modifier.width(8.dp)); Text("Send invite")
+                }
+            },
+            dismissButton = { TextButton(onClick = { shown = null }) { Text("Done") } },
+        )
+    }
+    if (inviting) InviteDialog(onDismiss = { inviting = false }) { name, email ->
+        inviting = false
+        act { val c = g.members.invite(name, email); shown = c.name.ifBlank { name } to c }
+    }
+    cancelling?.let { inv ->
+        AlertDialog(
+            onDismissRequest = { cancelling = null },
+            title = { Text("Cancel ${inv.name}'s invite?") },
+            text = { Text("The link stops working right away. You can send a new one any time.") },
+            confirmButton = { TextButton(onClick = { cancelling = null; act { g.members.cancelInvite(inv.code) } }) { Text("Cancel invite") } },
+            dismissButton = { TextButton(onClick = { cancelling = null }) { Text("Keep") } },
         )
     }
     makingAdmin?.let { m ->
@@ -159,6 +204,24 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
             return@Scaffold
         }
         LazyColumn(Modifier.fillMaxSize().padding(pad)) {
+            item {
+                Button(onClick = a.onInvite, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(8.dp)); Text("Invite someone")
+                }
+            }
+            if (ui.invites.isNotEmpty()) {
+                item { SectionHeader("Open invites") }
+                items(ui.invites, key = { "i-" + it.code }) { inv ->
+                    ListItem(
+                        leadingContent = { LetterAvatar(inv.name, 40.dp) },
+                        headlineContent = { Text(inv.name) },
+                        supportingContent = {
+                            Text("Valid until ${inviteTime(inv.expires)}" + (if (inv.createdBy.isNotBlank()) " · sent by ${inv.createdBy}" else ""))
+                        },
+                        trailingContent = { TextButton(onClick = { a.onCancelInvite(inv) }) { Text("Cancel") } },
+                    )
+                }
+            }
             item { SectionHeader("Sign-up requests") }
             if (ui.requests.isEmpty()) item {
                 Text(
@@ -221,3 +284,29 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
         }
     }
 }
+
+/** Who to invite: their username (new people are created on the server) and, optionally, their email. */
+@Composable
+private fun InviteDialog(onDismiss: () -> Unit, onInvite: (String, String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    val badStart = name.isNotEmpty() && !name.first().isLetter()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Invite someone") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("You get a link to send by message. It works from anywhere, once, for 15 minutes.")
+                OutlinedTextField(name, { name = it.lowercase().filter { c -> c in 'a'..'z' || c in '0'..'9' }.take(32) }, label = { Text("Username") },
+                    placeholder = { Text("nina") }, singleLine = true, isError = badStart,
+                    supportingText = { Text(if (badStart) "Start with a letter" else "Their name on the server; an existing member gets a new link") },
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(email, { email = it }, label = { Text("Email (optional)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = { TextButton(enabled = name.length >= 2 && !badStart, onClick = { onInvite(name, email) }) { Text("Create invite") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
