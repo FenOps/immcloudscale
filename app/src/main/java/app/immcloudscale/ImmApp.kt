@@ -32,6 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.withIndex
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -47,8 +48,7 @@ class AppGraph(val context: Context) {
     val settings = SettingsStore(context)
     val settingsState: StateFlow<AppSettings> = settings.state
     val tailscale = TailscaleManager(context, settings, scope)
-    // Through Tailscale the server is the one on the tailnet (Tailscale checks its key), like through the VPN.
-    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected || tailscale.routing })
+    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected })
     val http = buildHttpClient({ settingsState.value }, homeGuard, object : HomeRoute {
         override fun proxy() = tailscale.proxy()
         override fun token() = tailscale.proxyToken()
@@ -60,6 +60,10 @@ class AppGraph(val context: Context) {
         // Connections made on the old network (direct, or through Tailscale) mustn't be reused on the new one.
         http.connectionPool.evictAll()
         tailscale.onNetwork(home)
+    }
+    init {
+        // When Tailscale connects or stops, connections made the other way mustn't be reused.
+        tailscale.state.map { it.status }.distinctUntilChanged().onEach { http.connectionPool.evictAll() }.launchIn(scope)
     }
     val offline = OfflineStore(context)
     val members = MembersClient(http) { settingsState.value }

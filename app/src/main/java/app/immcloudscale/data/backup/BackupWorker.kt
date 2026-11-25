@@ -29,7 +29,6 @@ import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
 import app.immcloudscale.MainActivity
 import app.immcloudscale.data.AppSettings
-import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
 import app.immcloudscale.ui.components.formatBytes
@@ -115,35 +114,30 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private val app get() = applicationContext as ImmApp
 
     override suspend fun doWork(): Result {
-        val result = backUp()
-        // A scheduled run books the next one (after this run, so it doesn't cancel itself).
-        if (SCHEDULED_TAG in tags) schedule(applicationContext, app.graph.settings.current(), fromWorker = true)
-        return result
+        try {
+            return backUp()
+        } finally {
+            // A scheduled run books the next one, even when this one failed (after this run, so it doesn't cancel itself).
+            if (SCHEDULED_TAG in tags) schedule(applicationContext, app.graph.settings.current(), fromWorker = true)
+        }
     }
 
     private suspend fun backUp(): Result {
         val s = app.graph.settings.current()
         if (!s.immichConfigured) return Result.success()
         // Away from home, back up only when the person chose "Anywhere", through Tailscale (started here if needed).
+        // Tailscale stays up afterwards like it does for the app on screen; it stops by itself back at home.
         val ts = app.graph.tailscale
-        var startedTailscale = false
         if (s.pairedServer.isNotBlank() && !ts.checkHome()) {
             if (!s.backupAnywhere) return Result.success(workDataOf(KEY_ERROR to "Waiting for your home Wi-Fi"))
-            val wasConnected = ts.state.value.status == TsStatus.Connected
             if (!ts.ensureConnected()) {
                 return Result.success(workDataOf(KEY_ERROR to "Away from home: turn on Remote access in the Network tab to back up"))
             }
-            startedTailscale = !wasConnected
         }
-        try {
-            val result = upload(s)
-            runCatching { findDeletedElsewhere() }.onFailure { Log.w("BackupWorker", "checking deletions", it) }
-            if (s.freeUpAuto) runCatching { offerFreeUp(s) }.onFailure { Log.w("BackupWorker", "free up space", it) }
-            return result
-        } finally {
-            // Started only for this backup: don't keep Tailscale running in the background afterwards.
-            if (startedTailscale) ts.stop()
-        }
+        val result = upload(s)
+        runCatching { findDeletedElsewhere() }.onFailure { Log.w("BackupWorker", "checking deletions", it) }
+        if (s.freeUpAuto) runCatching { offerFreeUp(s) }.onFailure { Log.w("BackupWorker", "free up space", it) }
+        return result
     }
 
     private suspend fun upload(s: AppSettings): Result {
@@ -209,8 +203,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val checkedAt = System.currentTimeMillis()
         val since = Instant.ofEpochMilli(graph.settings.current().trashSyncedAt)
         val trashed = graph.immich.trashedFrom(PhoneCopies.deviceId(applicationContext), since)
-        val still = PhoneCopies.find(applicationContext, PhoneCopies.mediaIds(applicationContext, trashed))
-            .mapNotNull { it.lastPathSegment?.toLongOrNull() }
+        val still = PhoneCopies.copiesOf(applicationContext, trashed).mapNotNull { it.lastPathSegment?.toLongOrNull() }
         graph.settings.update { it.copy(trashSyncedAt = checkedAt, phoneTrashPending = it.phoneTrashPending + still) }
         if (still.isNotEmpty()) notifyDeletedElsewhere(graph.settings.current().phoneTrashPending.size)
     }

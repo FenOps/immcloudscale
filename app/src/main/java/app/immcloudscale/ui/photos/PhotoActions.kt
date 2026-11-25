@@ -23,10 +23,12 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material.icons.filled.Close
@@ -139,7 +141,7 @@ fun SelectionTopBar(
     var more by remember { mutableStateOf(false) }
     TopAppBar(
         navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "Clear selection") } },
-        title = { Text("$count") },
+        title = { Text("$count selected") },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         actions = {
             if (query == AssetQuery.Trash) {
@@ -147,21 +149,31 @@ fun SelectionTopBar(
                 IconButton(onClick = onDelete) { Icon(Icons.Outlined.DeleteForever, "Delete forever") }
             } else {
                 IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, "Share") }
-                IconButton(onClick = onLink) { Icon(Icons.Outlined.Link, "Create link") }
                 IconButton(onClick = onAddToAlbum) { Icon(Icons.Outlined.Add, "Add to album") }
                 IconButton(onClick = onFavorite) { Icon(Icons.Outlined.FavoriteBorder, "Favorite") }
-                IconButton(onClick = onArchive) {
-                    if (query == AssetQuery.Archive) Icon(Icons.Outlined.Unarchive, "Unarchive") else Icon(Icons.Outlined.Archive, "Archive")
-                }
                 IconButton(onClick = onDelete) { Icon(Icons.Outlined.DeleteOutline, "Move to trash") }
                 Box {
                     IconButton(onClick = { more = true }) { Icon(Icons.Filled.MoreVert, "More") }
                     DropdownMenu(more, onDismissRequest = { more = false }) {
                         DropdownMenuItem(
+                            text = { Text("Create link") }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
+                            onClick = { more = false; onLink() },
+                        )
+                        val archived = query == AssetQuery.Archive
+                        DropdownMenuItem(
+                            text = { Text(if (archived) "Unarchive" else "Archive") },
+                            leadingIcon = { Icon(if (archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null) },
+                            onClick = { more = false; onArchive() },
+                        )
+                        DropdownMenuItem(
                             text = { Text(if (count in 2..COLLAGE_MAX) "Make a collage" else "Make a collage (select 2 to $COLLAGE_MAX)") },
+                            leadingIcon = { Icon(Icons.Outlined.Dashboard, null) },
                             enabled = count in 2..COLLAGE_MAX, onClick = { more = false; onCollage() },
                         )
-                        DropdownMenuItem(text = { Text("Move to Locked folder") }, onClick = { more = false; onLock() })
+                        DropdownMenuItem(
+                            text = { Text("Move to Locked folder") }, leadingIcon = { Icon(Icons.Outlined.Lock, null) },
+                            onClick = { more = false; onLock() },
+                        )
                     }
                 }
             }
@@ -250,7 +262,7 @@ fun rememberPhoneTrash(): (List<AssetDto>) -> Unit {
         { assets ->
             scope.launch {
                 val sender = withContext(Dispatchers.IO) {
-                    runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.find(ctx, PhoneCopies.mediaIds(ctx, assets))) }.getOrNull()
+                    runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.copiesOf(ctx, assets)) }.getOrNull()
                 }
                 if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build())
             }

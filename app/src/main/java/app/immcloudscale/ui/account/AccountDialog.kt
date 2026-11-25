@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CloudDone
@@ -18,7 +20,7 @@ import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -26,7 +28,9 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.immich.ServerStorage
 import app.immcloudscale.data.nextcloud.Quota
+import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.data.vpn.VpnStatus
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.LetterAvatar
@@ -74,9 +79,12 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val scope = rememberCoroutineScope()
-        AccountCard(s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers) { t ->
-            scope.launch { g.settings.update { it.copy(theme = t) } }
-        }
+        val ts by g.tailscale.state.collectAsStateWithLifecycle()
+        val routing = ts.status == TsStatus.Connected && !g.tailscale.atHome
+        AccountCard(
+            s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers,
+            onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing,
+        )
     }
 }
 
@@ -92,13 +100,15 @@ fun AccountCard(
     onNetwork: () -> Unit,
     onMembers: () -> Unit = {},
     onTheme: (String) -> Unit = {},
+    remoteConnected: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
-        Column(Modifier.padding(bottom = 16.dp)) {
+        // Scrolls: with large text the rows below storage would otherwise be cut off.
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
             Box(Modifier.fillMaxWidth().padding(8.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) { Icon(Icons.Filled.Close, "Close") }
                 Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
@@ -144,18 +154,24 @@ fun AccountCard(
                 modifier = Modifier.clickable { onDismiss(); onNetwork() },
                 colors = rowColors,
                 leadingContent = { Icon(Icons.Outlined.Hub, null) },
-                headlineContent = { Text(if (vpnConnected) "Connected to home" else "Home VPN") },
-                supportingContent = { Text(if (s.vpnConfigured) (if (vpnConnected) "WireGuard tunnel is up" else "Not connected") else "Not set up") },
+                headlineContent = { Text(if (s.vpnConfigured) (if (vpnConnected) "Connected to home" else "Home VPN") else "Remote access") },
+                supportingContent = {
+                    Text(
+                        when {
+                            s.vpnConfigured -> if (vpnConnected) "WireGuard tunnel is up" else "Not connected"
+                            remoteConnected -> "Connected from outside"
+                            s.tsEnabled && s.tsServerIp.isNotBlank() -> "On when you're away from home"
+                            else -> "Off"
+                        },
+                    )
+                },
             )
-            var themePicker by remember { mutableStateOf(false) }
             ListItem(
-                modifier = Modifier.clickable { themePicker = true },
                 colors = rowColors,
                 leadingContent = { Icon(Icons.Outlined.Palette, null) },
                 headlineContent = { Text("Theme") },
-                supportingContent = { Text(themeLabel(s.theme)) },
+                supportingContent = { ThemeChooser(s.theme, onTheme) },
             )
-            if (themePicker) ThemeDialog(s.theme, onDismiss = { themePicker = false }) { t -> themePicker = false; onTheme(t) }
             if (s.isAdmin) ListItem(
                 modifier = Modifier.clickable { onDismiss(); onMembers() },
                 colors = rowColors,
@@ -172,28 +188,16 @@ fun AccountCard(
     }
 }
 
-private fun themeLabel(t: String) = when (t) { "light" -> "Light"; "dark" -> "Dark"; else -> "Same as the phone" }
-
+/** Auto (same as the phone), Light or Dark, chosen right in the card. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ThemeDialog(current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Theme") },
-        text = {
-            Column {
-                listOf("system", "light", "dark").forEach { t ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { onPick(t) }.padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(t == current, onClick = { onPick(t) })
-                        Text(themeLabel(t), Modifier.padding(start = 8.dp))
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
+private fun ThemeChooser(current: String, onPick: (String) -> Unit) {
+    val options = listOf("system" to "Auto", "light" to "Light", "dark" to "Dark")
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        options.forEachIndexed { i, (key, label) ->
+            SegmentedButton(selected = current == key, onClick = { onPick(key) }, shape = SegmentedButtonDefaults.itemShape(i, options.size)) { Text(label) }
+        }
+    }
 }
 
 @Composable

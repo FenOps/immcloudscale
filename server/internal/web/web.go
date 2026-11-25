@@ -30,10 +30,14 @@ type Handler struct {
 	pairLimit *limiter // wrong pairing codes per IP
 	authLimit *limiter // wrong admin passwords per IP
 	joinLimit *limiter // join requests per IP
+	// locked-folder sessions per phone
+	sessionLimit *limiter
+	// wrong phone secrets per IP (separate from the console, so a misbehaving phone can't lock the admin out)
+	deviceLimit *limiter
 }
 
 func New(s *core.Server) *Handler {
-	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute), joinLimit: newLimiter(5, 10*time.Minute)}
+	return &Handler{S: s, pairLimit: newLimiter(10, 10*time.Minute), authLimit: newLimiter(10, 10*time.Minute), joinLimit: newLimiter(5, 10*time.Minute), sessionLimit: newLimiter(10, time.Hour), deviceLimit: newLimiter(10, 10*time.Minute)}
 }
 
 // PairLink is what the QR code holds; scanning it with the phone's camera opens the app.
@@ -66,7 +70,13 @@ func (h *Handler) Routes() http.Handler {
 		writeJSON(w, 200, map[string]any{"name": u.Name, "isAdmin": u.IsAdmin, "pendingRequests": pending})
 	}))
 	mux.Handle("POST /api/v1/me/session", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
-		tok, err := h.S.UserSession(r.Context(), u.Name)
+		dev := deviceID(r)
+		if !h.sessionLimit.allow(dev) {
+			writeErr(w, 429, errors.New("too many sign-ins from this phone; try again later"))
+			return
+		}
+		h.sessionLimit.fail(dev) // every session counts
+		tok, err := h.S.DeviceSession(r.Context(), dev)
 		if err != nil {
 			writeErr(w, 502, err)
 			return
@@ -77,11 +87,15 @@ func (h *Handler) Routes() http.Handler {
 		writeJSON(w, 200, h.S.Features())
 	}))
 	mux.Handle("POST /api/v1/manage/features", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
-		var in struct{ MachineLearning bool }
+		var in struct{ MachineLearning *bool }
 		if !readJSON(w, r, &in) {
 			return
 		}
-		if err := h.S.SetMachineLearning(in.MachineLearning); err != nil {
+		if in.MachineLearning == nil {
+			writeErr(w, 400, errors.New("say whether machineLearning should be on or off"))
+			return
+		}
+		if err := h.S.SetMachineLearning(*in.MachineLearning); err != nil {
 			writeErr(w, 409, err)
 			return
 		}
@@ -97,7 +111,7 @@ func (h *Handler) Routes() http.Handler {
 		h.decline(w, r, u.Name)
 	}))
 	mux.Handle("GET /api/v1/manage/users", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
-		writeJSON(w, 200, h.S.Status(r.Context()).Users)
+		writeJSON(w, 200, h.S.Members())
 	}))
 	mux.Handle("POST /api/v1/manage/users/{name}/admin", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
 		h.setAdmin(w, r)
@@ -178,6 +192,8 @@ func (h *Handler) Routes() http.Handler {
 		}()
 		writeJSON(w, 202, map[string]string{"status": "updating"})
 	})
+	// Phone API paths that don't exist: a plain 404, not the console's password prompt.
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, 404, errors.New("no such API")) })
 	mux.Handle("/", h.adminAuth(sameOriginOnly(admin)))
 	return securityHeaders(mux)
 }
@@ -258,11 +274,18 @@ func (h *Handler) joinStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+// deviceID is the phone a deviceAuth-checked request came from.
+func deviceID(r *http.Request) string {
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Device ")
+	id, _, _ := strings.Cut(cred, ":")
+	return id
+}
+
 // deviceAuth checks "Authorization: Device <id>:<secret>" (the phone's secret from pairing).
 func (h *Handler) deviceAuth(adminOnly bool, next func(http.ResponseWriter, *http.Request, state.User)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
-		if !h.authLimit.allow(ip) {
+		if !h.deviceLimit.allow(ip) {
 			writeErr(w, 429, errors.New("too many attempts, try again later"))
 			return
 		}
@@ -270,7 +293,7 @@ func (h *Handler) deviceAuth(adminOnly bool, next func(http.ResponseWriter, *htt
 		id, secret, _ := strings.Cut(cred, ":")
 		u, err := h.S.DeviceUser(id, secret)
 		if err != nil {
-			h.authLimit.fail(ip)
+			h.deviceLimit.fail(ip)
 			writeErr(w, 401, err)
 			return
 		}

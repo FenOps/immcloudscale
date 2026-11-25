@@ -54,11 +54,15 @@ fun BackupWhereChooser(
     compact: Boolean = false,
 ) {
     Column(modifier) {
+        if (compact) Text(
+            "Back up on", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(
                 selected = !s.backupAnywhere, onClick = { onChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2),
                 icon = { SegmentedButtonDefaults.Icon(!s.backupAnywhere) { Icon(Icons.Outlined.Home, null) } },
-            ) { Text("Home Wi-Fi") }
+            ) { Text("Home Wi-Fi only") }
             SegmentedButton(
                 selected = s.backupAnywhere, onClick = { onChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2),
                 icon = { SegmentedButtonDefaults.Icon(s.backupAnywhere) { Icon(Icons.Outlined.Public, null) } },
@@ -67,7 +71,8 @@ fun BackupWhereChooser(
         val (text, needsNetwork) = when {
             !s.backupAnywhere -> "Backs up only when you're on your home Wi-Fi." to false
             s.tsServerIp.isBlank() -> "Away from home, backup needs Remote access, which your server doesn't offer yet. See the Network tab." to true
-            else -> "Backs up wherever you are. Away from home Wi-Fi, the app connects through Tailscale by itself." to false
+            !s.tsEnabled -> "Away from home, backup needs Remote access, which is off. Turn it on in the Network tab." to true
+            else -> "Backs up wherever you are. Away from home Wi-Fi, the app connects to your server by itself." to false
         }
         if (!compact || needsNetwork) Text(
             text, style = MaterialTheme.typography.bodySmall,

@@ -60,8 +60,10 @@ fun JoinDialog(onDismiss: () -> Unit) {
                 Text("An admin of the server approves your request; then this app connects by itself. Be on the same Wi-Fi as the server.")
                 OutlinedTextField(server, { server = it }, label = { Text("Server address") }, placeholder = { Text("192.168.1.49") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(name, { name = it.lowercase().filter { c -> c.isLetterOrDigit() || c in "._-" } }, label = { Text("Your name") },
-                    placeholder = { Text("alex") }, singleLine = true, supportingText = { Text("Lowercase letters and digits, starting with a letter") },
+                val badStart = name.isNotEmpty() && !name.first().isLetter()
+                OutlinedTextField(name, { name = it.lowercase().filter { c -> c in 'a'..'z' || c in '0'..'9' }.take(32) }, label = { Text("Username") },
+                    placeholder = { Text("alex") }, singleLine = true, isError = badStart,
+                    supportingText = { Text(if (badStart) "Start with a letter" else "Lowercase letters and digits, at least 2") },
                     modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(email, { email = it }, label = { Text("Email (optional)") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
@@ -69,7 +71,7 @@ fun JoinDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy && server.isNotBlank() && name.length >= 2, onClick = {
+            TextButton(enabled = !busy && server.isNotBlank() && name.length >= 2 && name.first().isLetter(), onClick = {
                 busy = true; error = null
                 scope.launch {
                     val device = listOf(Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, Build.MODEL).distinct().joinToString(" ")
@@ -129,7 +131,7 @@ fun JoinWaiting(s: AppSettings, onPaired: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
             )
         }
-        Text("Ask an admin to open ImmCloudScale → Account → Members, or the server's admin console. This app connects by itself once they approve.")
+        Text("Ask an admin to tap their profile picture in ImmCloudScale, then Members (or use the server's admin console). This app connects by itself once they approve.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         TextButton(onClick = { clear() }) { Text("Cancel request") }
     }

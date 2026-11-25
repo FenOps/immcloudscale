@@ -124,7 +124,7 @@ class TailscaleManager(
         }.getOrNull()
         val home = body != null && body.contains("\"id\":\"${s.pairedServerId}\"")
         if (home) learnServerIp(body!!)
-        _home.value = home
+        if (home != _home.value) onNetwork(home) else _home.value = home
         home
     }
 

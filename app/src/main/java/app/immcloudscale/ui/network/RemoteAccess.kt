@@ -55,7 +55,8 @@ fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAcce
     val (icon, title, detail) = when {
         s.tsServerIp.isBlank() -> Triple(
             Icons.Outlined.PublicOff, "Not available yet",
-            "Your server isn't on Tailscale. On the server, run: sudo ics-server tailscale",
+            if (s.isAdmin) "Your server isn't on Tailscale yet. On the server, run: sudo ics-server tailscale"
+            else "Ask the person who set up your server to turn on remote access.",
         )
         ts.status == TsStatus.NeedsLogin -> Triple(Icons.Outlined.Login, "Sign in to connect", "Sign in to Tailscale once; after that the app connects by itself.")
         ts.status == TsStatus.Starting -> Triple(Icons.Outlined.Public, "Connecting…", "Joining your Tailscale network")
@@ -98,9 +99,9 @@ fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAcce
                     ts.status == TsStatus.NeedsLogin && ts.authUrl != null ->
                         Button(onClick = { a.onSignIn(ts.authUrl) }) { Text("Sign in to Tailscale") }
                     connected -> OutlinedButton(onClick = a.onDisconnect) { Text("Disconnect") }
-                    ts.status != TsStatus.Starting -> OutlinedButton(onClick = a.onConnect) { Text("Connect now") }
+                    ts.status != TsStatus.Starting && !atHome -> OutlinedButton(onClick = a.onConnect) { Text("Connect now") }
                 }
-                if (s.tsAuthKey.isBlank() && (connected || ts.status == TsStatus.Off)) TextButton(onClick = a.onSignOut) { Text("Sign out") }
+                if (s.tsAuthKey.isBlank() && (connected || ts.status == TsStatus.Off)) TextButton(onClick = a.onSignOut) { Text("Sign out of Tailscale") }
             }
         }
     }

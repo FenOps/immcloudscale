@@ -20,26 +20,44 @@ object PhoneCopies {
     fun deviceId(context: Context) =
         "immcloudscale-" + (Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "android")
 
-    /** The MediaStore IDs of [assets] that this phone backed up. */
-    fun mediaIds(context: Context, assets: List<AssetDto>): List<Long> {
+    /**
+     * What backup recorded for [assets] this phone uploaded: MediaStore ID to file size ("id-size"). MediaStore
+     * reuses IDs (after a media rescan, or for an edited file), so a copy only counts when the size matches too.
+     */
+    fun backedUp(context: Context, assets: List<AssetDto>): Map<Long, Long> {
         val me = deviceId(context)
-        return assets.filter { it.deviceId == me }.mapNotNull { it.deviceAssetId.substringBefore('-').toLongOrNull() }
+        return assets.filter { it.deviceId == me }.mapNotNull { a ->
+            val id = a.deviceAssetId.substringBefore('-').toLongOrNull()
+            val size = a.deviceAssetId.substringAfter('-', "").toLongOrNull()
+            if (id != null && size != null) id to size else null
+        }.toMap()
     }
 
-    /** Content URIs of the copies that are still on the phone. */
-    fun find(context: Context, ids: Collection<Long>): List<Uri> {
+    /** Content URIs of copies still on the phone: same ID and, when [sizes] has one, the same size. */
+    fun find(context: Context, ids: Collection<Long>, sizes: Map<Long, Long> = emptyMap()): List<Uri> {
         if (ids.isEmpty()) return emptyList()
         val out = mutableListOf<Uri>()
+        val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE)
         for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
             for (chunk in ids.chunked(500)) {
                 val sel = "${MediaStore.MediaColumns._ID} IN (${chunk.joinToString(",") { "?" }})"
                 runCatching {
-                    context.contentResolver.query(base, arrayOf(MediaStore.MediaColumns._ID), sel, chunk.map { it.toString() }.toTypedArray(), null)
-                        ?.use { c -> while (c.moveToNext()) out += ContentUris.withAppendedId(base, c.getLong(0)) }
+                    context.contentResolver.query(base, cols, sel, chunk.map { it.toString() }.toTypedArray(), null)?.use { c ->
+                        while (c.moveToNext()) {
+                            val id = c.getLong(0)
+                            if (sizes[id].let { it == null || it == c.getLong(1) }) out += ContentUris.withAppendedId(base, id)
+                        }
+                    }
                 }
             }
         }
         return out
+    }
+
+    /** This phone's copies of [assets] that are still on it (matched by ID and size). */
+    fun copiesOf(context: Context, assets: List<AssetDto>): List<Uri> {
+        val known = backedUp(context, assets)
+        return find(context, known.keys, known)
     }
 
     /**
@@ -65,7 +83,7 @@ data class FreeUp(val ids: List<Long>, val bytes: Long)
 
 /** What "Free up space" would remove: this phone's copies already on the server, older than [keepDays]. */
 suspend fun findFreeUp(context: Context, immich: ImmichClient, keepDays: Int): FreeUp {
-    val onServer = PhoneCopies.mediaIds(context, immich.assetsFrom(PhoneCopies.deviceId(context))).toSet()
+    val onServer = PhoneCopies.backedUp(context, immich.assetsFrom(PhoneCopies.deviceId(context)))
     if (onServer.isEmpty()) return FreeUp(emptyList(), 0)
     val before = System.currentTimeMillis() / 1000 - keepDays * 86_400L
     val ids = mutableListOf<Long>()
@@ -77,7 +95,8 @@ suspend fun findFreeUp(context: Context, immich: ImmichClient, keepDays: Int): F
         )?.use { c ->
             while (c.moveToNext()) {
                 val id = c.getLong(0)
-                if (id in onServer) { ids += id; bytes += c.getLong(1) }
+                val size = c.getLong(1)
+                if (onServer[id] == size) { ids += id; bytes += size } // same file as backed up, not a reused ID
             }
         }
     }

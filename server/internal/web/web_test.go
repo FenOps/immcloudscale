@@ -204,3 +204,19 @@ func hashForTest(t string) string {
 	sum := sha256.Sum256([]byte(t))
 	return hex.EncodeToString(sum[:])
 }
+
+func TestMembersListNeverIncludesPasswords(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.Store.Update(func(st *state.State) error {
+		st.Users = []state.User{{Name: "camille", Password: "web-secret-1", IsAdmin: true}, {Name: "tom", Password: "web-secret-2"}}
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	r := httptest.NewRequest("GET", "/api/v1/manage/users", nil)
+	r.Header.Set("Authorization", "Device dev_a:secret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"tom"`) || strings.Contains(rec.Body.String(), "web-secret") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}

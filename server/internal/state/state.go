@@ -34,6 +34,8 @@ type Device struct {
 	Created       time.Time `json:"created"`
 	// TokenHash is the SHA-256 of the secret the phone got at pairing; it signs the phone's member-management requests.
 	TokenHash string `json:"tokenHash,omitempty"`
+	// ImmichSessionID is the session handed to the phone for the locked folder; it's signed out on revoke.
+	ImmichSessionID string `json:"immichSessionId,omitempty"`
 }
 
 // JoinRequest is someone asking, from the app, for an account; an admin approves or declines it.

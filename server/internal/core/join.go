@@ -106,7 +106,7 @@ func (s *Server) JoinStatus(id, token string) (status, code string, err error) {
 			req = &st.Requests[i]
 		}
 	}
-	if req == nil || !tokenMatches(req.TokenHash, token) {
+	if req == nil || !tokenMatches(req.TokenHash, token) || s.Now().Sub(req.Created) >= requestTTL {
 		return "", "", ErrBadRequestToken
 	}
 	if req.Status != "approved" {
@@ -167,8 +167,11 @@ func (s *Server) ApproveJoin(ctx context.Context, id, by string) (PublicRequest,
 	if req.ID == "" || req.Status != "pending" {
 		return PublicRequest{}, errors.New("that request isn't waiting any more")
 	}
-	if _, err := s.AddUser(ctx, req.Name, req.Email, false); err != nil {
-		return PublicRequest{}, err
+	// An earlier approval may have created the accounts and then failed: carry on from there.
+	if st := s.Store.Read(); st.FindUser(req.Name) == nil {
+		if _, err := s.AddUser(ctx, req.Name, req.Email, false); err != nil {
+			return PublicRequest{}, err
+		}
 	}
 	p, err := s.StartPairing(req.Name)
 	if err != nil {
@@ -202,6 +205,28 @@ func (s *Server) DeclineJoin(id, by string) error {
 		err = errors.New("that request isn't waiting any more")
 	}
 	return err
+}
+
+// Member is a person as admins' phones see them: never their passwords.
+type Member struct {
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"isAdmin"`
+	Devices int    `json:"devices"`
+}
+
+// Members lists people from the stored state (no Docker or Immich calls).
+func (s *Server) Members() []Member {
+	st := s.Store.Read()
+	count := map[string]int{}
+	for _, d := range st.Devices {
+		count[d.User]++
+	}
+	out := make([]Member, 0, len(st.Users))
+	for _, u := range st.Users {
+		out = append(out, Member{u.Name, u.Email, u.IsAdmin, count[u.Name]})
+	}
+	return out
 }
 
 // SetAdmin makes someone an admin or not. There's always at least one admin left.

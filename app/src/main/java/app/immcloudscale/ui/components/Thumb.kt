@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import coil3.compose.AsyncImage
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import kotlin.math.abs
 
@@ -41,7 +42,8 @@ fun RemoteImage(
     val model: Any = if (session == null) url else remember(url, session) {
         ImageRequest.Builder(ctx).data(url)
             .httpHeaders(NetworkHeaders.Builder().set("Authorization", "Bearer $session").build())
-            .memoryCacheKey("locked:$url").diskCacheKey("locked:$url").build()
+            // Never cached: locked photos mustn't stay on the phone once the folder locks again.
+            .memoryCachePolicy(CachePolicy.DISABLED).diskCachePolicy(CachePolicy.DISABLED).build()
     }
     Box(modifier.background(background)) {
         AsyncImage(model = model, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())

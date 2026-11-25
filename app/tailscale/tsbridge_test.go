@@ -33,11 +33,14 @@ func TestRejectsRequestsWithoutTheToken(t *testing.T) {
 func TestRoutesTheHomeAddressToTheTailnetAddress(t *testing.T) {
 	SetRoute("192.168.1.49", "100.64.0.1")
 	defer SetRoute("192.168.1.49", "")
-	if got := target("192.168.1.49:2283"); got != "100.64.0.1:2283" {
-		t.Errorf("got %s", got)
+	if got, err := target("192.168.1.49:2283"); err != nil || got != "100.64.0.1:2283" {
+		t.Errorf("got %s %v", got, err)
 	}
-	if got := target("nas.example:8080"); got != "nas.example:8080" {
-		t.Errorf("other hosts must pass through unchanged, got %s", got)
+	if got, err := target("100.64.0.1:8790"); err != nil || got != "100.64.0.1:8790" {
+		t.Errorf("the server's own Tailscale address: got %s %v", got, err)
+	}
+	if _, err := target("100.64.0.7:22"); err == nil {
+		t.Error("other tailnet machines must not be reachable through the proxy")
 	}
 }
 

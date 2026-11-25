@@ -155,6 +155,9 @@ func main() {
 		need(args, 2, "ics-server revoke <device-id>")
 		check(s.Revoke(ctx, args[1]))
 		fmt.Println("Revoked", args[1])
+		if s.Store.Read().Config.TailscaleAuthKey != "" {
+			fmt.Println("If that phone used Tailscale, also remove it at https://login.tailscale.com/admin/machines.")
+		}
 	case "tailscale":
 		tailscaleCmd(s, args[1:])
 	case "requests":
@@ -541,6 +544,9 @@ func tailscaleCmd(s *core.Server, args []string) {
 	if *key != "" && *remove {
 		fail("use either --auth-key or --remove-key")
 	}
+	if *control != "" && *key == "" {
+		fail("--control-url goes with --auth-key (the Headscale key)")
+	}
 	if *key != "" {
 		if strings.ContainsAny(*key, " \t\n") || len(*key) < 20 || len(*key) > 200 {
 			fail("that doesn't look like an auth key; copy the whole key (it starts with tskey-auth-)")
@@ -552,11 +558,17 @@ func tailscaleCmd(s *core.Server, args []string) {
 			fail("--control-url needs the full address, e.g. https://headscale.example.org")
 		}
 		check(s.SetTailscaleKey(*key, *control))
-		fmt.Println("Saved. Phones get the key when they pair; phones paired earlier get it after pairing again.")
+		fmt.Println("Saved. Phones get the key when they pair (once Tailscale runs here); phones paired earlier get it after pairing again.")
+		fmt.Println("Anyone with this key can add devices to your tailnet: make it a tagged key and limit the tag in your")
+		fmt.Println("tailnet's access rules to this server's ports (Immich, Nextcloud, pairing). See INSTALL.md, Remote access.")
 	}
 	if *remove {
-		check(s.SetTailscaleKey("", ""))
-		fmt.Println("Removed. Phones now sign in with Tailscale to connect from outside.")
+		if s.Store.Read().Config.TailscaleAuthKey == "" {
+			fmt.Println("No key was saved.")
+		} else {
+			check(s.SetTailscaleKey("", ""))
+			fmt.Println("Removed. Phones now sign in with Tailscale to connect from outside.")
+		}
 	}
 	ip := ""
 	if s.TailscaleIP != nil {

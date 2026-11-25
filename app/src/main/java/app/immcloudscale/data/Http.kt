@@ -43,9 +43,13 @@ class AuthInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         var req = chain.request()
-        if (route != null && chain.connection()?.route()?.proxy?.type() == Proxy.Type.HTTP) {
-            req = req.newBuilder().header("Proxy-Authorization", "Bearer ${route.token()}").build()
-        }
+        // This connection itself goes through Tailscale's proxy (not just "Tailscale is on": a pooled direct
+        // connection can outlive a network change).
+        val viaTailscale = route != null && chain.connection()?.route()?.proxy?.type() == Proxy.Type.HTTP
+        if (viaTailscale) req = req.newBuilder().header("Proxy-Authorization", "Bearer ${route!!.token()}").build()
+        // Every request to the paired server's addresses is checked, also those that bring their own credentials
+        // (members management, the locked folder): they carry secrets too.
+        guard?.check(req.url, viaTailscale)
         if (req.header("Authorization") != null || req.header("x-api-key") != null) return chain.proceed(req)
         val s = settings()
         val url = req.url
@@ -53,7 +57,6 @@ class AuthInterceptor(
         // Both servers can sit behind one reverse proxy (nas.lan/ and nas.lan/nextcloud): the longer base path wins.
         val immich = if (s.immichConfigured) matchLength(url.toString(), s.immichUrl) else -1
         val nc = if (s.nextcloudConfigured) matchLength(url.toString(), s.ncUrl) else -1
-        if (immich >= 0 || nc >= 0) guard?.check(url)
         if (immich >= 0 && immich >= nc) {
             if (s.immichTokenIsApiKey) b.header("x-api-key", s.immichToken)
             else b.header("Authorization", "Bearer ${s.immichToken}")

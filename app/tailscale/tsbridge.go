@@ -46,8 +46,10 @@ func Start(dir, hostname, authKey, controlURL string) error {
 		return nil
 	}
 	s := &tsnet.Server{
-		Dir:        dir,
-		Hostname:   hostname,
+		Dir:      dir,
+		Hostname: hostname,
+		// The phone leaves the tailnet when it goes offline for a while, so reinstalls and lost phones don't pile up.
+		Ephemeral:  true,
 		AuthKey:    authKey,
 		ControlURL: controlURL,
 		Logf:       func(string, ...any) {},
@@ -103,7 +105,7 @@ func Logout() error {
 }
 
 // SetRoute sends requests for lanHost (the server's home address, as the app knows it) to tailnetHost
-// (the server's Tailscale address). Other hosts are dialled through the tailnet as they are.
+// (the server's Tailscale address). Only routed hosts can be reached: the proxy never opens the rest of the tailnet.
 func SetRoute(lanHost, tailnetHost string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -175,24 +177,37 @@ func keepLog(format string, args ...any) {
 	}
 }
 
-func target(addr string) string {
+// target is where addr really goes: the server's Tailscale address for its home address, or for itself.
+func target(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return addr
+		return "", err
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if t, ok := routes[strings.ToLower(host)]; ok {
-		return net.JoinHostPort(t, port)
+	h := strings.ToLower(host)
+	if t, ok := routes[h]; ok {
+		return net.JoinHostPort(t, port), nil
 	}
-	return addr
+	for _, t := range routes {
+		if t == h {
+			return addr, nil
+		}
+	}
+	return "", fmt.Errorf("%s isn't your server", host)
 }
 
 // proxy handles plain HTTP requests (absolute URLs, as clients send them to a proxy) and CONNECT
 // tunnels, dialling the destination through the tailnet.
 func proxy(s *tsnet.Server, tok string) http.Handler {
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return s.Dial(ctx, network, target(addr))
+		to, err := target(addr)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return s.Dial(ctx, network, to)
 	}
 	forward := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -200,9 +215,10 @@ func proxy(s *tsnet.Server, tok string) http.Handler {
 			r.Out.Host = r.In.Host
 		},
 		Transport: &http.Transport{
-			DialContext:         dial,
-			MaxIdleConnsPerHost: 8,
-			IdleConnTimeout:     90 * time.Second,
+			DialContext:           dial,
+			ResponseHeaderTimeout: 2 * time.Minute,
+			MaxIdleConnsPerHost:   8,
+			IdleConnTimeout:       90 * time.Second,
 		},
 		FlushInterval: -1, // stream video and big downloads as they arrive
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

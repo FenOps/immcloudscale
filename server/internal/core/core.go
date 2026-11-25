@@ -717,14 +717,23 @@ func (s *Server) userToken(ctx context.Context, c state.Config, u *state.User) (
 
 // revokeCredentials deletes a phone's Immich API key and Nextcloud app password.
 func (s *Server) revokeCredentials(ctx context.Context, c state.Config, u *state.User, dev state.Device) error {
-	if dev.ImmichKeyID != "" {
+	if dev.ImmichKeyID != "" || dev.ImmichSessionID != "" {
 		tok, err := s.userToken(ctx, c, u)
 		if err != nil {
 			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
 		}
+		im := s.immich(c)
+		defer im.Logout(context.WithoutCancel(ctx), tok) // the sign-in used just for this
 		var ae *immich.APIError
-		if err := s.immich(c).DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
-			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+		if dev.ImmichKeyID != "" {
+			if err := im.DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
+				return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
+			}
+		}
+		if dev.ImmichSessionID != "" {
+			if err := im.DeleteSession(ctx, tok, dev.ImmichSessionID); err != nil {
+				return fmt.Errorf("couldn't sign the phone out of its locked folder: %w", err)
+			}
 		}
 	}
 	if dev.NCAppPassword != "" {

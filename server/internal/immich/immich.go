@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -144,4 +145,35 @@ func (c *Client) Storage(ctx context.Context, token string) (Storage, error) {
 	var s Storage
 	err := c.do(ctx, http.MethodGet, "/server/storage", token, nil, &s)
 	return s, err
+}
+
+// CurrentSessionID is the ID of the session [token] belongs to.
+func (c *Client) CurrentSessionID(ctx context.Context, token string) (string, error) {
+	var sessions []struct {
+		ID      string `json:"id"`
+		Current bool   `json:"current"`
+	}
+	if err := c.do(ctx, "GET", "/sessions", token, nil, &sessions); err != nil {
+		return "", err
+	}
+	for _, s := range sessions {
+		if s.Current {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no current session")
+}
+
+// DeleteSession signs that session out (it may already be gone).
+func (c *Client) DeleteSession(ctx context.Context, userToken, id string) error {
+	err := c.do(ctx, "DELETE", "/sessions/"+id, userToken, nil, nil)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == 404 {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) Logout(ctx context.Context, token string) error {
+	return c.do(ctx, "POST", "/auth/logout", token, nil, nil)
 }

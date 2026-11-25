@@ -28,7 +28,8 @@ class HomeGuard(
 
     @Volatile private var verified: Pair<String, Long>? = null
 
-    fun check(url: HttpUrl) {
+    /** [viaTailscale]: this request goes through Tailscale, which proves the server by its key. */
+    fun check(url: HttpUrl, viaTailscale: Boolean = false) {
         val s = settings()
         if (s.pairedServer.isBlank() || s.pairedServerId.isBlank()) return // hand-configured servers: user's choice
         // The addresses this pairing set up (the server's LAN address for photos and files, and the address the
@@ -36,7 +37,7 @@ class HomeGuard(
         val hosts = listOf(s.pairedServer, s.immichUrl, s.ncUrl).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
         if (url.host.lowercase() !in hosts) return
         if (!isPrivateHost(url.host)) return // public names (e.g. HTTPS behind a domain) aren't ambiguous
-        if (vpnConnected()) return // through the tunnel, private addresses are always home
+        if (viaTailscale || vpnConnected()) return // through a tunnel, private addresses are always home
         // One check at a time: a screen of thumbnails shouldn't send a probe per image.
         synchronized(this) {
             val key = networkKey

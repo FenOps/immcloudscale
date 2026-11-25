@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"github.com/FenOps/immcloudscale/server/internal/state"
 )
 
 // Changing the machine-learning setting re-runs setup (pulls or drops the ML container), which takes minutes.
@@ -44,15 +47,49 @@ func (s *Server) SetMachineLearning(on bool) error {
 	return nil
 }
 
-// UserSession signs in to Immich as the person (for the locked folder, which Immich opens only for a session
-// unlocked with the person's PIN, never for an API key).
-func (s *Server) UserSession(ctx context.Context, name string) (string, error) {
+// DeviceSession signs in to Immich as the phone's person, for the locked folder (which Immich opens only for a
+// session unlocked with the person's PIN, never for an API key). The phone's previous session is signed out, and
+// the new one is remembered so revoking the phone signs it out too. Unlike other sign-ins, a changed Immich
+// password is not reset here: a phone mustn't be able to trigger that.
+func (s *Server) DeviceSession(ctx context.Context, deviceID string) (string, error) {
 	st := s.Store.Read()
-	u := st.FindUser(name)
+	var dev *state.Device
+	for i := range st.Devices {
+		if st.Devices[i].ID == deviceID {
+			dev = &st.Devices[i]
+		}
+	}
+	if dev == nil {
+		return "", ErrBadDevice
+	}
+	u := st.FindUser(dev.User)
 	if u == nil {
 		return "", ErrUserGone
 	}
-	return s.userToken(ctx, st.Config, u)
+	im := s.immich(st.Config)
+	tok, err := im.Login(ctx, u.Email, u.Password)
+	if err != nil {
+		return "", fmt.Errorf("signing in to Immich: %w", err)
+	}
+	id, err := im.CurrentSessionID(ctx, tok)
+	if err != nil {
+		_ = im.Logout(ctx, tok)
+		return "", err
+	}
+	if dev.ImmichSessionID != "" && dev.ImmichSessionID != id {
+		if err := im.DeleteSession(ctx, tok, dev.ImmichSessionID); err != nil {
+			s.Log.Printf("signing out %s's previous locked-folder session: %v", dev.Name, err)
+		}
+	}
+	err = s.Store.Update(func(st *state.State) error {
+		for i := range st.Devices {
+			if st.Devices[i].ID == deviceID {
+				st.Devices[i].ImmichSessionID = id
+			}
+		}
+		return nil
+	})
+	return tok, err
 }
 
 func memoryGB() float64 {

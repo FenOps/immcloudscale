@@ -106,12 +106,14 @@ fun PairCard(onPaired: () -> Unit) {
                 Icon(Icons.Outlined.Dns, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text("ImmCloudScale Server", style = MaterialTheme.typography.titleMedium)
-                    Text("Recommended", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    if (s.pairedServer.isBlank() && s.joinId.isBlank()) {
+                        Text("Recommended", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
                 }
                 if (s.pairedServer.isNotBlank()) Icon(Icons.Filled.CheckCircle, "Paired", tint = GoogleColors.Online)
             }
             if (s.pairedServer.isNotBlank()) {
-                Text("Paired with ${s.pairedServerName.ifBlank { s.pairedServer }} as ${s.immichUserName}. Photos, files and the VPN are set up.")
+                Text("Paired with ${s.pairedServerName.ifBlank { s.pairedServer }} as ${s.immichUserName}. Photos, files and remote access are set up.")
                 OutlinedButton(onClick = { scope.launch { g.settings.update { it.copy(pairedServer = "") } } }) { Text("Pair again") }
                 return@Column
             }
@@ -119,7 +121,7 @@ fun PairCard(onPaired: () -> Unit) {
                 JoinWaiting(s, onPaired)
                 return@Column
             }
-            Text("Scan the code shown by `ics-server setup` or the server's admin console. Photos, files and the home VPN are set up in one go.")
+            Text("Scan the code shown on the server's setup screen or admin console. Photos, files and remote access are set up in one go.")
             Button(onClick = { scanPairingCode(ctx, { pair(it.server, it.code) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
             }
