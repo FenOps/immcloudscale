@@ -115,6 +115,8 @@ fun NetworkScreen(onAccount: () -> Unit, bottomPadding: PaddingValues) {
     val vpn by vm.vpn.collectAsStateWithLifecycle()
     val s by vm.settings.collectAsStateWithLifecycle()
     val ui by vm.ui.collectAsStateWithLifecycle()
+    val ts by vm.ts.collectAsStateWithLifecycle()
+    val atHome by vm.atHome.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
     var paste by remember { mutableStateOf(false) }
     var addDevice by remember { mutableStateOf(false) }
@@ -168,7 +170,16 @@ fun NetworkScreen(onAccount: () -> Unit, bottomPadding: PaddingValues) {
         onRecheck = { vm.checkServices() },
         onAccount = onAccount,
     )
-    NetworkContent(vpn, s, ui, vm.summary(), vm.publicKey(), actions, snack, bottomPadding)
+    val remote = RemoteAccessActions(
+        onEnabled = vm::setTsEnabled,
+        onConnect = vm::tsConnect,
+        onDisconnect = vm::tsDisconnect,
+        onSignIn = { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } },
+        onSignOut = vm::tsSignOut,
+    )
+    NetworkContent(vpn, s, ui, vm.summary(), vm.publicKey(), actions, snack, bottomPadding, remoteCard = {
+        if (remoteAccessAvailable(s)) RemoteAccessCard(ts, s, atHome, remote)
+    })
 
     if (paste) PasteConfigDialog(onDismiss = { paste = false }) { text -> vm.importConfig(text).also { if (it == null) paste = false } }
     if (addDevice) AddDeviceDialog(onDismiss = { addDevice = false }, onCopy = actions.onCopy) { text ->
@@ -208,6 +219,7 @@ fun NetworkContent(
     a: NetworkActions,
     snack: SnackbarHostState = remember { SnackbarHostState() },
     bottomPadding: PaddingValues = PaddingValues(0.dp),
+    remoteCard: @Composable () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -218,6 +230,42 @@ fun NetworkContent(
         },
         snackbarHost = { SnackbarHost(snack, Modifier.padding(bottomPadding)) },
     ) { pad ->
+        if (!s.vpnConfigured && remoteAccessAvailable(s)) {
+            // Paired with a server: Tailscale is the easy way in; WireGuard stays available for those who want it.
+            LazyColumn(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding()), contentPadding = PaddingValues(bottom = bottomPadding.calculateBottomPadding() + 16.dp)) {
+                item { remoteCard() }
+                item { SectionHeader("Services on your NAS") { IconButton(onClick = a.onRecheck) { Icon(Icons.Outlined.Refresh, "Check again") } } }
+                ui.services.forEach { svc ->
+                    item(key = "svc-" + svc.name) {
+                        ListItem(
+                            leadingContent = { Icon(if (svc.name == "Immich") Icons.Outlined.PhotoLibrary else Icons.Outlined.Folder, null) },
+                            headlineContent = { Text(svc.name) },
+                            supportingContent = { Text(svc.url.ifBlank { "Not set up" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            trailingContent = { ReachBadge(svc) },
+                        )
+                    }
+                }
+                item { SectionHeader("WireGuard VPN (advanced)") }
+                item {
+                    Text(
+                        "Only if your home has a public internet address and you forwarded a port. Most people only need Remote access above.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = a.onImportFile, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Outlined.FileOpen, null); Spacer(Modifier.width(8.dp)); Text("Import .conf file")
+                        }
+                        OutlinedButton(onClick = a.onAddDevice, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("Add this device")
+                        }
+                    }
+                }
+            }
+            return@Scaffold
+        }
         if (!s.vpnConfigured) {
             Column(Modifier.fillMaxSize().padding(pad).padding(bottom = bottomPadding.calculateBottomPadding())) {
                 EmptyState(
@@ -241,6 +289,7 @@ fun NetworkContent(
         }
         val connected = vpn.status == VpnStatus.Connected
         LazyColumn(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding()), contentPadding = PaddingValues(bottom = bottomPadding.calculateBottomPadding() + 16.dp)) {
+            item { remoteCard() }
             item { StatusCard(vpn, s, summary, publicKey, a) }
 
             item { SectionHeader("Routing") }

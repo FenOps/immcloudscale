@@ -39,6 +39,14 @@ data class AppSettings(
     val vpnAutoConnect: Boolean = false,
     val vpnTrustedSsids: Set<String> = emptySet(),
 
+    /** Remote access through Tailscale, run inside the app: connects by itself away from home. */
+    val tsEnabled: Boolean = false,
+    /** The server's Tailscale address, from pairing or the server's info page. */
+    val tsServerIp: String = "",
+    /** From pairing when the server has a key: joins the tailnet without signing in. */
+    val tsAuthKey: String = "",
+    val tsControlUrl: String = "",
+
     val backupEnabled: Boolean = false,
     val backupWifiOnly: Boolean = true,
     val backupChargingOnly: Boolean = false,
@@ -48,6 +56,15 @@ data class AppSettings(
     val lastBackupAt: Long = 0L,
     /** Files the last backup run couldn't send (unsupported type, unreadable). */
     val backupSkipped: Int = 0,
+    /** Back up away from home too (through Tailscale), not only on the home Wi-Fi. */
+    val backupAnywhere: Boolean = false,
+    /** Days to back up on, 1 (Monday) to 7; empty means whenever there's something new. */
+    val backupDays: Set<Int> = emptySet(),
+    /** Time of day for scheduled backups, in minutes after midnight. */
+    val backupTime: Int = 2 * 60,
+
+    /** "system", "light" or "dark". */
+    val theme: String = "system",
 
     val filesGrid: Boolean = false,
     val photoColumns: Int = 4,
@@ -96,6 +113,14 @@ class SettingsStore(private val context: Context) {
         val pairedServerName = stringPreferencesKey("paired_server_name")
         val pairedDeviceId = stringPreferencesKey("paired_device_id")
         val pairedServerId = stringPreferencesKey("paired_server_id")
+        val tsEnabled = booleanPreferencesKey("ts_enabled")
+        val tsServerIp = stringPreferencesKey("ts_server_ip")
+        val tsAuthKey = stringPreferencesKey("ts_auth_key")
+        val tsControlUrl = stringPreferencesKey("ts_control_url")
+        val backupAnywhere = booleanPreferencesKey("backup_anywhere")
+        val backupDays = stringSetPreferencesKey("backup_days")
+        val backupTime = stringPreferencesKey("backup_time")
+        val theme = stringPreferencesKey("theme")
     }
 
     private fun read(p: Preferences) =
@@ -128,6 +153,14 @@ class SettingsStore(private val context: Context) {
             pairedServerName = p[K.pairedServerName] ?: "",
             pairedDeviceId = p[K.pairedDeviceId] ?: "",
             pairedServerId = p[K.pairedServerId] ?: "",
+            tsEnabled = p[K.tsEnabled] ?: false,
+            tsServerIp = p[K.tsServerIp] ?: "",
+            tsAuthKey = p[K.tsAuthKey] ?: "",
+            tsControlUrl = p[K.tsControlUrl] ?: "",
+            backupAnywhere = p[K.backupAnywhere] ?: false,
+            backupDays = p[K.backupDays]?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet(),
+            backupTime = p[K.backupTime]?.toIntOrNull() ?: 2 * 60,
+            theme = p[K.theme] ?: "system",
         )
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { read(it) }
@@ -170,6 +203,10 @@ class SettingsStore(private val context: Context) {
             p[K.filesGrid] = n.filesGrid; p[K.photoColumns] = n.photoColumns.toString()
             p[K.pairedServer] = n.pairedServer; p[K.pairedServerName] = n.pairedServerName
             p[K.pairedDeviceId] = n.pairedDeviceId; p[K.pairedServerId] = n.pairedServerId
+            p[K.tsEnabled] = n.tsEnabled; p[K.tsServerIp] = n.tsServerIp
+            p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
+            p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()
+            p[K.backupTime] = n.backupTime.toString(); p[K.theme] = n.theme
         }
         saved?.let { state.value = it }
     }

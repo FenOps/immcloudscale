@@ -25,6 +25,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
 import kotlinx.coroutines.CancellationException
@@ -34,7 +35,10 @@ import okio.BufferedSink
 import okio.source
 import java.io.FileNotFoundException
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
 /** A photo or video on the phone, from MediaStore. */
@@ -106,8 +110,35 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private val app get() = applicationContext as ImmApp
 
     override suspend fun doWork(): Result {
+        val result = backUp()
+        // A scheduled run books the next one (after this run, so it doesn't cancel itself).
+        if (SCHEDULED_TAG in tags) schedule(applicationContext, app.graph.settings.current(), fromWorker = true)
+        return result
+    }
+
+    private suspend fun backUp(): Result {
         val s = app.graph.settings.current()
         if (!s.immichConfigured) return Result.success()
+        // Away from home, back up only when the person chose "Anywhere", through Tailscale (started here if needed).
+        val ts = app.graph.tailscale
+        var startedTailscale = false
+        if (s.pairedServer.isNotBlank() && !ts.checkHome()) {
+            if (!s.backupAnywhere) return Result.success(workDataOf(KEY_ERROR to "Waiting for your home Wi-Fi"))
+            val wasConnected = ts.state.value.status == TsStatus.Connected
+            if (!ts.ensureConnected()) {
+                return Result.success(workDataOf(KEY_ERROR to "Away from home: turn on Remote access in the Network tab to back up"))
+            }
+            startedTailscale = !wasConnected
+        }
+        try {
+            return upload(s)
+        } finally {
+            // Started only for this backup: don't keep Tailscale running in the background afterwards.
+            if (startedTailscale) ts.stop()
+        }
+    }
+
+    private suspend fun upload(s: AppSettings): Result {
         // Look back a day past the last file handled: MediaStore can add items with an older DATE_ADDED
         // (e.g. a long video finishing), and files sharing one second could be cut off. Re-checking is cheap:
         // the server says which checksums it already has, so nothing is uploaded twice.
@@ -215,19 +246,48 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_ERROR = "error"
         const val NOW = "backup-now"
         const val PERIODIC = "backup-periodic"
+        const val SCHEDULED = "backup-scheduled"
+        private const val SCHEDULED_TAG = "scheduled"
         private const val CHANNEL = "backup"
+
+        /**
+         * Time until the next scheduled backup: the first of [days] (1 = Monday … 7 = Sunday) at [minuteOfDay]
+         * that is still ahead of [now].
+         */
+        fun untilNextRun(days: Set<Int>, minuteOfDay: Int, now: LocalDateTime): Duration {
+            val at = LocalTime.of(minuteOfDay / 60, minuteOfDay % 60)
+            for (ahead in 0..7L) {
+                val day = now.toLocalDate().plusDays(ahead)
+                val run = day.atTime(at)
+                if (day.dayOfWeek.value in days && run.isAfter(now)) return Duration.between(now, run)
+            }
+            return Duration.ofDays(1)
+        }
 
         private fun constraints(s: AppSettings) = Constraints.Builder()
             .setRequiredNetworkType(if (s.backupWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
             .setRequiresCharging(s.backupChargingOnly)
             .build()
 
-        fun schedule(context: Context, s: AppSettings) {
+        fun schedule(context: Context, s: AppSettings, fromWorker: Boolean = false) {
             val wm = WorkManager.getInstance(context)
             if (!s.backupEnabled || !s.immichConfigured) {
                 wm.cancelUniqueWork(PERIODIC)
+                wm.cancelUniqueWork(SCHEDULED)
                 return
             }
+            if (s.backupDays.isNotEmpty()) {
+                // Chosen days and time: one run at the next slot, which books the one after.
+                wm.cancelUniqueWork(PERIODIC)
+                val wait = untilNextRun(s.backupDays, s.backupTime, LocalDateTime.now())
+                wm.enqueueUniqueWork(
+                    SCHEDULED, if (fromWorker) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE,
+                    OneTimeWorkRequestBuilder<BackupWorker>().setInitialDelay(wait.toMillis(), TimeUnit.MILLISECONDS)
+                        .setConstraints(constraints(s)).addTag(SCHEDULED_TAG).build(),
+                )
+                return
+            }
+            wm.cancelUniqueWork(SCHEDULED)
             wm.enqueueUniquePeriodicWork(
                 PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
                 PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS).setConstraints(constraints(s)).build(),

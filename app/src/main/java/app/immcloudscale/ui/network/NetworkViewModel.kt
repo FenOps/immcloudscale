@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.immcloudscale.AppGraph
+import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.data.vpn.PeerStats
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.WgRoutes
@@ -35,6 +36,16 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
     val ui = _ui.asStateFlow()
     val vpn = g.vpn.state
     val settings = g.settingsState
+    val ts = g.tailscale.state
+    val atHome = g.tailscale.home
+
+    fun setTsEnabled(on: Boolean) = viewModelScope.launch {
+        g.settings.update { it.copy(tsEnabled = on) }
+        if (on && !g.tailscale.atHome) g.tailscale.start() else if (!on) g.tailscale.stop()
+    }
+    fun tsConnect() = viewModelScope.launch { g.tailscale.start() }
+    fun tsDisconnect() = viewModelScope.launch { g.tailscale.stop() }
+    fun tsSignOut() = viewModelScope.launch { g.tailscale.logout() }
 
     init {
         viewModelScope.launch {
@@ -45,6 +56,7 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
         }
         checkServices()
         viewModelScope.launch { vpn.collect { if (it.status == app.immcloudscale.data.vpn.VpnStatus.Connected) { delay(1500); checkServices() } } }
+        viewModelScope.launch { ts.collect { if (it.status == TsStatus.Connected) checkServices() } }
     }
 
     fun checkServices() = viewModelScope.launch {

@@ -7,11 +7,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HomeGuard
+import app.immcloudscale.data.HomeRoute
 import app.immcloudscale.data.SettingsStore
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
+import app.immcloudscale.data.tailscale.TailscaleManager
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.VpnStatus
 import coil3.ImageLoader
@@ -43,11 +45,21 @@ class AppGraph(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(context)
     val settingsState: StateFlow<AppSettings> = settings.state
-    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected })
-    val http = buildHttpClient({ settingsState.value }, homeGuard)
+    val tailscale = TailscaleManager(context, settings, scope)
+    // Through Tailscale the server is the one on the tailnet (Tailscale checks its key), like through the VPN.
+    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected || tailscale.routing })
+    val http = buildHttpClient({ settingsState.value }, homeGuard, object : HomeRoute {
+        override fun proxy() = tailscale.proxy()
+        override fun token() = tailscale.proxyToken()
+    })
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
     val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })
-    val vpn: VpnManager = VpnManager(context, settings, scope) { key -> homeGuard.networkKey = key }
+    val vpn: VpnManager = VpnManager(context, settings, scope, { key -> homeGuard.networkKey = key }) { home, info ->
+        info?.let(tailscale::learnServerIp)
+        // Connections made on the old network (direct, or through Tailscale) mustn't be reused on the new one.
+        http.connectionPool.evictAll()
+        tailscale.onNetwork(home)
+    }
     val offline = OfflineStore(context)
 
     /**
@@ -114,7 +126,8 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
         graph.settingsState
             .distinctUntilChanged { a, b ->
                 a.backupEnabled == b.backupEnabled && a.immichConfigured == b.immichConfigured &&
-                    a.backupWifiOnly == b.backupWifiOnly && a.backupChargingOnly == b.backupChargingOnly
+                    a.backupWifiOnly == b.backupWifiOnly && a.backupChargingOnly == b.backupChargingOnly &&
+                    a.backupDays == b.backupDays && a.backupTime == b.backupTime
             }
             .withIndex()
             // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.

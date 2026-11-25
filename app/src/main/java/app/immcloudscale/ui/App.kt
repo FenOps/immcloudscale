@@ -138,6 +138,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                         onAccount = { account = true },
                         onBackupSettings = { nav.navigate("backup") },
                         onSetup = { nav.navigate("servers") },
+                        onOpenNetwork = { tab = Tab.Network },
                         bottomPadding = bottom,
                     )
                     Tab.Collections -> CollectionsScreen(
@@ -183,7 +184,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
             )
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
-        composable("backup") { BackupScreen(onBack = { nav.popBackStack() }) }
+        composable("backup") { BackupScreen(onBack = { nav.popBackStack() }, onOpenNetwork = { nav.popBackStack(); tab = Tab.Network }) }
         composable("servers") {
             ServersScreen(onBack = { nav.popBackStack() }, onNetwork = { tab = Tab.Network; nav.popBackStack("main", false) }, onDone = {})
         }

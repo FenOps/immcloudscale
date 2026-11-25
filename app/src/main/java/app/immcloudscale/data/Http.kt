@@ -5,15 +5,47 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import java.io.IOException
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
 import java.util.concurrent.TimeUnit
+
+/** How requests reach the home server: straight there, or through Tailscale's local proxy when away. */
+interface HomeRoute {
+    /** The proxy to use for the home server right now, or null to go direct. */
+    fun proxy(): Proxy?
+    /** Sent to the proxy so other apps on the phone can't use it. */
+    fun token(): String
+}
+
+/** Sends only the paired server's addresses through [route]; everything else goes direct. */
+class HomeProxySelector(private val settings: () -> AppSettings, private val route: HomeRoute) : ProxySelector() {
+    override fun select(uri: URI): List<Proxy> {
+        val p = route.proxy() ?: return listOf(Proxy.NO_PROXY)
+        val s = settings()
+        val hosts = listOf(s.pairedServer, s.immichUrl, s.ncUrl).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
+        return if (uri.host?.lowercase() in hosts) listOf(p) else listOf(Proxy.NO_PROXY)
+    }
+
+    override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) = Unit
+}
 
 /**
  * One OkHttp client for the API calls, Coil thumbnails and ExoPlayer streams. The interceptor adds
  * the right credentials depending on which server a request goes to, so image URLs can stay plain.
  */
-class AuthInterceptor(private val settings: () -> AppSettings, private val guard: HomeGuard? = null) : Interceptor {
+class AuthInterceptor(
+    private val settings: () -> AppSettings,
+    private val guard: HomeGuard? = null,
+    private val route: HomeRoute? = null,
+) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
-        val req = chain.request()
+        var req = chain.request()
+        if (route != null && chain.connection()?.route()?.proxy?.type() == Proxy.Type.HTTP) {
+            req = req.newBuilder().header("Proxy-Authorization", "Bearer ${route.token()}").build()
+        }
         if (req.header("Authorization") != null || req.header("x-api-key") != null) return chain.proceed(req)
         val s = settings()
         val url = req.url
@@ -45,8 +77,9 @@ class AuthInterceptor(private val settings: () -> AppSettings, private val guard
 
 // A network interceptor runs for every hop, so credentials are decided again after each redirect and never
 // follow a redirect to another host.
-fun buildHttpClient(settings: () -> AppSettings, guard: HomeGuard? = null): OkHttpClient = OkHttpClient.Builder()
-    .addNetworkInterceptor(AuthInterceptor(settings, guard))
+fun buildHttpClient(settings: () -> AppSettings, guard: HomeGuard? = null, route: HomeRoute? = null): OkHttpClient = OkHttpClient.Builder()
+    .addNetworkInterceptor(AuthInterceptor(settings, guard, route))
+    .apply { if (route != null) proxySelector(HomeProxySelector(settings, route)) }
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS)
     .writeTimeout(10, TimeUnit.MINUTES)

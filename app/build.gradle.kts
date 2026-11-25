@@ -116,6 +116,12 @@ dependencies {
     // Userspace WireGuard (wireguard-go) behind Android's VpnService
     implementation("com.wireguard.android:tunnel:1.0.20230706")
 
+    // Tailscale inside the app (built from app/tailscale by the buildTailscale task below)
+    implementation(files("libs/tsbridge.aar"))
+
+    // Reading a pairing QR code from a picture in the gallery
+    implementation("com.google.zxing:core:3.5.3")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
@@ -126,3 +132,13 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// Tailscale runs inside the app from a small Go library (app/tailscale), built with gomobile into
+// libs/tsbridge.aar. Needs Go and the Android NDK; rebuilt only when its sources change.
+val buildTailscale by tasks.registering(Exec::class) {
+    description = "Builds the Tailscale bridge library"
+    inputs.files(fileTree("tailscale") { include("*.go", "go.mod", "go.sum", "build-aar.sh"); exclude("*_test.go") })
+    outputs.file(layout.projectDirectory.file("libs/tsbridge.aar"))
+    commandLine("bash", file("tailscale/build-aar.sh").path)
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildTailscale) }
