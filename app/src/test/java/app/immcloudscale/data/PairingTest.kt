@@ -3,6 +3,7 @@ package app.immcloudscale.data
 import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
+import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.data.vpn.VpnManager
 import app.immcloudscale.data.vpn.WgRoutes
@@ -110,6 +111,35 @@ class PairingTest {
         assertTrue(nc.list("/").isNotEmpty())
         if (r.wireguard != null) assertNull(VpnManager.validate(settings.vpnConfig)) // absent when the server runs without the VPN
         println("LIVE OK: ${r.user.name} ${r.immich.url} ${r.nextcloud.url} vpn=${r.wireguard?.address}")
+    }
+
+    /** Live: joining, approving from an admin phone, the locked folder session and duplicates (ICS_E2E_* as above, code for an admin). */
+    @Test fun liveMembers() = runTest {
+        val url = System.getenv("ICS_E2E_SERVER")
+        val code = System.getenv("ICS_E2E_ADMIN_CODE")
+        assumeTrue(url != null && code != null)
+        val (priv, pub) = VpnManager.newKeyPair()
+        var settings = Pairing.apply(AppSettings(), Pairing.pair(OkHttpClient(), url!!, code!!, "Admin phone", pub), priv, url)
+        assertTrue("pairing an admin gives an admin phone", settings.isAdmin && settings.deviceToken.isNotBlank())
+        val http = buildHttpClient({ settings }, HomeGuard({ settings }, { false }))
+        val members = MembersClient(http) { settings }
+
+        val name = "e2e" + System.currentTimeMillis() % 100000
+        val ticket = members.requestJoin(url, name, "", "Robolectric")
+        assertEquals("pending", members.joinStatus(url, ticket).status)
+        val req = members.requests().first { it.name == name }
+        val approved = members.approve(req.id)
+        assertTrue(approved.link.startsWith("immcloudscale://pair?"))
+        val status = members.joinStatus(url, ticket)
+        assertEquals("approved", status.status)
+        assertEquals(approved.code, status.code)
+        assertTrue(members.members().any { it.name == name })
+
+        val immich = ImmichClient(http) { settings.immichUrl }
+        val session = members.session()
+        immich.lockStatus(session) // Immich accepts the session the server handed out
+        runCatching { immich.duplicates() } // fine either way: with machine learning off Immich may refuse
+        println("LIVE MEMBERS OK: approved $name")
     }
 
     private companion object {

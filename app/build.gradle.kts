@@ -75,6 +75,7 @@ android {
             // Optional live check against a running ics-server: ICS_E2E_SERVER=http://host:8790 ICS_E2E_CODE=XXXX-XXXX
             System.getenv("ICS_E2E_SERVER")?.let { v -> it.environment("ICS_E2E_SERVER", v) }
             System.getenv("ICS_E2E_CODE")?.let { v -> it.environment("ICS_E2E_CODE", v) }
+            System.getenv("ICS_E2E_ADMIN_CODE")?.let { v -> it.environment("ICS_E2E_ADMIN_CODE", v) }
             // Screenshots of the real app: ./gradlew :app:testDebugUnitTest --tests '*AppGuiTest*' -Pgui
             if (project.hasProperty("gui")) it.systemProperty("gui.out", layout.buildDirectory.dir("gui").get().asFile.path)
             else it.exclude("**/AppGuiTest*")
