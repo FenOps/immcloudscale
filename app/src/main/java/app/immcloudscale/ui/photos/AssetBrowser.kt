@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
@@ -33,6 +34,7 @@ import app.immcloudscale.graph
 import app.immcloudscale.ui.components.CenteredLoading
 import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.ErrorState
+import app.immcloudscale.ui.components.Pullable
 import kotlinx.coroutines.launch
 
 /**
@@ -58,6 +60,10 @@ fun AssetBrowser(
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(vm) {
+        vm.refreshIfStale()
+        onPauseOrDispose {}
+    }
     var confirmDelete by remember { mutableStateOf(false) }
     val sections = remember(st.assets) { groupByDay(st.assets) }
 
@@ -90,9 +96,9 @@ fun AssetBrowser(
         PullToRefreshBox(st.refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
             when {
                 st.assets.isEmpty() && st.loading -> CenteredLoading()
-                st.assets.isEmpty() && st.error != null -> ErrorState(st.error!!, vm::refresh)
+                st.assets.isEmpty() && st.error != null -> Pullable { ErrorState(st.error!!, vm::refresh) }
                 st.assets.isEmpty() && header == null ->
-                    EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody)
+                    Pullable { EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody) }
                 else -> AssetGrid(
                     sections = sections,
                     columns = settings.photoColumns,

@@ -10,7 +10,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
@@ -21,6 +23,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.Instant
+import java.util.Base64
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -92,14 +96,24 @@ class PairingTest {
         val (priv, pub) = VpnManager.newKeyPair()
         val r = Pairing.pair(OkHttpClient(), url!!, code!!, "Robolectric phone", pub)
         var settings = Pairing.apply(AppSettings(), r, priv, url)
-        val http = buildHttpClient({ settings })
+        // The same client chain as the app, home-network check included (VPN off, as on home Wi-Fi).
+        val http = buildHttpClient({ settings }, HomeGuard({ settings }, { false }))
         // The app's own clients, with the credentials the server handed out.
         val immich = ImmichClient(http) { settings.immichUrl }
         assertEquals(r.user.email, immich.me().email)
-        immich.assets(AssetQuery.Timeline, 1)
+        val jpeg = Base64.getDecoder().decode(TINY_JPEG)
+        val now = Instant.now()
+        immich.upload(jpeg.toRequestBody("image/jpeg".toMediaType()), "live.jpg", "live-${now.toEpochMilli()}", "robolectric", now, now, null)
+        val timeline = immich.assets(AssetQuery.Timeline, 1)
+        assertTrue("uploaded photo missing from the timeline", timeline.items.any { it.originalFileName == "live.jpg" })
         val nc = NextcloudClient(http, { settings.ncUrl }, { settings.ncUser })
         assertTrue(nc.list("/").isNotEmpty())
         if (r.wireguard != null) assertNull(VpnManager.validate(settings.vpnConfig)) // absent when the server runs without the VPN
         println("LIVE OK: ${r.user.name} ${r.immich.url} ${r.nextcloud.url} vpn=${r.wireguard?.address}")
+    }
+
+    private companion object {
+        /** A 64x48 blue JPEG. */
+        const val TINY_JPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAwAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDNooor6o+ZCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k="
     }
 }

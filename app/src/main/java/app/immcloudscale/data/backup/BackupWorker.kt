@@ -214,7 +214,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_SKIPPED = "skipped"
         const val KEY_ERROR = "error"
         const val NOW = "backup-now"
-        private const val PERIODIC = "backup-periodic"
+        const val PERIODIC = "backup-periodic"
         private const val CHANNEL = "backup"
 
         private fun constraints(s: AppSettings) = Constraints.Builder()

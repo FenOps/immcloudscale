@@ -33,8 +33,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.WorkQuery
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.data.immich.MemoryDto
@@ -140,8 +144,9 @@ fun PhotosScreen(
     val settings by g.settingsState.collectAsStateWithLifecycle()
     // Backup progress only matters once backup is on; don't start WorkManager before that.
     val work by remember(settings.backupEnabled) {
-        if (settings.backupEnabled) WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW)
-        else flowOf(emptyList())
+        if (settings.backupEnabled) {
+            WorkManager.getInstance(ctx).getWorkInfosFlow(WorkQuery.fromUniqueWorkNames(BackupWorker.NOW, BackupWorker.PERIODIC))
+        } else flowOf(emptyList())
     }.collectAsStateWithLifecycle(emptyList())
     val running = work.firstOrNull { it.state == WorkInfo.State.RUNNING }
     val progress = running?.progress?.let { p ->
@@ -174,6 +179,14 @@ fun PhotosScreen(
 
     val vm = app.immcloudscale.ui.components.graphViewModel("timeline") { AssetListViewModel(it, AssetQuery.Timeline) }
     val st by vm.state.collectAsStateWithLifecycle()
+    // Show what backup uploaded: when a run finishes, and every 20 photos while the timeline is still empty.
+    var wasRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(running != null) {
+        if (running == null && wasRunning) vm.refresh()
+        wasRunning = running != null
+    }
+    val doneSoFar = running?.progress?.getInt(BackupWorker.KEY_DONE, 0) ?: 0
+    LaunchedEffect(doneSoFar / 20) { if (doneSoFar > 0 && st.assets.isEmpty()) vm.refresh() }
     AssetBrowser(
         vm = vm,
         onOpenViewer = onOpenViewer,

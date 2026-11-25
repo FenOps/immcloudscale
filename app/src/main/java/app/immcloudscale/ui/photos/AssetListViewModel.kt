@@ -10,6 +10,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -32,14 +34,25 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     val state: StateFlow<AssetListState> = _state.asStateFlow()
     private var page = 1
     private var job: Job? = null
+    private var loadedAt = 0L
 
     init {
-        refresh()
+        // Reload whenever the server connection changes (pairing, signing in, switching servers), not just once:
+        // a list loaded before pairing, or straight after it with an empty library, would otherwise stay empty.
+        viewModelScope.launch {
+            graph.settingsState.map { it.immichUrl to it.immichToken }.distinctUntilChanged().collect { refresh() }
+        }
+    }
+
+    /** Reload when coming back to the screen after a while, so photos backed up meanwhile show up. */
+    fun refreshIfStale(maxAgeMs: Long = 30_000) {
+        if (System.currentTimeMillis() - loadedAt > maxAgeMs && !_state.value.loading) refresh()
     }
 
     fun refresh() {
         job?.cancel()
         page = 1
+        loadedAt = System.currentTimeMillis()
         _state.update { it.copy(refreshing = it.assets.isNotEmpty(), endReached = false, error = null) }
         if (query == AssetQuery.Timeline) viewModelScope.launch {
             runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
@@ -51,7 +64,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         val s = _state.value
         if (!reset && (s.loading || s.endReached)) return
         if (!graph.settingsState.value.immichConfigured) {
-            _state.update { it.copy(loading = false, refreshing = false, endReached = true) }
+            _state.update { it.copy(assets = emptyList(), memories = emptyList(), loading = false, refreshing = false, endReached = true) }
             return
         }
         _state.update { it.copy(loading = true) }
