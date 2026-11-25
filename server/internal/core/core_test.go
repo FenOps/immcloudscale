@@ -812,3 +812,12 @@ func TestApprovingALeftoverRequestNeverHandsOverSomeoneElse(t *testing.T) {
 		t.Fatalf("a pairing code was made: %+v", p)
 	}
 }
+
+func TestNobodyCanAskToJoinAsAdmin(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	for _, n := range []string{"admin", "Admin", "root", "ics-admin"} {
+		if _, _, err := s.RequestJoin(n, "", "phone"); err == nil {
+			t.Errorf("%q was accepted", n)
+		}
+	}
+}

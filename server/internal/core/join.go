@@ -28,6 +28,11 @@ var (
 	ErrBadDevice       = errors.New("this phone isn't recognised; pair it again")
 )
 
+// reservedName is a name nobody may take: the hidden service admin, and names that look like the console's admin.
+func reservedName(n string) bool {
+	return n == ncAdmin || n == "admin" || n == "administrator" || n == "root"
+}
+
 func hashToken(t string) string {
 	sum := sha256.Sum256([]byte(t))
 	return hex.EncodeToString(sum[:])
@@ -51,7 +56,10 @@ type PublicRequest struct {
 // RequestJoin records a request for an account and returns its ID and the secret the requester checks it with.
 func (s *Server) RequestJoin(name, email, device string) (id, token string, err error) {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if !userRe.MatchString(name) || name == ncAdmin {
+	if reservedName(name) {
+		return "", "", fmt.Errorf("%q is reserved; pick another name", name)
+	}
+	if !userRe.MatchString(name) {
 		return "", "", fmt.Errorf("names are 2-32 lowercase letters, digits, '.', '_' or '-', starting with a letter")
 	}
 	email = strings.TrimSpace(email)

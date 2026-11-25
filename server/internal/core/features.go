@@ -30,8 +30,12 @@ func (s *Server) Features() Features {
 
 // SetMachineLearning switches Immich's machine learning on or off in the background.
 func (s *Server) SetMachineLearning(on bool) error {
-	if s.Store.Read().Config.ImmichAdminPass == "" {
+	c := s.Store.Read().Config
+	if c.ImmichAdminPass == "" {
 		return errors.New("the server isn't set up yet")
+	}
+	if c.MachineLearning == on {
+		return nil // already so: re-running setup would only pull images for nothing
 	}
 	if !applyingFeatures.CompareAndSwap(false, true) {
 		return errors.New("already applying a change; wait a few minutes")

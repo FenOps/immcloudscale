@@ -24,7 +24,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 const ncAdmin = "ics-admin"
 
@@ -339,7 +339,7 @@ var userRe = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,31}$`)
 
 func (s *Server) AddUser(ctx context.Context, name, email string, admin bool) (state.User, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if !userRe.MatchString(name) || name == ncAdmin {
+	if !userRe.MatchString(name) || reservedName(name) {
 		return state.User{}, fmt.Errorf("user names are 2-32 lowercase letters, digits, '.', '_' or '-', starting with a letter")
 	}
 	st := s.Store.Read()
