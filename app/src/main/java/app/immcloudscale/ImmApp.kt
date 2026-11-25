@@ -13,6 +13,7 @@ import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.vpn.VpnManager
+import app.immcloudscale.data.vpn.VpnStatus
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -25,15 +26,11 @@ import coil3.video.VideoFrameDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.withIndex
-import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -46,7 +43,7 @@ class AppGraph(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(context)
     val settingsState: StateFlow<AppSettings> = settings.state
-    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == app.immcloudscale.data.vpn.VpnStatus.Connected })
+    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected })
     val http = buildHttpClient({ settingsState.value }, homeGuard)
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
     val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })

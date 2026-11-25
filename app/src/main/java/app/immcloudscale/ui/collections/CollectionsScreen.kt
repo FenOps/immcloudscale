@@ -49,9 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -249,7 +250,7 @@ fun CollectionsContent(
 }
 
 /** Lets a horizontal row scroll to the screen edges past the grid's side padding. */
-private fun Modifier.bleed(by: androidx.compose.ui.unit.Dp) = layout { measurable, constraints ->
+private fun Modifier.bleed(by: Dp) = layout { measurable, constraints ->
     val extra = (by * 2).roundToPx()
     val placeable = measurable.measure(constraints.copy(maxWidth = constraints.maxWidth + extra, minWidth = constraints.minWidth + extra))
     layout(constraints.maxWidth, placeable.height) { placeable.place(-by.roundToPx(), 0) }

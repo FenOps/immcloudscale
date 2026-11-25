@@ -29,11 +29,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -110,8 +114,8 @@ fun BackupScreen(onBack: () -> Unit) {
         onDispose { lifecycle.lifecycle.removeObserver(obs) }
     }
 
-    val snack = remember { androidx.compose.material3.SnackbarHostState() }
-    Scaffold(snackbarHost = { androidx.compose.material3.SnackbarHost(snack) }, topBar = {
+    val snack = remember { SnackbarHostState() }
+    Scaffold(snackbarHost = { SnackbarHost(snack) }, topBar = {
         TopAppBar(
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             title = { Text("Backup") },
@@ -124,7 +128,7 @@ fun BackupScreen(onBack: () -> Unit) {
             ) {
                 Column(Modifier.padding(4.dp)) {
                     ListItem(
-                        colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                         headlineContent = { Text("Back up to Immich", style = MaterialTheme.typography.titleMedium) },
                         supportingContent = {
                             Text(
@@ -178,7 +182,7 @@ fun BackupScreen(onBack: () -> Unit) {
                             "This app was allowed to see selected photos only. To back up everything, open Settings → Permissions → Photos and videos → Allow all.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        androidx.compose.material3.TextButton(onClick = {
+                        TextButton(onClick = {
                             ctx.startActivity(
                                 android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                                     .setData(android.net.Uri.fromParts("package", ctx.packageName, null)),
@@ -208,7 +212,7 @@ fun BackupScreen(onBack: () -> Unit) {
                         label = { Text(f) },
                     )
                 }
-                if (folders.isEmpty()) androidx.compose.material3.TextButton(onClick = { perms.launch(mediaPermissions) }) {
+                if (folders.isEmpty()) TextButton(onClick = { perms.launch(mediaPermissions) }) {
                     Text("Allow access to photos to choose folders")
                 }
             }

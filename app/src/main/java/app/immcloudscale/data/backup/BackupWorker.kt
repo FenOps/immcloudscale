@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -24,11 +25,14 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
+import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
+import java.io.FileNotFoundException
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -149,7 +153,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 }
             }
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             return if (runAttemptCount < 5) Result.retry() else Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Backup failed")))
         }
         app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis(), backupSkipped = skipped) }
@@ -158,21 +162,21 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
     /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
     private fun permanent(e: Throwable): Boolean = when (e) {
-        is java.io.FileNotFoundException, is SecurityException -> true
-        is app.immcloudscale.data.HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
+        is FileNotFoundException, is SecurityException -> true
+        is HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
         else -> false
     }
 
     /** MediaStore names sometimes lack an extension, which Immich needs to know the file type. */
     private fun uploadName(m: LocalMedia): String {
         if ('.' in m.name.substringAfterLast('/')) return m.name
-        val ext = android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(m.mime)
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(m.mime)
         return if (ext != null) "${m.name}.$ext" else m.name
     }
 
     private fun sha1(m: LocalMedia): String {
         val md = MessageDigest.getInstance("SHA-1")
-        val stream = applicationContext.contentResolver.openInputStream(m.uri) ?: throw java.io.FileNotFoundException("${m.uri}")
+        val stream = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
         stream.use { input ->
             val buf = ByteArray(256 * 1024)
             while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
@@ -185,7 +189,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         // Unknown length (chunked): MediaStore's SIZE can be stale, and a mismatch fails the upload.
         override fun contentLength() = -1L
         override fun writeTo(sink: BufferedSink) {
-            val input = applicationContext.contentResolver.openInputStream(m.uri) ?: throw java.io.FileNotFoundException("${m.uri}")
+            val input = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
             input.source().use { sink.writeAll(it) }
         }
     }

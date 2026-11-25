@@ -1,10 +1,14 @@
 package app.immcloudscale.ui
 
+import android.content.Context
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import app.immcloudscale.MainActivity
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
+import app.immcloudscale.MainActivity
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -24,9 +28,9 @@ class AppSmokeTest {
 
     @Before fun testWorkManager() {
         // A synchronous WorkManager: the real one keeps database threads running after the test closes the database.
-        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
-        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(
-            ctx, androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build(),
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            ctx, Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
         )
     }
 

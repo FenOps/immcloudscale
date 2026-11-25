@@ -110,7 +110,7 @@ if [ -n "$LINK" ]; then
       NEW=$(comm -13 <(printf '%s\n' "$BEFORE") <(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort))
       if [ -n "$NEW" ]; then
         printf '\n'; say "Paired! The phone now has photos, files and the home VPN."
-        ssh "$NAS" "$SUDO ics-server devices" | awk -v id="$(printf '%s' "$NEW" | head -1)" 'NR==1 || $1==id' 
+        ssh "$NAS" "$SUDO ics-server devices" | awk -v id="$(printf '%s' "$NEW" | head -1)" 'NR==1 || $1==id'
         PAIRED=1
         break
       fi

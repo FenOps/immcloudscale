@@ -613,7 +613,7 @@ func TestRejectedAdminSessionIsRenewed(t *testing.T) {
 }
 
 func TestRemoveUserKeepsThePersonWhenNextcloudStillHasThem(t *testing.T) {
-	s, f, _ := newTestServer(t)
+	s, _, _ := newTestServer(t)
 	ctx := context.Background()
 	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
 		t.Fatal(err)
@@ -625,7 +625,6 @@ func TestRemoveUserKeepsThePersonWhenNextcloudStillHasThem(t *testing.T) {
 	if st := s.Store.Read(); st.FindUser("sam") == nil {
 		t.Fatal("the person must stay listed so the admin can retry")
 	}
-	_ = f
 }
 
 func TestPairForARemovedPersonIsRefused(t *testing.T) {

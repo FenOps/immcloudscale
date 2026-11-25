@@ -57,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 
 /** Hand-off between a grid and the full-screen viewer. */
 object ViewerSession {
@@ -89,10 +90,10 @@ suspend fun shareAssets(context: Context, assets: List<AssetDto>) {
                 f.parentFile?.mkdirs()
                 val part = File(f.path + ".part")
                 g.http.newCall(Request.Builder().url(g.immich.originalUrl(a.id)).build()).execute().use { r ->
-                    if (!r.isSuccessful) throw java.io.IOException("Couldn't download ${a.originalFileName} (HTTP ${r.code})")
+                    if (!r.isSuccessful) throw IOException("Couldn't download ${a.originalFileName} (HTTP ${r.code})")
                     r.body!!.byteStream().use { input -> part.outputStream().use { input.copyTo(it) } }
                 }
-                if (!part.renameTo(f)) throw java.io.IOException("Couldn't save ${a.originalFileName}")
+                if (!part.renameTo(f)) throw IOException("Couldn't save ${a.originalFileName}")
             }
             f
         }

@@ -33,12 +33,14 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarHost
@@ -181,7 +183,7 @@ fun ViewerScreen(onBack: () -> Unit) {
     }
 
     confirmForever?.let { a ->
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = { confirmForever = null },
             title = { Text("Delete forever?") },
             text = { Text("This photo will be permanently deleted from your server.") },
@@ -228,7 +230,7 @@ fun InfoSheet(a: AssetDto) {
         Text("Details", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         e?.description?.takeIf { it.isNotBlank() }?.let { Text(it, Modifier.padding(horizontal = 16.dp)) }
         ListItem(
-            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.Image, null) },
             headlineContent = { Text(a.originalFileName) },
             supportingContent = {
@@ -240,7 +242,7 @@ fun InfoSheet(a: AssetDto) {
             },
         )
         if (e?.make != null || e?.model != null) ListItem(
-            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.CameraAlt, null) },
             headlineContent = { Text(listOfNotNull(e.make, e.model).joinToString(" ")) },
             supportingContent = {
@@ -251,13 +253,13 @@ fun InfoSheet(a: AssetDto) {
             },
         )
         if (e?.city != null) ListItem(
-            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(Icons.Outlined.LocationOn, null) },
             headlineContent = { Text(listOfNotNull(e.city, e.state, e.country).joinToString(", ")) },
             supportingContent = { if (e.latitude != null) Text("%.5f, %.5f".format(e.latitude, e.longitude)) },
         )
         if (a.people.isNotEmpty()) ListItem(
-            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             headlineContent = { Text("People") },
             supportingContent = { Text(a.people.mapNotNull { it.name.ifBlank { null } }.joinToString(", ").ifEmpty { "Unnamed" }) },
         )

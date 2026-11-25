@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
@@ -32,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,10 +54,15 @@ import app.immcloudscale.graph
 import app.immcloudscale.ui.components.formatBytes
 import app.immcloudscale.ui.photos.VideoPage
 import app.immcloudscale.ui.photos.ZoomableImage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
+import java.util.WeakHashMap
 
 object FilePreviewSession { var file: CloudFile? = null }
 
@@ -144,8 +152,8 @@ private fun PdfPreview(f: CloudFile) {
     val g = ctx.graph
     var renderer by remember { mutableStateOf<PdfRenderer?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val lock = remember { kotlinx.coroutines.sync.Mutex() }
-    val closed = remember { java.util.Collections.newSetFromMap(java.util.WeakHashMap<PdfRenderer, Boolean>()) }
+    val lock = remember { Mutex() }
+    val closed = remember { Collections.newSetFromMap(WeakHashMap<PdfRenderer, Boolean>()) }
     LaunchedEffect(f.path, f.modified) {
         try {
             val name = "${f.fileId ?: f.path.hashCode()}-${f.modified}.pdf" // a new version gets a new cache file
@@ -159,10 +167,10 @@ private fun PdfPreview(f: CloudFile) {
         }
     }
     // Close only once no page is being rendered (closing with a page open throws).
-    androidx.compose.runtime.DisposableEffect(renderer) {
+    DisposableEffect(renderer) {
         val r = renderer
         onDispose {
-            if (r != null) kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.NonCancellable).launch {
+            if (r != null) CoroutineScope(Dispatchers.IO + NonCancellable).launch {
                 lock.withLockCompat { closed.add(r); r.close() }
             }
         }
@@ -171,8 +179,8 @@ private fun PdfPreview(f: CloudFile) {
     when {
         error != null -> Text(error!!, Modifier.padding(24.dp))
         r == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        else -> androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-            val widthPx = with(androidx.compose.ui.platform.LocalDensity.current) { (maxWidth - 24.dp).roundToPx() }.coerceIn(320, 1600)
+        else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+            val widthPx = with(LocalDensity.current) { (maxWidth - 24.dp).roundToPx() }.coerceIn(320, 1600)
             LazyColumn(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentPadding = PaddingValues(12.dp),
@@ -203,7 +211,7 @@ private fun PdfPreview(f: CloudFile) {
     }
 }
 
-private suspend fun <T> kotlinx.coroutines.sync.Mutex.withLockCompat(block: () -> T): T {
+private suspend fun <T> Mutex.withLockCompat(block: () -> T): T {
     // A plain lock/unlock pair: block isn't suspending, so this is withLock without the inline lambda rules.
     lock()
     try { return block() } finally { unlock() }

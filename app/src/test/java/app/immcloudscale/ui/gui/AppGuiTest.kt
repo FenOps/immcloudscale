@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.gui
 
+import android.content.Context
 import android.os.Looper
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -11,18 +12,23 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.pressBack
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import app.immcloudscale.ImmApp
 import app.immcloudscale.MainActivity
+import app.immcloudscale.data.AppSettings
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.allowHardware
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.RoborazziTaskType
 import com.github.takahirom.roborazzi.captureScreenRoboImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import coil3.ImageLoader
-import coil3.SingletonImageLoader
-import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import coil3.request.allowHardware
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -51,9 +57,9 @@ class AppGuiTest {
 
     @Before fun testWorkManager() {
         // A synchronous WorkManager: the real one keeps database threads running after the test closes the database.
-        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
-        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(
-            ctx, androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build(),
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            ctx, Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
         )
     }
 
@@ -107,7 +113,7 @@ class AppGuiTest {
 
     @Test fun firstRun() {
         // Settings live in a process-wide store, so clear what an earlier test saved.
-        runBlocking { ApplicationProvider.getApplicationContext<ImmApp>().graph.settings.update { app.immcloudscale.data.AppSettings() } }
+        runBlocking { ApplicationProvider.getApplicationContext<ImmApp>().graph.settings.update { AppSettings() } }
         ActivityScenario.launch(MainActivity::class.java).use {
             shot("01-welcome-and-pairing")
         }
@@ -121,31 +127,31 @@ class AppGuiTest {
             shot("03-viewer")
             compose.onNodeWithText("Info").performClick()
             shot("04-photo-details")
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
             compose.onNodeWithContentDescription("Search").performClick()
             shot("05-search")
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
             tab("Collections")
             shot("06-collections")
             compose.onNodeWithText("Summer in Lisbon").performClick()
             shot("07-album")
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
             tab("Files")
             shot("08-files")
             compose.onAllNodesWithContentDescription("More actions")[4].performClick()
             shot("09-file-actions")
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
             tab("Network")
             shot("10-network")
             compose.onAllNodesWithContentDescription("Account and settings").onFirst().performClick()
             shot("11-account")
-            androidx.test.espresso.Espresso.pressBack()
+            pressBack()
             settle(800)
             tab("Photos")
             compose.onNodeWithContentDescription("Backup complete").performClick()

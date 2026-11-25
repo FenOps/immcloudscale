@@ -12,9 +12,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Stops credentials going to a stranger's device. (The server ID is public on purpose: it only has to tell
- * "my server" from "some other device at the same address", not keep anyone out.) A paired phone reaches its server at a home LAN address
- * (e.g. 192.168.1.50); on another Wi-Fi network that uses the same numbers, that address belongs to someone
- * else. So before credentials go to a private address without the VPN, ask the server there for its ID and
+ * "my server" from "some other device at the same address", not keep anyone out.) A paired phone reaches
+ * its server at a home LAN address (e.g. 192.168.1.50); on another Wi-Fi network that uses the same
+ * numbers, that address belongs to someone else. So before credentials go to a private address without the VPN, ask the server there for its ID and
  * compare it with the one saved at pairing. The answer is remembered per network.
  */
 class HomeGuard(

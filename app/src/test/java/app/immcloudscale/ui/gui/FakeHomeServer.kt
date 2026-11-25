@@ -1,10 +1,5 @@
 package app.immcloudscale.ui.gui
 
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
-import okio.Buffer
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
@@ -12,8 +7,16 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.random.Random
 
@@ -25,7 +28,7 @@ class FakeHomeServer {
     val server = MockWebServer()
     val base: String get() = server.url("/").toString().trimEnd('/')
     private val today = LocalDate.now()
-    private val images = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    private val images = ConcurrentHashMap<String, ByteArray>()
 
     private data class Asset(val id: String, val daysAgo: Long, val hour: Int, val video: Boolean, val fav: Boolean, val city: String?, val region: String?)
 
@@ -169,8 +172,8 @@ class FakeHomeServer {
     private fun davHeader() = """<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">"""
     private fun davEntry(f: F): String {
         val href = "/nc/remote.php/dav/files/camille/" + f.name.replace(" ", "%20") + if (f.folder) "/" else ""
-        val modified = java.time.ZonedDateTime.now().minusDays(f.daysAgo).minusHours(f.id.toLong())
-            .format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+        val modified = ZonedDateTime.now().minusDays(f.daysAgo).minusHours(f.id.toLong())
+            .format(DateTimeFormatter.RFC_1123_DATE_TIME)
         return """<d:response><d:href>$href</d:href><d:propstat><d:prop>
             <d:getlastmodified>$modified</d:getlastmodified>
             ${if (f.folder) "<d:resourcetype><d:collection/></d:resourcetype><oc:size>${f.size}</oc:size>" else "<d:resourcetype/><d:getcontentlength>${f.size}</d:getcontentlength><d:getcontenttype>${f.type}</d:getcontenttype>"}

@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.account
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.graph
@@ -126,7 +128,7 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
         title = { Text("Pair with your server?") },
         text = {
             val s = g.settingsState.collectAsStateWithLifecycle().value
-            val host = android.net.Uri.parse(link.server).host.orEmpty()
+            val host = Uri.parse(link.server).host.orEmpty()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("This phone will use the photos, files and home VPN of the ImmCloudScale server at ${link.server}.")
                 if (s.immichConfigured || s.nextcloudConfigured) Text(
@@ -134,7 +136,7 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
                         "Backups will then go to the new server.",
                     color = MaterialTheme.colorScheme.error,
                 )
-                if (!app.immcloudscale.data.HomeGuard.isPrivateHost(host)) Text(
+                if (!HomeGuard.isPrivateHost(host)) Text(
                     "$host isn't a home-network address. Only pair with a server you set up yourself: it will receive your photos.",
                     color = MaterialTheme.colorScheme.error,
                 )

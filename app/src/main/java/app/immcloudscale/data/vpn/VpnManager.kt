@@ -30,6 +30,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 enum class VpnStatus { Disconnected, Connecting, Connected, Error }
 
@@ -175,8 +179,10 @@ class VpnManager(
     // ---- auto-connect ----
 
     private var callbackRegistered = false
-    private val networks = java.util.concurrent.ConcurrentHashMap<Network, NetworkCapabilities>()
+    private val networks = ConcurrentHashMap<Network, NetworkCapabilities>()
     @Volatile private var lastKey: String? = null
+    @Volatile private var lastSsid: String? = null
+    private val decisions = Mutex()
 
     /**
      * Watches the phone's real (non-VPN) networks. Decisions use one "current" network, Wi-Fi if there is one,
@@ -244,10 +250,6 @@ class VpnManager(
         scope.launch { decisions.withLock { onNetworkChanged(key, wifi, ssid, net) } }
     }
 
-    @Volatile private var lastSsid: String? = null
-
-    private val decisions = Mutex()
-
     private suspend fun onNetworkChanged(key: String, wifi: Boolean, ssid: String?, network: Network?) {
         if (key != lastKey) return // the phone has already moved on to another network
         val s = settings.current()
@@ -267,9 +269,9 @@ class VpnManager(
 
     private suspend fun serverAnswersOn(network: Network, server: String, id: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            val client = okhttp3.OkHttpClient.Builder().socketFactory(network.socketFactory)
-                .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).followRedirects(false).build()
-            client.newCall(okhttp3.Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { r ->
+            val client = OkHttpClient.Builder().socketFactory(network.socketFactory)
+                .callTimeout(3, TimeUnit.SECONDS).followRedirects(false).build()
+            client.newCall(Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { r ->
                 r.isSuccessful && r.body?.string()?.contains("\"id\":\"$id\"") == true
             }
         }.getOrDefault(false)

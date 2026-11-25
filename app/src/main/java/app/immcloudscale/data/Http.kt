@@ -21,7 +21,7 @@ class AuthInterceptor(private val settings: () -> AppSettings, private val guard
         // Both servers can sit behind one reverse proxy (nas.lan/ and nas.lan/nextcloud): the longer base path wins.
         val immich = if (s.immichConfigured) matchLength(url.toString(), s.immichUrl) else -1
         val nc = if (s.nextcloudConfigured) matchLength(url.toString(), s.ncUrl) else -1
-        if ((immich >= 0 || nc >= 0)) guard?.check(url)
+        if (immich >= 0 || nc >= 0) guard?.check(url)
         if (immich >= 0 && immich >= nc) {
             if (s.immichTokenIsApiKey) b.header("x-api-key", s.immichToken)
             else b.header("Authorization", "Bearer ${s.immichToken}")
