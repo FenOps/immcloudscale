@@ -81,7 +81,8 @@ suspend fun shareAssets(context: Context, assets: List<AssetDto>) {
     val files = withContext(Dispatchers.IO) {
         assets.map { a ->
             // One folder per asset: two photos can share a name (IMG_0001.JPG), and must never be mixed up.
-            val safeName = a.originalFileName.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_").ifBlank { a.id }
+            val safeName = a.originalFileName.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                .trim('.', ' ').ifBlank { a.id }
             val f = File(File(dir, a.id.replace(Regex("[^A-Za-z0-9-]"), "_")), safeName)
             check(f.canonicalPath.startsWith(dir.canonicalPath + File.separator))
             if (!f.exists()) {

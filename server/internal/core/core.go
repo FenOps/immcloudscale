@@ -51,7 +51,7 @@ type Server struct {
 func (s *Server) adminToken(ctx context.Context, c state.Config) (string, error) {
 	s.tokMu.Lock()
 	defer s.tokMu.Unlock()
-	if s.tok != "" && s.Now().Before(s.tokUntil) {
+	if s.tok != "" && s.Now().Before(s.tokUntil) && s.tokValid(ctx, c) {
 		return s.tok, nil
 	}
 	t, err := s.immich(c).Login(ctx, c.ImmichAdminEmail, c.ImmichAdminPass)
@@ -60,6 +60,14 @@ func (s *Server) adminToken(ctx context.Context, c state.Config) (string, error)
 	}
 	s.tok, s.tokUntil = t, s.Now().Add(30*time.Minute)
 	return t, nil
+}
+
+// tokValid checks the cached session still works (Immich may have been reset or the session revoked);
+// a cheap call compared with a password login.
+func (s *Server) tokValid(ctx context.Context, c state.Config) bool {
+	var ae *immich.APIError
+	_, err := s.immich(c).Storage(ctx, s.tok)
+	return !(errors.As(err, &ae) && ae.Status == 401)
 }
 
 func New(st *state.Store) *Server {
@@ -112,11 +120,15 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 		}
 		set(&c.DataDir, o.DataDir, "/srv/immcloudscale")
 		set(&c.StackDir, o.StackDir, "/opt/immcloudscale")
+		oldLAN := c.LANAddress
 		switch {
 		case o.LANAddress != "": // given by hand: keep it on later runs
 			c.LANAddress, c.LANManual = o.LANAddress, true
 		case !c.LANManual && o.DetectedLAN != "": // follow the machine's current address (e.g. DHCP changed it)
 			c.LANAddress = o.DetectedLAN
+		}
+		if c.Endpoint != "" && c.Endpoint == oldLAN && o.Endpoint == "" {
+			c.Endpoint = c.LANAddress // no public address was known: keep pointing at the LAN address
 		}
 		set(&c.LANSubnet, o.LANSubnet, "")
 		set(&c.EgressIface, o.EgressIface, "")
@@ -305,6 +317,9 @@ func (s *Server) applyWG() error {
 	}
 	cfg := wg.ServerConfig{Interface: c.WGInterface, PrivateKey: c.WGPrivateKey, Subnet: c.WGSubnet, Port: c.WGPort, Egress: c.EgressIface}
 	for _, d := range st.Devices {
+		if d.PublicKey == "" || d.Address == "" {
+			continue // paired while the VPN was off: no tunnel for this phone
+		}
 		cfg.Peers = append(cfg.Peers, wg.Peer{Name: d.User + " / " + d.Name, PublicKey: d.PublicKey, Address: d.Address})
 	}
 	return s.WG.Apply(cfg)
@@ -391,8 +406,8 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 		}
 	}
 	if err := s.nextcloud(c).DeleteUser(ctx, ncAdmin, c.NCAdminPassword, name); err != nil {
-		var oe *nextcloud.OCSError
-		if !(errors.As(err, &oe) && (oe.Code == 101 || oe.Code == 404 || oe.Code == 998)) { // already gone
+		// 101 can mean "no such user" or "delete failed": only accept it once the account is really gone.
+		if exists, xerr := s.nextcloud(c).UserExists(ctx, ncAdmin, c.NCAdminPassword, name); xerr != nil || exists {
 			errs = append(errs, "Nextcloud: "+err.Error())
 		}
 	}
@@ -464,6 +479,9 @@ type PairRequest struct {
 	ReplacesDevice string `json:"replacesDevice,omitempty"`
 }
 
+// ErrBadKey: the phone sent something that isn't a WireGuard public key.
+var ErrBadKey = errors.New("invalid WireGuard public key")
+
 // ErrUserGone: the code belonged to a person who has since been removed.
 var ErrUserGone = errors.New("the person this code was made for has been removed")
 
@@ -533,7 +551,7 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	code := normCode(req.Code)
 	// Check the request before using up the code, so a bad request doesn't burn it.
 	if req.WGPublicKey != "" && !wg.ValidKey(req.WGPublicKey) {
-		return res, errors.New("invalid WireGuard public key")
+		return res, ErrBadKey
 	}
 	name := SanitizeDeviceName(req.DeviceName)
 	var pairing state.Pairing
@@ -591,6 +609,9 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	dev.NCAppPassword = appPass
 
 	err = s.Store.Update(func(st *state.State) error {
+		if st.FindUser(u.Name) == nil {
+			return ErrUserGone // removed while this pairing was in progress
+		}
 		if !st.Config.VPNEnabled {
 			dev.PublicKey = ""
 		}

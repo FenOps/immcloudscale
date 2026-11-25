@@ -225,17 +225,21 @@ class VpnManager(
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
             else -> "Network"
         }
-        val key = "${current?.key}|$name"
+        _state.value = _state.value.copy(network = name)
+        // The network itself, not its name: Android may reveal the Wi-Fi name later, which isn't a move.
+        val key = current?.key?.toString() ?: "none"
         if (key == lastKey) return
         lastKey = key
         userDisconnected = false // a new network: auto-connect may act again
         onNetworkKey(key)
-        _state.value = _state.value.copy(network = name)
         val net = current?.key
-        scope.launch { onNetworkChanged(wifi, ssid, net) }
+        scope.launch { decisions.withLock { onNetworkChanged(key, wifi, ssid, net) } }
     }
 
-    private suspend fun onNetworkChanged(wifi: Boolean, ssid: String?, network: Network?) {
+    private val decisions = Mutex()
+
+    private suspend fun onNetworkChanged(key: String, wifi: Boolean, ssid: String?, network: Network?) {
+        if (key != lastKey) return // the phone has already moved on to another network
         val s = settings.current()
         if (!s.vpnAutoConnect || !s.vpnConfigured || network == null || permissionIntent() != null) return
         // Home is a trusted Wi-Fi name, or (works without location permission) a Wi-Fi where our own server
@@ -244,6 +248,7 @@ class VpnManager(
             (ssid != null && s.vpnTrustedSsids.any { it.equals(ssid, ignoreCase = true) }) ||
                 (s.pairedServerId.isNotBlank() && serverAnswersOn(network, s.pairedServer, s.pairedServerId))
             )
+        if (key != lastKey) return // changed while checking
         val status = state.value.status
         if (home && status == VpnStatus.Connected) disconnect()
         // An earlier failed attempt (Error) mustn't stop auto-connect for good: try again on this network.

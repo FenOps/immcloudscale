@@ -177,11 +177,11 @@ private fun ImmichCard() {
                     try {
                         // Save the URL first so the shared HTTP client sends credentials to it.
                         if (apiKeyMode) {
-                            g.settings.update { it.copy(immichUrl = base, immichToken = apiKey.trim(), immichTokenIsApiKey = true) }
+                            g.settings.update { it.copy(immichUrl = base, immichToken = apiKey.trim(), immichTokenIsApiKey = true, pairedServer = "", pairedServerId = "") }
                             val me = g.immich.me()
                             g.settings.update { it.copy(immichUserName = me.name, immichEmail = me.email) }
                         } else {
-                            g.settings.update { it.copy(immichUrl = base, immichToken = "") }
+                            g.settings.update { it.copy(immichUrl = base, immichToken = "", pairedServer = "", pairedServerId = "") }
                             val login = g.immich.login(email.trim(), password)
                             g.settings.update {
                                 it.copy(immichToken = login.accessToken, immichTokenIsApiKey = false, immichUserName = login.name, immichEmail = login.userEmail)
@@ -215,7 +215,7 @@ private fun NextcloudCard() {
     var error by remember { mutableStateOf<String?>(null) }
 
     suspend fun save(base: String, u: String, p: String) {
-        g.settings.update { it.copy(ncUrl = base, ncUser = u, ncAppPassword = p, ncUserId = "") }
+        g.settings.update { it.copy(ncUrl = base, ncUser = u, ncAppPassword = p, ncUserId = "", pairedServer = "", pairedServerId = "") }
         try {
             // Signing in with an email works, but files live under the account's internal ID.
             val id = runCatching { g.nextcloud.currentUserId() }.getOrDefault(u)

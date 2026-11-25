@@ -145,6 +145,7 @@ private fun PdfPreview(f: CloudFile) {
     var renderer by remember { mutableStateOf<PdfRenderer?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val lock = remember { kotlinx.coroutines.sync.Mutex() }
+    val closed = remember { java.util.Collections.newSetFromMap(java.util.WeakHashMap<PdfRenderer, Boolean>()) }
     LaunchedEffect(f.path, f.modified) {
         try {
             val name = "${f.fileId ?: f.path.hashCode()}-${f.modified}.pdf" // a new version gets a new cache file
@@ -157,9 +158,14 @@ private fun PdfPreview(f: CloudFile) {
             error = e.message ?: "Couldn't open PDF"
         }
     }
+    // Close only once no page is being rendered (closing with a page open throws).
     androidx.compose.runtime.DisposableEffect(renderer) {
         val r = renderer
-        onDispose { r?.close() }
+        onDispose {
+            if (r != null) kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.NonCancellable).launch {
+                lock.withLockCompat { closed.add(r); r.close() }
+            }
+        }
     }
     val r = renderer
     when {
@@ -177,6 +183,7 @@ private fun PdfPreview(f: CloudFile) {
                     LaunchedEffect(i) {
                         bmp = withContext(Dispatchers.IO) {
                             lock.withLockCompat {
+                                if (r in closed) return@withLockCompat null
                                 r.openPage(i).use { p ->
                                     val scale = widthPx.toFloat() / p.width
                                     Bitmap.createBitmap(widthPx, (p.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888).also {
@@ -197,6 +204,7 @@ private fun PdfPreview(f: CloudFile) {
 }
 
 private suspend fun <T> kotlinx.coroutines.sync.Mutex.withLockCompat(block: () -> T): T {
+    // A plain lock/unlock pair: block isn't suspending, so this is withLock without the inline lambda rules.
     lock()
     try { return block() } finally { unlock() }
 }

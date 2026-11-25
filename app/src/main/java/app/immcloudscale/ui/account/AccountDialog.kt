@@ -93,7 +93,7 @@ fun AccountCard(
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest, modifier = Modifier.padding(horizontal = 8.dp)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     val name = s.immichUserName.ifBlank { s.ncUser.ifBlank { "Me" } }
-                    LetterAvatar(name, 64.dp)
+                    LetterAvatar(name, 64.dp, contentDescription = "$name's account")
                     Text("Hi, ${name.substringBefore(' ')}!", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 12.dp))
                     Text(
                         listOfNotNull(s.immichEmail.ifBlank { null }, s.ncUser.takeIf { s.nextcloudConfigured }?.let { "$it on Nextcloud" }).joinToString(" · ")

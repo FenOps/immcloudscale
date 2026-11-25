@@ -63,7 +63,7 @@ func (f *fakeServices) immich() http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.admin == nil || who(r) != f.admin.email {
-			http.Error(w, `{"message":"Forbidden"}`, 403)
+			http.Error(w, `{"message":"Invalid user token"}`, 401)
 			return
 		}
 		var b map[string]any
@@ -98,6 +98,15 @@ func (f *fakeServices) immich() http.Handler {
 			}
 		}
 		w.WriteHeader(200)
+	})
+	mux.HandleFunc("GET /api/server/storage", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.users[who(r)]; !ok {
+			http.Error(w, `{"message":"Invalid user token"}`, 401)
+			return
+		}
+		io.WriteString(w, `{"diskSize":"1 TiB","diskUse":"1 GiB","diskUsagePercentage":0.1}`)
 	})
 	mux.HandleFunc("POST /api/api-keys", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -136,6 +145,15 @@ func (f *fakeServices) nextcloud() http.Handler {
 		r.ParseForm()
 		f.ncUsers[r.Form.Get("userid")] = r.Form.Get("password")
 		ocsOK(w, map[string]string{"id": r.Form.Get("userid")})
+	})
+	mux.HandleFunc("GET /ocs/v1.php/cloud/users/{u}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.ncUsers[r.PathValue("u")]; !ok {
+			json.NewEncoder(w).Encode(map[string]any{"ocs": map[string]any{"meta": map[string]any{"statuscode": 404, "message": "User does not exist"}}})
+			return
+		}
+		ocsOK(w, map[string]string{"id": r.PathValue("u")})
 	})
 	mux.HandleFunc("DELETE /ocs/v1.php/cloud/users/{u}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -528,4 +546,66 @@ func TestEmailsAreCheckedUpFront(t *testing.T) {
 	if _, err := s.AddUser(ctx, "carol", "CAMILLE@example.com", false); err == nil || !strings.Contains(err.Error(), "already used by camille") {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestTurningTheVPNOnLaterSkipsPhonesWithoutKeys(t *testing.T) {
+	s, _, w := newTestServer(t)
+	ctx := context.Background()
+	off, on := false, true
+	if err := s.Setup(ctx, SetupOptions{VPN: &off}); err != nil {
+		t.Fatal(err)
+	}
+	_, pub, _ := wg.NewKeyPair()
+	p, _ := s.StartPairing("camille")
+	if _, err := s.Pair(ctx, PairRequest{Code: p.Code, WGPublicKey: pub}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Setup(ctx, SetupOptions{VPN: &on}); err != nil {
+		t.Fatalf("switching the VPN back on must work with phones paired without it: %v", err)
+	}
+	if _, err := w.last.Render(); err != nil {
+		t.Fatalf("the VPN config must still render: %v", err)
+	}
+	if len(w.last.Peers) != 0 {
+		t.Fatalf("phones without a VPN key get no peer, got %+v", w.last.Peers)
+	}
+}
+
+func TestEndpointFollowsTheLANAddressWhenNoPublicAddressIsKnown(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	s.Store.Update(func(st *state.State) error { st.Config.Endpoint, st.Config.LANManual = st.Config.LANAddress, false; return nil })
+	if err := s.Setup(ctx, SetupOptions{DetectedLAN: "192.168.1.60"}); err != nil {
+		t.Fatal(err)
+	}
+	c := s.Store.Read().Config
+	if c.LANAddress != "192.168.1.60" || c.Endpoint != "192.168.1.60" {
+		t.Fatalf("lan=%s endpoint=%s", c.LANAddress, c.Endpoint)
+	}
+	// A hand-set address stays, whatever is detected later.
+	if err := s.Setup(ctx, SetupOptions{LANAddress: "10.0.0.5"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Setup(ctx, SetupOptions{DetectedLAN: "192.168.1.70"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Store.Read().Config.LANAddress; got != "10.0.0.5" {
+		t.Fatalf("hand-set LAN address was replaced by %s", got)
+	}
+}
+
+func TestRejectedAdminSessionIsRenewed(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	ctx := context.Background()
+	c := s.Store.Read().Config
+	s.tokMu.Lock()
+	s.tok, s.tokUntil = "stale-token", s.Now().Add(time.Hour)
+	s.tokMu.Unlock()
+	if _, err := s.AddUser(ctx, "sam", "", false); err != nil {
+		t.Fatalf("a rejected cached session must be replaced: %v", err)
+	}
+	if s.tok == "stale-token" {
+		t.Fatal("token not renewed")
+	}
+	_ = c
 }

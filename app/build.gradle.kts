@@ -21,7 +21,7 @@ android {
     }
 
     // Release signing: storeFile / storePassword / keyAlias / keyPassword in keystore.properties
-    // at the project root (git-ignored). Without it the release APK is built unsigned.
+    // at the project root (git-ignored). Without it, the CI key or the local debug key is used.
     val keystoreProps = Properties().apply {
         val f = rootProject.file("keystore.properties")
         if (f.exists()) f.inputStream().use { load(it) }

@@ -104,6 +104,16 @@ func (c *Client) CreateUser(ctx context.Context, admin, adminPass, user, pass, d
 	return c.ocs(ctx, http.MethodPost, "/ocs/v1.php/cloud/users", admin, adminPass, f, nil)
 }
 
+// UserExists reports whether an account exists (OCS 404/998 means it doesn't).
+func (c *Client) UserExists(ctx context.Context, admin, adminPass, user string) (bool, error) {
+	err := c.ocs(ctx, http.MethodGet, "/ocs/v1.php/cloud/users/"+url.PathEscape(user), admin, adminPass, nil, nil)
+	var oe *OCSError
+	if errors.As(err, &oe) && (oe.Code == 404 || oe.Code == 998 || oe.Status == http.StatusNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (c *Client) DeleteUser(ctx context.Context, admin, adminPass, user string) error {
 	return c.ocs(ctx, http.MethodDelete, "/ocs/v1.php/cloud/users/"+url.PathEscape(user), admin, adminPass, nil, nil)
 }

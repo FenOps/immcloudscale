@@ -1,7 +1,6 @@
 package app.immcloudscale.data
 
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -43,6 +42,11 @@ class HomeGuardTest {
         assertEquals(2, probes)
     }
 
+    @Test fun onlyThePairedServersAddressIsChecked() {
+        // A server set up by hand at another LAN address isn't checked against the paired one.
+        HomeGuard({ paired }, { false }, probe = { error("must not probe") }).check("http://192.168.2.10:2283/api".toHttpUrl())
+    }
+
     @Test fun vpnPublicHostsAndManualSetupsSkipTheCheck() {
         val guard = HomeGuard({ paired }, { true }, probe = { error("must not probe") })
         guard.check("http://192.168.1.50:2283/api/x".toHttpUrl()) // VPN up
@@ -75,6 +79,5 @@ class HomeGuardTest {
         assertEquals("k", immich.takeRequest().getHeader("x-api-key"))
         assertNull(other.takeRequest().getHeader("x-api-key"))
         immich.shutdown(); other.shutdown()
-        @Suppress("UNUSED_VARIABLE") val unused = OkHttpClient()
     }
 }

@@ -4,13 +4,15 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Stops credentials going to a stranger's device. A paired phone reaches its server at a home LAN address
+ * Stops credentials going to a stranger's device. (The server ID is public on purpose: it only has to tell
+ * "my server" from "some other device at the same address", not keep anyone out.) A paired phone reaches its server at a home LAN address
  * (e.g. 192.168.1.50); on another Wi-Fi network that uses the same numbers, that address belongs to someone
  * else. So before credentials go to a private address without the VPN, ask the server there for its ID and
  * compare it with the one saved at pairing. The answer is remembered per network.
@@ -29,15 +31,20 @@ class HomeGuard(
     fun check(url: HttpUrl) {
         val s = settings()
         if (s.pairedServer.isBlank() || s.pairedServerId.isBlank()) return // hand-configured servers: user's choice
+        // Only the paired server's own address is checked (it hands out the same LAN address for all services).
+        if (!url.host.equals(s.pairedServer.toHttpUrlOrNull()?.host, ignoreCase = true)) return
         if (!isPrivateHost(url.host)) return // public names (e.g. HTTPS behind a domain) aren't ambiguous
         if (vpnConnected()) return // through the tunnel, private addresses are always home
-        val key = networkKey
-        verified?.let { (k, at) -> if (k == key && now() - at < 10 * 60_000) return }
-        val id = runCatching { probe(s.pairedServer) }.getOrNull()
-        if (id != s.pairedServerId) {
-            throw IOException("Not on your home network: turn on the VPN in the Network tab to reach your server")
+        // One check at a time: a screen of thumbnails shouldn't send a probe per image.
+        synchronized(this) {
+            val key = networkKey
+            verified?.let { (k, at) -> if (k == key && now() - at < 10 * 60_000) return }
+            val id = runCatching { probe(s.pairedServer) }.getOrNull()
+            if (id != s.pairedServerId) {
+                throw IOException("Not on your home network: turn on the VPN in the Network tab to reach your server")
+            }
+            verified = key to now()
         }
-        verified = key to now()
     }
 
     companion object {

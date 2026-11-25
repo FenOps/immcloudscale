@@ -66,7 +66,7 @@ fi
 if [ -z "$LINK" ] && [ -n "$NAS" ]; then
   [ -n "$PERSON" ] || die "--person is required with --nas"
   say "Getting a pairing code for $PERSON from $NAS"
-  BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | wc -l)
+  BEFORE=$(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort)
   case "$PERSON" in *[!a-z0-9._-]*|"") die "--person must be a user name like alex" ;; esac
   JSON=$(ssh "$NAS" "$SUDO ics-server pair $(printf %q "$PERSON") --json")
   LINK=$(printf '%s' "$JSON" | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
@@ -83,7 +83,9 @@ if [ -n "$LINK" ]; then
     PAIRED=""
     for _ in $(seq 1 60); do
       sleep 2; printf '.'
-      if [ "$(ssh "$NAS" "$SUDO ics-server devices" | wc -l)" -gt "$BEFORE" ]; then
+      # A new device ID appeared (re-pairing replaces the old entry, so counting lines isn't enough).
+      NEW=$(comm -13 <(printf '%s\n' "$BEFORE") <(ssh "$NAS" "$SUDO ics-server devices" | awk 'NR>1 {print $1}' | sort))
+      if [ -n "$NEW" ]; then
         printf '\n'; say "Paired! The phone now has photos, files and the home VPN."
         ssh "$NAS" "$SUDO ics-server devices" | tail -1
         PAIRED=1

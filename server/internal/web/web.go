@@ -185,7 +185,7 @@ func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusGone, err)
 		return
 	}
-	if err != nil && strings.HasPrefix(err.Error(), "invalid WireGuard public key") {
+	if errors.Is(err, core.ErrBadKey) {
 		writeErr(w, 400, err)
 		return
 	}

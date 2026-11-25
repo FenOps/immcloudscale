@@ -158,7 +158,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
     /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
     private fun permanent(e: Throwable): Boolean = when (e) {
-        is java.io.FileNotFoundException, is SecurityException, is IllegalStateException -> true
+        is java.io.FileNotFoundException, is SecurityException -> true
         is app.immcloudscale.data.HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
         else -> false
     }

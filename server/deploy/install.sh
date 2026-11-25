@@ -50,7 +50,8 @@ if ! docker compose version >/dev/null 2>&1; then
   CURL="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-$CARCH"
   curl -fsSL "$CURL" -o "$CTMP/docker-compose" && curl -fsSL "$CURL.sha256" -o "$CTMP/sum" \
     || die "couldn't download Docker Compose; see https://docs.docker.com/compose/install/linux/"
-  (cd "$CTMP" && sha256sum -c --quiet sum) || die "the Docker Compose download is damaged (checksum mismatch); try again"
+  # The .sha256 file names the upstream file; compare only the hash.
+  echo "$(cut -d' ' -f1 "$CTMP/sum")  $CTMP/docker-compose" | sha256sum -c --quiet - || die "the Docker Compose download is damaged (checksum mismatch); try again"
   install -D -m 0755 "$CTMP/docker-compose" /usr/local/lib/docker/cli-plugins/docker-compose
   rm -rf "$CTMP"
   docker compose version >/dev/null 2>&1 || die "Docker Compose still doesn't work; see https://docs.docker.com/compose/install/linux/"
