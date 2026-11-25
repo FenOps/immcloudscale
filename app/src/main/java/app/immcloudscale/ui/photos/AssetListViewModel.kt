@@ -115,6 +115,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     fun archiveSelected(archive: Boolean = true) = act(if (archive) "Archived" else "Unarchived", true) { graph.immich.setArchived(it, archive) }
     /** [onDone] runs once the server has them in its trash (the phone's copies follow then). */
     fun trashSelected(onDone: () -> Unit = {}) = act("Moved to trash:", true, onDone) { graph.immich.delete(it) }
+    fun lockSelected(onDone: () -> Unit = {}) = act("Moved to Locked folder:", true, onDone) { graph.immich.setVisibility(it, "locked") }
     fun deleteForeverSelected() = act("Deleted", true) { graph.immich.delete(it, force = true) }
     fun restoreSelected() = act("Restored", true) { graph.immich.restore(it) }
     fun addSelectedToAlbum(albumId: String) = act("Added to album:", false) { graph.immich.addToAlbum(albumId, it) }

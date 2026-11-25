@@ -78,6 +78,7 @@ import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.RemoteImage
 import app.immcloudscale.ui.components.formatBytes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -85,7 +86,7 @@ import java.time.format.DateTimeFormatter
 /** Full-screen photo/video viewer with swipe, pinch-zoom and the Google Photos action bar. */
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ViewerScreen(onBack: () -> Unit) {
+fun ViewerScreen(onBack: () -> Unit, onEdit: (AssetDto) -> Unit = {}) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val items = remember { mutableStateListOf<AssetDto>().apply { addAll(ViewerSession.assets) } }
@@ -97,11 +98,24 @@ fun ViewerScreen(onBack: () -> Unit) {
     var albumPicker by remember { mutableStateOf(false) }
     var confirmForever by remember { mutableStateOf<AssetDto?>(null) }
     var confirmTrash by remember { mutableStateOf<AssetDto?>(null) }
+    var confirmLock by remember { mutableStateOf<AssetDto?>(null) }
+    var slideshow by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
     val trash = ViewerSession.query == AssetQuery.Trash
     val current = items.getOrNull(pager.currentPage)
+
+    // Slideshow: a new photo every 4 seconds, without the bars; any tap stops it.
+    LaunchedEffect(slideshow) {
+        if (!slideshow) return@LaunchedEffect
+        chrome = false
+        while (slideshow) {
+            delay(4_000)
+            if (pager.currentPage >= items.lastIndex) { slideshow = false; chrome = true; break }
+            pager.animateScrollToPage(pager.currentPage + 1)
+        }
+    }
 
     fun remove(a: AssetDto, msg: String) {
         ViewerSession.onEdit?.invoke(null, a.id)
@@ -117,8 +131,8 @@ fun ViewerScreen(onBack: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(pager, key = { items.getOrNull(it)?.id ?: it }, beyondViewportPageCount = 1) { page ->
             val a = items[page]
-            if (a.isVideo) VideoPage(g.immich.videoUrl(a.id), active = page == pager.currentPage) { chrome = !chrome }
-            else ZoomableImage(g.immich.thumbnailUrl(a.id, preview = true), a.id) { chrome = !chrome }
+            if (a.isVideo) VideoPage(g.immich.videoUrl(a.id), active = page == pager.currentPage) { slideshow = false; chrome = !chrome }
+            else ZoomableImage(g.immich.thumbnailUrl(a.id, preview = true), a.id) { slideshow = false; chrome = !chrome }
         }
 
         AnimatedVisibility(chrome, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -148,6 +162,8 @@ fun ViewerScreen(onBack: () -> Unit) {
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = Color.White) }
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Slideshow") }, onClick = { menu = false; slideshow = true })
+                            if (!current.isVideo) DropdownMenuItem(text = { Text("Edit") }, onClick = { menu = false; onEdit(current) })
                             DropdownMenuItem(text = { Text("Add to album") }, onClick = { menu = false; albumPicker = true })
                             DropdownMenuItem(text = { Text("Create link") }, onClick = {
                                 menu = false; run { shareText(ctx, g.immich.createShareLink(listOf(current.id))) }
@@ -160,6 +176,7 @@ fun ViewerScreen(onBack: () -> Unit) {
                                     run { g.immich.setArchived(listOf(current.id), archive); remove(current, if (archive) "Archived" else "Unarchived") }
                                 },
                             )
+                            DropdownMenuItem(text = { Text("Move to Locked folder") }, onClick = { menu = false; confirmLock = current })
                         }
                     }
                 }
@@ -182,6 +199,26 @@ fun ViewerScreen(onBack: () -> Unit) {
             }
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+    }
+
+    confirmLock?.let { a ->
+        AlertDialog(
+            onDismissRequest = { confirmLock = null },
+            title = { Text("Move to Locked folder?") },
+            text = {
+                Text(
+                    "It's hidden from your timeline, albums, search and other apps, and opens only with your PIN " +
+                        "(Collections → Locked folder). This phone's copy moves to the phone's trash.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLock = null
+                    run { g.immich.setVisibility(listOf(a.id), "locked"); remove(a, "Moved to Locked folder"); phoneTrash(listOf(a)) }
+                }) { Text("Move") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLock = null }) { Text("Cancel") } },
+        )
     }
 
     confirmTrash?.let { a ->

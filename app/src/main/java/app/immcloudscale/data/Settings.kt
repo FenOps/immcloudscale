@@ -94,6 +94,10 @@ data class AppSettings(
     val joinId: String = "",
     val joinToken: String = "",
     val joinName: String = "",
+    /** Immich session for the locked folder (from the server; API keys can't open it). */
+    val lockedSession: String = "",
+    /** Whether the server runs Immich's machine learning (faces, smart search, duplicates), from its info page. */
+    val serverMachineLearning: Boolean = true,
 ) {
     val immichConfigured get() = immichUrl.isNotBlank() && immichToken.isNotBlank()
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
@@ -138,6 +142,8 @@ class SettingsStore(private val context: Context) {
         val joinId = stringPreferencesKey("join_id")
         val joinToken = stringPreferencesKey("join_token")
         val joinName = stringPreferencesKey("join_name")
+        val lockedSession = stringPreferencesKey("locked_session")
+        val serverMl = booleanPreferencesKey("server_ml")
         val tsEnabled = booleanPreferencesKey("ts_enabled")
         val tsServerIp = stringPreferencesKey("ts_server_ip")
         val tsAuthKey = stringPreferencesKey("ts_auth_key")
@@ -189,6 +195,8 @@ class SettingsStore(private val context: Context) {
             joinId = p[K.joinId] ?: "",
             joinToken = p[K.joinToken] ?: "",
             joinName = p[K.joinName] ?: "",
+            lockedSession = p[K.lockedSession] ?: "",
+            serverMachineLearning = p[K.serverMl] ?: true,
             tsEnabled = p[K.tsEnabled] ?: false,
             tsServerIp = p[K.tsServerIp] ?: "",
             tsAuthKey = p[K.tsAuthKey] ?: "",
@@ -246,6 +254,7 @@ class SettingsStore(private val context: Context) {
             p[K.pairedDeviceId] = n.pairedDeviceId; p[K.pairedServerId] = n.pairedServerId
             p[K.deviceToken] = n.deviceToken; p[K.isAdmin] = n.isAdmin
             p[K.joinServer] = n.joinServer; p[K.joinId] = n.joinId; p[K.joinToken] = n.joinToken; p[K.joinName] = n.joinName
+            p[K.lockedSession] = n.lockedSession; p[K.serverMl] = n.serverMachineLearning
             p[K.tsEnabled] = n.tsEnabled; p[K.tsServerIp] = n.tsServerIp
             p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
             p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()

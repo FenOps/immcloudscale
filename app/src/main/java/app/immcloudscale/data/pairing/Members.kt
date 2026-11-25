@@ -28,6 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
     val code: String? = null,
 )
 @Serializable data class Member(val name: String, val email: String = "", val isAdmin: Boolean = false, val devices: Int = 0)
+@Serializable data class Features(val machineLearning: Boolean = false, val memoryGB: Double = 0.0, val applying: Boolean = false)
 @Serializable data class PairCode(val code: String, val server: String = "", val link: String = "")
 
 /**
@@ -61,6 +62,16 @@ class MembersClient(private val http: OkHttpClient, private val settings: () -> 
     suspend fun setAdmin(name: String, admin: Boolean) {
         manage("POST", "/api/v1/manage/users/$name/admin", buildJsonObject { put("admin", admin) }.toString())
     }
+
+    suspend fun features(): Features = parse(manage("GET", "/api/v1/manage/features"))
+
+    /** Switches face recognition, smart search and duplicate detection on the server (takes a few minutes). */
+    suspend fun setMachineLearning(on: Boolean): Features =
+        parse(manage("POST", "/api/v1/manage/features", buildJsonObject { put("machineLearning", on) }.toString()))
+
+    /** An Immich session for this person, for the locked folder (which API keys can't open). */
+    suspend fun session(): String =
+        json.parseToJsonElement(manage("POST", "/api/v1/me/session")).jsonObject["accessToken"]?.jsonPrimitive?.content.orEmpty()
 
     /** A new pairing code for a member's (new) phone. */
     suspend fun pairCode(name: String): PairCode = parse(manage("POST", "/api/v1/manage/users/$name/pair"))

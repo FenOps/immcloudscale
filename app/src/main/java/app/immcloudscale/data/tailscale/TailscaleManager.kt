@@ -132,11 +132,14 @@ class TailscaleManager(
 
     /** Learns the server's Tailscale address from its info page (phones paired before Tailscale was set up). */
     fun learnServerIp(infoJson: String) {
-        val ip = runCatching {
-            Json.parseToJsonElement(infoJson).jsonObject["tailscaleIp"]?.jsonPrimitive?.content
-        }.getOrNull() ?: return
+        val info = runCatching { Json.parseToJsonElement(infoJson).jsonObject }.getOrNull() ?: return
+        val ip = info["tailscaleIp"]?.jsonPrimitive?.content
+        val ml = info["machineLearning"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
         scope.launch {
-            if (settings.current().tsServerIp != ip) settings.update { it.copy(tsServerIp = ip) }
+            val s = settings.current()
+            if ((ip != null && s.tsServerIp != ip) || (ml != null && s.serverMachineLearning != ml)) {
+                settings.update { it.copy(tsServerIp = ip ?: it.tsServerIp, serverMachineLearning = ml ?: it.serverMachineLearning) }
+            }
         }
     }
 

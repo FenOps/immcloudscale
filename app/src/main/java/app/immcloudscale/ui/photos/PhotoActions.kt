@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.DeleteForever
@@ -30,6 +31,8 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -130,7 +133,10 @@ fun SelectionTopBar(
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onRestore: () -> Unit,
+    onCollage: () -> Unit = {},
+    onLock: () -> Unit = {},
 ) {
+    var more by remember { mutableStateOf(false) }
     TopAppBar(
         navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "Clear selection") } },
         title = { Text("$count") },
@@ -148,6 +154,16 @@ fun SelectionTopBar(
                     if (query == AssetQuery.Archive) Icon(Icons.Outlined.Unarchive, "Unarchive") else Icon(Icons.Outlined.Archive, "Archive")
                 }
                 IconButton(onClick = onDelete) { Icon(Icons.Outlined.DeleteOutline, "Move to trash") }
+                Box {
+                    IconButton(onClick = { more = true }) { Icon(Icons.Filled.MoreVert, "More") }
+                    DropdownMenu(more, onDismissRequest = { more = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (count in 2..COLLAGE_MAX) "Make a collage" else "Make a collage (select 2 to $COLLAGE_MAX)") },
+                            enabled = count in 2..COLLAGE_MAX, onClick = { more = false; onCollage() },
+                        )
+                        DropdownMenuItem(text = { Text("Move to Locked folder") }, onClick = { more = false; onLock() })
+                    }
+                }
             }
         },
     )

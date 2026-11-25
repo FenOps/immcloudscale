@@ -72,6 +72,8 @@ fun CollectionTarget.query(): AssetQuery = when (this) {
     is CollectionTarget.Album -> AssetQuery.Album(album.id)
     is CollectionTarget.Person -> AssetQuery.Person(person.id)
     is CollectionTarget.Place -> AssetQuery.Place(city)
+    // Screens of their own, never shown as a plain photo list.
+    CollectionTarget.Duplicates, CollectionTarget.LockedFolder -> AssetQuery.Timeline
 }
 
 fun AssetQuery.key(): String = when (this) {
@@ -153,7 +155,16 @@ fun SearchScreen(onBack: () -> Unit, onSearch: (String) -> Unit, onOpen: (Collec
                 modifier = Modifier.weight(1f).focusRequester(focus),
             )
         }
+        val settings by LocalContext.current.graph.settingsState.collectAsStateWithLifecycle()
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+            if (!settings.serverMachineLearning) item {
+                Text(
+                    "Searching by what's in a photo (\"dog on the beach\") and finding people need face recognition and smart search, " +
+                        "which are off on your server. An admin can switch them on in Account → Members.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
             if (st.people.isNotEmpty()) {
                 item { SectionHeader("People") }
                 item {

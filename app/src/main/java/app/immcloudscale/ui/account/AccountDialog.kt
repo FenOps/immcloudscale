@@ -16,7 +16,9 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -24,13 +26,16 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +54,7 @@ import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.Pinwheel
 import app.immcloudscale.ui.components.formatAgo
 import app.immcloudscale.ui.components.formatBytes
+import kotlinx.coroutines.launch
 
 /** Google's account card, adapted: who you are on each server, backup, storage, and the VPN. */
 @Composable
@@ -67,7 +73,10 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        AccountCard(s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers)
+        val scope = rememberCoroutineScope()
+        AccountCard(s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers) { t ->
+            scope.launch { g.settings.update { it.copy(theme = t) } }
+        }
     }
 }
 
@@ -82,6 +91,7 @@ fun AccountCard(
     onBackup: () -> Unit,
     onNetwork: () -> Unit,
     onMembers: () -> Unit = {},
+    onTheme: (String) -> Unit = {},
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -137,6 +147,15 @@ fun AccountCard(
                 headlineContent = { Text(if (vpnConnected) "Connected to home" else "Home VPN") },
                 supportingContent = { Text(if (s.vpnConfigured) (if (vpnConnected) "WireGuard tunnel is up" else "Not connected") else "Not set up") },
             )
+            var themePicker by remember { mutableStateOf(false) }
+            ListItem(
+                modifier = Modifier.clickable { themePicker = true },
+                colors = rowColors,
+                leadingContent = { Icon(Icons.Outlined.Palette, null) },
+                headlineContent = { Text("Theme") },
+                supportingContent = { Text(themeLabel(s.theme)) },
+            )
+            if (themePicker) ThemeDialog(s.theme, onDismiss = { themePicker = false }) { t -> themePicker = false; onTheme(t) }
             if (s.isAdmin) ListItem(
                 modifier = Modifier.clickable { onDismiss(); onMembers() },
                 colors = rowColors,
@@ -151,6 +170,30 @@ fun AccountCard(
             )
         }
     }
+}
+
+private fun themeLabel(t: String) = when (t) { "light" -> "Light"; "dark" -> "Dark"; else -> "Same as the phone" }
+
+@Composable
+private fun ThemeDialog(current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Theme") },
+        text = {
+            Column {
+                listOf("system", "light", "dark").forEach { t ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(t) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(t == current, onClick = { onPick(t) })
+                        Text(themeLabel(t), Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable

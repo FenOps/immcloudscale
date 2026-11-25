@@ -59,12 +59,16 @@ import app.immcloudscale.ui.account.ServersScreen
 import app.immcloudscale.ui.collections.CollectionDetailScreen
 import app.immcloudscale.ui.collections.CollectionTarget
 import app.immcloudscale.ui.collections.CollectionsScreen
+import app.immcloudscale.ui.collections.DuplicatesScreen
+import app.immcloudscale.ui.collections.LockedFolderScreen
 import app.immcloudscale.ui.collections.NewAlbumDialog
 import app.immcloudscale.ui.collections.SearchScreen
 import app.immcloudscale.ui.files.FilePreviewScreen
 import app.immcloudscale.ui.files.FilePreviewSession
 import app.immcloudscale.ui.files.FilesScreen
 import app.immcloudscale.ui.network.NetworkScreen
+import app.immcloudscale.ui.photos.EditorScreen
+import app.immcloudscale.ui.photos.EditorSession
 import app.immcloudscale.ui.photos.PhotosScreen
 import app.immcloudscale.ui.photos.ViewerScreen
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +98,11 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
 }
 
 private fun NavHostController.openCollection(t: CollectionTarget) {
+    when (t) {
+        CollectionTarget.Duplicates -> return navigate("duplicates")
+        CollectionTarget.LockedFolder -> return navigate("locked")
+        else -> Unit
+    }
     val (kind, id, title) = when (t) {
         CollectionTarget.Favorites -> Triple("favorites", "", "Favorites")
         CollectionTarget.Archive -> Triple("archive", "", "Archive")
@@ -102,6 +111,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
         is CollectionTarget.Album -> Triple("album", t.album.id, t.album.albumName)
         is CollectionTarget.Person -> Triple("person", t.person.id, t.person.name.ifBlank { "Unnamed person" })
         is CollectionTarget.Place -> Triple("place", t.city, t.city)
+        CollectionTarget.Duplicates, CollectionTarget.LockedFolder -> return
     }
     navigate("collection/$kind?id=${Uri.encode(id)}&title=${Uri.encode(title)}")
 }
@@ -168,7 +178,8 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                 }
             }
         }
-        composable("viewer") { ViewerScreen(onBack = { nav.popBackStack() }) }
+        composable("viewer") { ViewerScreen(onBack = { nav.popBackStack() }, onEdit = { EditorSession.asset = it; nav.navigate("editor") }) }
+        composable("editor") { EditorScreen(onBack = { nav.popBackStack() }) }
         composable("search") {
             SearchScreen(
                 onBack = { nav.popBackStack() },
@@ -194,6 +205,8 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
+        composable("duplicates") { DuplicatesScreen(onBack = { nav.popBackStack() }) }
+        composable("locked") { LockedFolderScreen(onBack = { nav.popBackStack() }) }
         composable("backup") { BackupScreen(onBack = { nav.popBackStack() }, onOpenNetwork = { nav.popBackStack(); tab = Tab.Network }) }
         composable("servers") {
             ServersScreen(onBack = { nav.popBackStack() }, onNetwork = { tab = Tab.Network; nav.popBackStack("main", false) }, onDone = {})

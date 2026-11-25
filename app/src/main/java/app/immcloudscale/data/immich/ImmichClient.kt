@@ -37,11 +37,13 @@ class ImmichClient(
     fun personThumbnailUrl(personId: String) = api("/people/$personId/thumbnail")
     fun shareUrl(key: String) = baseUrl().trimEnd('/') + "/share/" + key
 
-    private suspend fun call(method: String, path: String, body: JsonElement? = null): String =
+    /** [session], when given, signs the request as that Immich session instead of the app's API key. */
+    private suspend fun call(method: String, path: String, body: JsonElement? = null, session: String? = null): String =
         withContext(Dispatchers.IO) {
             val rb: RequestBody? = body?.toString()?.toRequestBody(jsonType)
                 ?: if (method in setOf("POST", "PUT", "DELETE", "PATCH")) "{}".toRequestBody(jsonType) else null
-            val req = Request.Builder().url(api(path)).method(method, rb).header("Accept", "application/json").build()
+            val req = Request.Builder().url(api(path)).method(method, rb).header("Accept", "application/json")
+                .apply { if (session != null) header("Authorization", "Bearer $session") }.build()
             http.newCall(req).execute().use { r ->
                 val text = r.body?.string().orEmpty()
                 if (!r.isSuccessful) throw HttpException(r.code, errorMessage(r.code, text))
@@ -128,6 +130,34 @@ class ImmichClient(
     suspend fun places(): List<AssetDto> = parse(call("GET", "/search/cities"))
     suspend fun memories(): List<MemoryDto> =
         runCatching { parse<List<MemoryDto>>(call("GET", "/memories?for=${Instant.now()}")) }.getOrDefault(emptyList())
+
+    // ---- duplicates (found by Immich's machine learning) ----
+
+    suspend fun duplicates(): List<DuplicateGroup> = parse(call("GET", "/duplicates"))
+
+    /** "These aren't duplicates": Immich stops showing the group. */
+    suspend fun dismissDuplicates(duplicateId: String) { call("DELETE", "/duplicates/$duplicateId") }
+
+    // ---- locked folder: Immich opens it only for a session unlocked with the person's PIN ----
+
+    suspend fun lockStatus(session: String): LockStatus = parse(call("GET", "/auth/status", session = session))
+    suspend fun setPin(session: String, pin: String) {
+        call("POST", "/auth/pin-code", buildJsonObject { put("pinCode", pin) }, session)
+    }
+    suspend fun unlock(session: String, pin: String) {
+        call("POST", "/auth/session/unlock", buildJsonObject { put("pinCode", pin) }, session)
+    }
+    suspend fun lock(session: String) { call("POST", "/auth/session/lock", session = session) }
+    suspend fun lockedAssets(session: String, page: Int): AssetPage = parse<SearchResponse>(
+        call("POST", "/search/metadata", buildJsonObject {
+            put("visibility", "locked"); put("page", page); put("size", 200); put("order", "desc"); put("withExif", true)
+        }, session),
+    ).assets
+
+    /** Moves assets into the locked folder ("locked") or back to the timeline; leaving it needs the unlocked [session]. */
+    suspend fun setVisibility(ids: List<String>, visibility: String, session: String? = null) {
+        call("PUT", "/assets", buildJsonObject { ids(ids); put("visibility", visibility) }, session)
+    }
 
     // ---- editing ----
 

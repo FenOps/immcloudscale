@@ -86,6 +86,12 @@ data class AssetDto(
 }
 
 @Serializable
+data class DuplicateGroup(val duplicateId: String, val assets: List<AssetDto> = emptyList())
+
+@Serializable
+data class LockStatus(val pinCode: Boolean = false, val isElevated: Boolean = false)
+
+@Serializable
 data class AssetPage(val items: List<AssetDto> = emptyList(), val nextPage: String? = null, val total: Int = 0)
 
 @Serializable

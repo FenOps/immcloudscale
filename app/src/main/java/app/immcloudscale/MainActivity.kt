@@ -7,7 +7,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.ui.App
@@ -22,7 +25,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) handle(intent)
         setContent {
-            ImmTheme {
+            val theme by graph.settingsState.collectAsStateWithLifecycle()
+            val dark = when (theme.theme) {
+                "light" -> false
+                "dark" -> true
+                else -> isSystemInDarkTheme()
+            }
+            ImmTheme(dark = dark) {
                 App(shared.value, { shared.value = emptyList() }, pairLink.value) { pairLink.value = null }
             }
         }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material3.AlertDialog
@@ -42,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.immcloudscale.data.pairing.Features
 import app.immcloudscale.data.pairing.JoinRequestInfo
 import app.immcloudscale.data.pairing.Member
 import app.immcloudscale.data.pairing.PairCode
@@ -55,6 +57,7 @@ import kotlinx.coroutines.launch
 data class MembersUi(
     val requests: List<JoinRequestInfo> = emptyList(),
     val members: List<Member> = emptyList(),
+    val features: Features? = null,
     val loading: Boolean = true,
     val error: String? = null,
 )
@@ -64,6 +67,7 @@ class MembersActions(
     val onDecline: (JoinRequestInfo) -> Unit = {},
     val onAdmin: (Member, Boolean) -> Unit = { _, _ -> },
     val onPairPhone: (Member) -> Unit = {},
+    val onMachineLearning: (Boolean) -> Unit = {},
     val onBack: () -> Unit = {},
 )
 
@@ -79,7 +83,9 @@ fun MembersScreen(onBack: () -> Unit) {
     var declining by remember { mutableStateOf<JoinRequestInfo?>(null) }
 
     suspend fun load() {
-        ui = runCatching { MembersUi(g.members.requests().filter { it.status == "pending" }, g.members.members(), false) }
+        ui = runCatching {
+            MembersUi(g.members.requests().filter { it.status == "pending" }, g.members.members(), runCatching { g.members.features() }.getOrNull(), false)
+        }
             .getOrElse { MembersUi(loading = false, error = it.message ?: "Couldn't reach your server") }
     }
     fun act(block: suspend () -> Unit) = scope.launch {
@@ -95,6 +101,7 @@ fun MembersScreen(onBack: () -> Unit) {
             onDecline = { declining = it },
             onAdmin = { m, on -> act { g.members.setAdmin(m.name, on) } },
             onPairPhone = { m -> act { shown = m.name to g.members.pairCode(m.name) } },
+            onMachineLearning = { on -> act { g.members.setMachineLearning(on); snack.showSnackbar(if (on) "Turning on; this takes a few minutes" else "Turning off") } },
             onBack = onBack,
         ),
     )
@@ -178,6 +185,25 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
                         }
                     },
                 )
+            }
+            ui.features?.let { f ->
+                item { SectionHeader("Server features") }
+                item {
+                    ListItem(
+                        leadingContent = { Icon(Icons.Outlined.Face, null) },
+                        headlineContent = { Text("Face recognition, smart search and duplicates") },
+                        supportingContent = {
+                            Text(
+                                when {
+                                    f.applying -> "Applying the change on the server…"
+                                    f.memoryGB in 0.1..5.9 -> "Needs about 2 GB of extra memory; this server has ${"%.1f".format(f.memoryGB)} GB, so it may get slow."
+                                    else -> "Finds people, searches photos by what's in them (\"beach at sunset\") and spots duplicates."
+                                },
+                            )
+                        },
+                        trailingContent = { Switch(f.machineLearning, { a.onMachineLearning(it) }, enabled = !f.applying) },
+                    )
+                }
             }
             item {
                 Text(
