@@ -8,6 +8,7 @@ import android.provider.OpenableColumns
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.HomeRoute
+import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.SettingsStore
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
@@ -92,14 +93,18 @@ class AppGraph(val context: Context) {
     suspend fun pairWith(link: PairLink, onSignIn: (String) -> Unit = {}) {
         if (link.expired()) throw IOException("This invite has expired. Ask for a new one.")
         val server = Pairing.normalizeServer(link.server)
+        // Nothing from the link is saved: the Tailscale details are used for this attempt only, and pairing
+        // brings the server's own settings.
+        if (link.tailscaleIp.isBlank() || tailscale.answersDirectly(server)) return pairWithServer(server, link.code)
         try {
-            if (link.tailscaleIp.isNotBlank() && !tailscale.answersDirectly(server)) {
-                settings.update {
-                    it.copy(tsServerIp = link.tailscaleIp, tsAuthKey = link.tailscaleKey, tsControlUrl = link.controlUrl, tsEnabled = true)
-                }
-                tailscale.connectForInvite(server, onSignIn)
+            tailscale.connectForInvite(server, link.tailscaleIp, link.tailscaleKey, link.controlUrl, onSignIn)
+            try {
+                pairWithServer(server, link.code)
+            } catch (e: HttpException) {
+                // The "same Wi-Fi" advice for unreachable servers doesn't fit here.
+                if (e.code == 0) throw IOException("Connected to Tailscale, but your server didn't answer through it. Ask whoever sent the invite to check the server.")
+                throw e
             }
-            pairWithServer(server, link.code)
         } finally {
             tailscale.inviteDone()
         }

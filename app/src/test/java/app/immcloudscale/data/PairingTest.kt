@@ -97,8 +97,8 @@ class PairingTest {
         assertEquals(1795620000L, l.expires)
         assertEquals("100.101.102.103", l.tailscaleIp)
         assertEquals("tskey-auth-k1", l.tailscaleKey)
-        assertTrue(l.expired(1795620000L))
-        assertTrue(!l.expired(1795619999L))
+        assertTrue(l.expired(1795620120L)) // two minutes' grace for a fast phone clock
+        assertTrue(!l.expired(1795620119L))
         assertTrue(!PairLink("http://x:8790", "AAAA-BBBB").expired()) // no deadline given
         // Pasted as a whole message, the link is found among the other lines.
         val msg = "You're invited!\n2. Open this link:\nimmcloudscale://pair?server=http%3A%2F%2F192.0.2.2%3A8790&code=ECS8-WRTS&exp=1\nThe link works once."

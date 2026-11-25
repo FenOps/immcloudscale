@@ -25,23 +25,30 @@ fun inviteTime(expires: String, zone: ZoneId = ZoneId.systemDefault(), now: Inst
 
 /** The message an admin sends: how to get the app, the deadline, and the link (which also works when pasted). */
 fun inviteMessage(serverName: String, invite: PairCode, zone: ZoneId = ZoneId.systemDefault(), now: Instant = Instant.now()): String {
+    // Messaging apps don't make app links tappable, so copying the whole message is the way in; the link comes last.
     val deadline = inviteTime(invite.expires, zone, now)
     return buildString {
-        append("You're invited to ").append(serverName.ifBlank { "my home server" }).append(" on ImmCloudScale (photos and files).\n\n")
+        append("Hi! You're invited to ").append(serverName.ifBlank { "my home server" }).append(" on ImmCloudScale (our photos and files).\n")
+        append(inviteValidity(deadline)).append("\n\n")
         append("1. Install the app: https://github.com/FenOps/immcloudscale/releases/latest\n")
-        append("2. ")
-        if (deadline.isNotEmpty()) append("Before ").append(deadline).append(", ")
-        append("open this link on your phone, or copy this whole message and tap \"Paste an invite\" in the app:\n")
-        append(invite.link).append("\n\n")
-        append("The link works once")
-        if (deadline.isNotEmpty()) append(" and expires at ").append(deadline)
-        append(". If it's too late, ask for a new one.")
+        append("   (tap the file ending in .apk, then allow the install)\n")
+        append("2. Copy this whole message, open the app and tap \"Paste an invite\".\n\n")
+        append("Too late? Just ask me for a new one.\n")
+        append(invite.link)
     }
 }
+
+/** The one way every screen says how long an invite works. */
+fun inviteValidity(deadline: String) = if (deadline.isNotEmpty()) "Works once, for 15 minutes (until $deadline)." else "Works once, for 15 minutes."
+
+/** Whether the link lets a phone join from anywhere (the server is on Tailscale), or only on the home Wi-Fi. */
+fun worksFromAnywhere(link: String) = "&ts=" in link || "?ts=" in link
 
 /** Shares the invite as a message with its QR code attached (it can be scanned or picked from the gallery). */
 fun shareInvite(ctx: Context, serverName: String, invite: PairCode) {
     val dir = File(ctx.cacheDir, "share").apply { mkdirs() }
+    // Earlier invite pictures hold links (and keys) that are no use any more.
+    dir.listFiles { f -> f.name.startsWith("invite-") }?.forEach { it.delete() }
     val png = File(dir, "invite-${invite.code}.png")
     runCatching {
         val m = QRCodeWriter().encode(invite.link, BarcodeFormat.QR_CODE, 640, 640, mapOf(EncodeHintType.MARGIN to 2))

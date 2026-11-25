@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,10 +55,8 @@ import app.immcloudscale.graph
 import app.immcloudscale.ui.theme.GoogleColors
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -130,7 +129,7 @@ fun PairCard(onPaired: () -> Unit) {
                 JoinWaiting(s, onPaired)
                 return@Column
             }
-            Text("Scan the code shown on the server's setup screen or admin console. Photos, files and remote access are set up in one go.")
+            Text("Scan the code from the server, or paste an invite someone sent you. Photos, files and remote access are set up in one go.")
             Button(onClick = { scanPairingCode(ctx, { pair(it) }, { error = it }) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan QR code")
             }
@@ -139,6 +138,14 @@ fun PairCard(onPaired: () -> Unit) {
                 enabled = !busy, modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Outlined.Image, null); Spacer(Modifier.width(8.dp)); Text("Use a QR picture from the gallery")
+            }
+            OutlinedButton(onClick = {
+                // An invite sent by message: the whole message can be copied, the link is found inside it.
+                val text = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+                val link = Pairing.findLink(text)
+                if (link != null) pair(link) else error = "Copy the invite message (or its link) first, then tap here."
+            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(8.dp)); Text("Paste an invite")
             }
             Text("or type them in", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(server, { server = it }, label = { Text("Server address") }, placeholder = { Text("192.168.1.50") }, singleLine = true,
@@ -150,14 +157,6 @@ fun PairCard(onPaired: () -> Unit) {
                 if (busy) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(8.dp)) }
                 Text("Pair")
             }
-            OutlinedButton(onClick = {
-                // An invite sent by message: the whole message can be copied, the link is found inside it.
-                val text = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
-                val link = Pairing.findLink(text)
-                if (link != null) pair(link) else error = "Copy the invite message (or its link) first, then tap here."
-            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.ContentPaste, null); Spacer(Modifier.width(8.dp)); Text("Paste an invite")
-            }
             TextButton(onClick = { joining = true }, enabled = !busy) { Text("New here? Ask to join") }
         }
     }
@@ -168,21 +167,29 @@ fun PairCard(onPaired: () -> Unit) {
 @Composable
 fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
     val g = LocalContext.current.graph
+    var now by remember { mutableStateOf(System.currentTimeMillis() / 1000) }
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = { if (!busy) onDone(false) },
         icon = { Icon(Icons.Outlined.Dns, null) },
-        title = { Text("Pair with your server?") },
+        title = { Text("Join this home server?") },
         text = {
             val s = g.settingsState.collectAsStateWithLifecycle().value
             val host = Uri.parse(link.server).host.orEmpty()
+            // The deadline is checked again every few seconds, so Pair turns off when the time is up.
+            LaunchedEffect(link) { while (true) { delay(10_000); now = System.currentTimeMillis() / 1000 } }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("This phone will use the photos, files and remote access of the ImmCloudScale server at ${link.server}.")
-                inviteDeadline(link)?.let { (text, over) ->
+                Text("This phone will back up photos and files to the ImmCloudScale server at $host.")
+                inviteDeadline(link, now)?.let { (text, over) ->
                     Text(text, color = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (link.tailscaleIp.isNotBlank() && s.pairedServer.isNotBlank()) Text(
+                    "This phone is already set up with ${s.pairedServerName.ifBlank { "a server" }}. Only join if you know who sent this invite: " +
+                        "it connects through ${if (link.controlUrl.isBlank()) "Tailscale" else Uri.parse(link.controlUrl).host}.",
+                    color = MaterialTheme.colorScheme.error,
+                )
                 if (s.immichConfigured || s.nextcloudConfigured) Text(
                     "This replaces your current setup (${listOf(s.immichUrl, s.ncUrl).filter { it.isNotBlank() }.joinToString(", ")}). " +
                         "Backups will then go to the new server.",
@@ -192,14 +199,14 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
                     "$host isn't a home-network address. Only pair with a server you set up yourself: it will receive your photos.",
                     color = MaterialTheme.colorScheme.error,
                 )
-                Text("Code ${link.code}", style = MaterialTheme.typography.titleMedium)
+                Text("Code ${link.code}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (busy) CircularProgressIndicator(Modifier.size(24.dp))
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             val ctx = LocalContext.current
-            TextButton(enabled = !busy && !link.expired(), onClick = {
+            TextButton(enabled = !busy && !link.expired(now), onClick = {
                 busy = true; error = null
                 scope.launch {
                     runCatching { g.pairWith(link) { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } } }
@@ -213,10 +220,9 @@ fun PairLinkDialog(link: PairLink, onDone: (paired: Boolean) -> Unit) {
 }
 
 /** "Valid until 15:42" for an invite (true when it's already too late), or null when the link has no deadline. */
-fun inviteDeadline(link: PairLink): Pair<String, Boolean>? {
+fun inviteDeadline(link: PairLink, nowSeconds: Long = System.currentTimeMillis() / 1000): Pair<String, Boolean>? {
     if (link.expires <= 0) return null
-    val at = Instant.ofEpochSecond(link.expires).atZone(ZoneId.systemDefault())
-    val time = at.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
-    return if (link.expired()) "This invite expired at $time. Ask for a new one." to true else "Valid until $time, once." to false
+    val time = inviteTime(Instant.ofEpochSecond(link.expires).toString(), now = Instant.ofEpochSecond(nowSeconds))
+    return if (link.expired(nowSeconds)) "This invite expired at $time. Ask for a new one." to true else "This invite works once, until $time." to false
 }
 

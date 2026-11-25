@@ -29,9 +29,9 @@ class InviteTest {
         Locale.setDefault(Locale.US)
         assertEquals("3:45 PM", inviteTime(invite.expires, istanbul, now).plain())
         val msg = inviteMessage("homeserver", invite, istanbul, now).plain()
-        assertTrue(msg, msg.contains("Before 3:45 PM,"))
-        assertTrue(msg, msg.contains("expires at 3:45 PM"))
-        assertTrue(msg, msg.contains("works once"))
+        assertTrue(msg, msg.contains("Works once, for 15 minutes (until 3:45 PM)."))
+        assertTrue(msg, msg.contains("Copy this whole message"))
+        assertTrue(msg, msg.trimEnd().endsWith(link)) // the link last, as data
         assertTrue(msg, msg.contains("releases/latest"))
         // Copied whole and pasted into the app, the link is found again.
         assertEquals("K7QX-M2PA", Pairing.findLink(msg)?.code)

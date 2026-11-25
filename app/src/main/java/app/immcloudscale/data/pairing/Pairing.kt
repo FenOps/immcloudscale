@@ -63,7 +63,8 @@ data class PairLink(
     val tailscaleKey: String = "",
     val controlUrl: String = "",
 ) {
-    fun expired(nowSeconds: Long = System.currentTimeMillis() / 1000) = expires > 0 && nowSeconds >= expires
+    /** Past the deadline, with two minutes' grace for a phone clock that runs fast (the server has the last word). */
+    fun expired(nowSeconds: Long = System.currentTimeMillis() / 1000) = expires > 0 && nowSeconds >= expires + 120
 }
 
 object Pairing {

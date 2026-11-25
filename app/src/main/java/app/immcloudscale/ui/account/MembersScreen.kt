@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.pairing.Features
 import app.immcloudscale.data.pairing.InviteInfo
@@ -61,6 +62,7 @@ import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.QrCode
 import app.immcloudscale.ui.components.SectionHeader
+import java.time.Instant
 import kotlinx.coroutines.launch
 
 data class MembersUi(
@@ -130,20 +132,23 @@ fun MembersScreen(onBack: () -> Unit) {
         val deadline = inviteTime(code.expires)
         AlertDialog(
             onDismissRequest = { shown = null },
+            properties = DialogProperties(dismissOnClickOutside = false), // an unsent invite isn't lost to a stray tap
             title = { Text("Invite for $name") },
             text = {
                 Column(
                     Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Send it to $name: it works from anywhere, once. Or let them scan this QR code in ImmCloudScale.")
-                    if (code.link.isNotBlank()) QrCode(code.link)
-                    Text(code.code, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
                     Text(
-                        if (deadline.isNotEmpty()) "Valid until $deadline, for one phone" else "Valid for 15 minutes, for one phone",
-                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                        if (worksFromAnywhere(code.link)) "Send this invite to $name by message, or let them scan the QR code in the ImmCloudScale app. It works from anywhere."
+                        else "Let $name scan this QR code in the ImmCloudScale app on your home Wi-Fi. (Away from home it needs remote access on the server.)",
                     )
-                    Text("Server: ${code.server}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (code.link.isNotBlank()) QrCode(code.link)
+                    Text(
+                        code.code, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.semantics { contentDescription = "Code " + code.code.toCharArray().joinToString(" ") },
+                    )
+                    Text(inviteValidity(deadline), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 }
             },
             confirmButton = {
@@ -211,14 +216,14 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
             }
             if (ui.invites.isNotEmpty()) {
                 item { SectionHeader("Open invites") }
-                items(ui.invites, key = { "i-" + it.code }) { inv ->
+                items(ui.invites.filter { runCatching { Instant.parse(it.expires).isAfter(Instant.now()) }.getOrDefault(true) }, key = { "i-" + it.code }) { inv ->
                     ListItem(
                         leadingContent = { LetterAvatar(inv.name, 40.dp) },
                         headlineContent = { Text(inv.name) },
                         supportingContent = {
                             Text("Valid until ${inviteTime(inv.expires)}" + (if (inv.createdBy.isNotBlank()) " · sent by ${inv.createdBy}" else ""))
                         },
-                        trailingContent = { TextButton(onClick = { a.onCancelInvite(inv) }) { Text("Cancel") } },
+                        trailingContent = { TextButton(onClick = { a.onCancelInvite(inv) }) { Text("Cancel invite") } },
                     )
                 }
             }
@@ -296,7 +301,7 @@ private fun InviteDialog(onDismiss: () -> Unit, onInvite: (String, String) -> Un
         title = { Text("Invite someone") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("You get a link to send by message. It works from anywhere, once, for 15 minutes.")
+                Text("You'll get an invite to send by message. It works once, for 15 minutes.")
                 OutlinedTextField(name, { name = it.lowercase().filter { c -> c in 'a'..'z' || c in '0'..'9' }.take(32) }, label = { Text("Username") },
                     placeholder = { Text("nina") }, singleLine = true, isError = badStart,
                     supportingText = { Text(if (badStart) "Start with a letter" else "Their name on the server; an existing member gets a new link") },

@@ -100,40 +100,70 @@ class TailscaleManager(
     /** The server being joined through an invite (its home address), routed through Tailscale until paired. */
     @Volatile var inviteServer: String? = null
         private set
+    @Volatile private var inviting = false
+    @Volatile private var homeBeforeInvite = true
 
     /**
-     * Joins through an invite away from home: connects with what the invite carries, then routes the server's
-     * home address through Tailscale. [onSignIn] opens Tailscale's sign-in page when the invite has no key.
+     * Joins through an invite away from home, with a temporary Tailscale identity of its own: the phone's own
+     * Tailscale settings are left alone, and only the invited server's home address is routed (to [ip]).
+     * [onSignIn] opens Tailscale's sign-in page when the invite has no key. Always call [inviteDone] afterwards.
      */
-    suspend fun connectForInvite(server: String, onSignIn: (String) -> Unit) {
+    suspend fun connectForInvite(server: String, ip: String, key: String, controlUrl: String, onSignIn: (String) -> Unit) {
+        val host = server.toHttpUrlOrNull()?.host ?: throw IOException("That invite has no server address")
+        stop() // the phone's own tailnet, if it was connected
+        homeBeforeInvite = _home.value
+        inviting = true
         inviteServer = server
         _home.value = false
-        start()
+        connect(inviteDir(), hostname(settings.current()), key, controlUrl) { bridge.setRoute(host, ip) }
         if (_state.value.status == TsStatus.NeedsLogin) {
             _state.value.authUrl?.let(onSignIn)
             // Give the person time to sign in; watchSignIn updates the state when they're done.
             withTimeoutOrNull(5 * 60_000) { while (_state.value.status == TsStatus.NeedsLogin) delay(1000) }
         }
         if (_state.value.status != TsStatus.Connected) {
-            throw IOException(_state.value.error ?: "Couldn't connect to your server through Tailscale. Check the internet connection and try again.")
-        }
-        server.toHttpUrlOrNull()?.host?.let { host ->
-            withContext(Dispatchers.IO) { runCatching { bridge.setRoute(host, settings.current().tsServerIp) } }
+            throw IOException(_state.value.error ?: "Couldn't connect to the server through Tailscale. Check the internet connection and try again.")
         }
     }
 
-    /** After pairing (or giving up): the invite's address is a normal paired address now, or not needed. */
-    fun inviteDone() { inviteServer = null }
+    /**
+     * Ends an invite join, whether it worked or not: the route goes, the temporary identity is stopped and
+     * deleted, and the phone's own Tailscale comes back as the network calls for it.
+     */
+    suspend fun inviteDone() {
+        val host = inviteServer?.toHttpUrlOrNull()?.host
+        inviteServer = null
+        if (!inviting) return
+        lock.withLock {
+            withContext(Dispatchers.IO) {
+                host?.let { runCatching { bridge.setRoute(it, "") } }
+                runCatching { bridge.stop() }
+                inviteDir().deleteRecursively()
+            }
+            _state.value = TsState(TsStatus.Off)
+        }
+        inviting = false
+        onNetwork(homeBeforeInvite)
+    }
 
-    /** Whether the server answers at [server] directly from here (then no Tailscale is needed to pair). */
+    private fun inviteDir() = File(context.cacheDir, "tailscale-invite")
+
+    /** Whether ImmCloudScale's pairing service answers at [server] directly from here (then no Tailscale is needed). */
     suspend fun answersDirectly(server: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            direct.newCall(Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { it.isSuccessful }
+            direct.newCall(Request.Builder().url(server.trimEnd('/') + "/api/v1/info").build()).execute().use { r ->
+                r.isSuccessful && r.body?.string()?.contains("\"product\":\"immcloudscale\"") == true
+            }
         }.getOrDefault(false)
     }
 
     /** Called when the phone's network changes. */
     fun onNetwork(home: Boolean) {
+        // During an invite join the network monitor mustn't stop or reroute the temporary connection.
+        if (inviting) {
+            homeBeforeInvite = home
+            return
+        }
         _home.value = home
         scope.launch {
             val s = settings.current()
@@ -186,12 +216,22 @@ class TailscaleManager(
             return@withLock
         }
         if (_state.value.status == TsStatus.Connected) return@withLock
+        connectLocked(File(context.filesDir, "tailscale"), hostname(s), s.tsAuthKey, s.tsControlUrl) {
+            lanHost(s)?.let { bridge.setRoute(it, s.tsServerIp) }
+        }
+    }
+
+    private suspend fun connect(dir: File, hostname: String, key: String, controlUrl: String, routes: () -> Unit) =
+        lock.withLock { connectLocked(dir, hostname, key, controlUrl, routes) }
+
+    /** Starts the bridge with [dir] as its identity and waits until connected, a sign-in is needed, or it fails. */
+    private suspend fun connectLocked(dir: File, hostname: String, key: String, controlUrl: String, routes: () -> Unit) {
         _state.value = TsState(TsStatus.Starting)
         try {
             withContext(Dispatchers.IO) {
-                val dir = File(context.filesDir, "tailscale").apply { mkdirs() }
-                bridge.start(dir.path, hostname(s), s.tsAuthKey, s.tsControlUrl)
-                lanHost(s)?.let { bridge.setRoute(it, s.tsServerIp) }
+                dir.mkdirs()
+                bridge.start(dir.path, hostname, key, controlUrl)
+                routes()
             }
             // A first connection takes a few seconds; a sign-in can take as long as the person needs.
             withTimeoutOrNull(45_000) {
