@@ -3,13 +3,16 @@ package app.immcloudscale.data.backup
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
@@ -24,10 +27,12 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.immcloudscale.ImmApp
+import app.immcloudscale.MainActivity
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
+import app.immcloudscale.ui.components.formatBytes
 import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
@@ -131,7 +136,10 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             startedTailscale = !wasConnected
         }
         try {
-            return upload(s)
+            val result = upload(s)
+            runCatching { findDeletedElsewhere() }.onFailure { Log.w("BackupWorker", "checking deletions", it) }
+            if (s.freeUpAuto) runCatching { offerFreeUp(s) }.onFailure { Log.w("BackupWorker", "free up space", it) }
+            return result
         } finally {
             // Started only for this backup: don't keep Tailscale running in the background afterwards.
             if (startedTailscale) ts.stop()
@@ -149,7 +157,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.success(workDataOf(KEY_UPLOADED to 0))
         }
         runCatching { setForeground(foreground(0, media.size)) }
-        val deviceId = "immcloudscale-" + (Settings.Secure.getString(applicationContext.contentResolver, Settings.Secure.ANDROID_ID) ?: "android")
+        val deviceId = PhoneCopies.deviceId(applicationContext)
         var uploaded = 0
         var skipped = 0
         var done = 0
@@ -189,6 +197,55 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
         app.graph.settings.update { it.copy(lastBackupAt = System.currentTimeMillis(), backupSkipped = skipped) }
         return Result.success(workDataOf(KEY_UPLOADED to uploaded, KEY_SKIPPED to skipped))
+    }
+
+    /**
+     * Photos this phone backed up that were deleted in the library since the last look (in the app on another
+     * device, or on the web) are still on this phone. Remember them and tell the person: moving them to the
+     * phone's trash needs Android's confirmation, which only the app on screen can ask for.
+     */
+    private suspend fun findDeletedElsewhere() {
+        val graph = app.graph
+        val checkedAt = System.currentTimeMillis()
+        val since = Instant.ofEpochMilli(graph.settings.current().trashSyncedAt)
+        val trashed = graph.immich.trashedFrom(PhoneCopies.deviceId(applicationContext), since)
+        val still = PhoneCopies.find(applicationContext, PhoneCopies.mediaIds(applicationContext, trashed))
+            .mapNotNull { it.lastPathSegment?.toLongOrNull() }
+        graph.settings.update { it.copy(trashSyncedAt = checkedAt, phoneTrashPending = it.phoneTrashPending + still) }
+        if (still.isNotEmpty()) notifyDeletedElsewhere(graph.settings.current().phoneTrashPending.size)
+    }
+
+    /** Automatic "Free up space": remembers what can go and asks the app (on screen) to remove it. */
+    private suspend fun offerFreeUp(s: AppSettings) {
+        val f = findFreeUp(applicationContext, app.graph.immich, s.freeUpKeepDays)
+        if (f.ids.isEmpty()) return
+        app.graph.settings.update { it.copy(freeUpPending = f.ids.toSet()) }
+        notify(44, "Free up ${formatBytes(f.bytes)}", "${f.ids.size} backed-up photos and videos can be removed from this phone. Tap to free up space.")
+    }
+
+    private fun notifyDeletedElsewhere(count: Int) = notify(
+        43,
+        if (count == 1) "A deleted photo is still on this phone" else "$count deleted photos are still on this phone",
+        "Tap to move them to the phone's trash too",
+    )
+
+    private fun notify(id: Int, title: String, text: String) {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL_SYNC, "Phone storage", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(
+            applicationContext, 0,
+            Intent(applicationContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = NotificationCompat.Builder(applicationContext, CHANNEL_SYNC)
+            .setSmallIcon(android.R.drawable.ic_menu_delete)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        runCatching { nm.notify(id, n) }
     }
 
     /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
@@ -249,6 +306,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val SCHEDULED = "backup-scheduled"
         private const val SCHEDULED_TAG = "scheduled"
         private const val CHANNEL = "backup"
+        private const val CHANNEL_SYNC = "deleted"
 
         /**
          * Time until the next scheduled backup: the first of [days] (1 = Monday … 7 = Sunday) at [minuteOfDay]

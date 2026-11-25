@@ -2,6 +2,9 @@ package app.immcloudscale.ui
 
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,6 +14,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Photo
@@ -42,10 +46,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import app.immcloudscale.data.backup.PhoneCopies
 import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.graph
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.ui.account.AccountDialog
+import app.immcloudscale.ui.account.FreeUpPrompt
 import app.immcloudscale.ui.account.PairLinkDialog
 import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.ServersScreen
@@ -60,7 +66,9 @@ import app.immcloudscale.ui.files.FilesScreen
 import app.immcloudscale.ui.network.NetworkScreen
 import app.immcloudscale.ui.photos.PhotosScreen
 import app.immcloudscale.ui.photos.ViewerScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
     Photos("Photos", Icons.Outlined.Photo, Icons.Filled.Photo),
@@ -229,6 +237,8 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         dismissButton = { TextButton(onClick = { welcome = false }) { Text("Not now") } },
     )
 
+    if (settings.phoneTrashPending.isNotEmpty()) PhoneTrashPrompt(settings.phoneTrashPending)
+    else if (settings.freeUpPending.isNotEmpty()) FreeUpPrompt(settings.freeUpPending)
     if (sharedUris.isNotEmpty()) SharedUploadDialog(sharedUris, onSharedHandled)
     if (pairLink != null) PairLinkDialog(pairLink) { paired ->
         onPairLinkHandled()
@@ -237,6 +247,33 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
             nav.navigate("main") { popUpTo(0) { inclusive = true } }
         }
     }
+}
+
+/** Photos deleted in the library elsewhere (web, another phone) are still on this phone: offer to trash them here too. */
+@Composable
+private fun PhoneTrashPrompt(ids: Set<Long>) {
+    val ctx = LocalContext.current
+    val g = ctx.graph
+    val scope = rememberCoroutineScope()
+    val clear = { scope.launch { g.settings.update { it.copy(phoneTrashPending = it.phoneTrashPending - ids) } } }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { clear() }
+    AlertDialog(
+        onDismissRequest = { clear() },
+        icon = { Icon(Icons.Outlined.DeleteOutline, null) },
+        title = { Text(if (ids.size == 1) "Deleted photo still on this phone" else "${ids.size} deleted photos still on this phone") },
+        text = { Text("They were moved to the trash in your library. Move this phone's copies to the phone's trash too? You can restore them there for 30 days.") },
+        confirmButton = {
+            TextButton(onClick = {
+                scope.launch {
+                    val sender = withContext(Dispatchers.IO) {
+                        runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.find(ctx, ids)) }.getOrNull()
+                    }
+                    if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build()) else clear()
+                }
+            }) { Text("Move to trash") }
+        },
+        dismissButton = { TextButton(onClick = { clear() }) { Text("Keep on phone") } },
+    )
 }
 
 /** "Share to ImmCloudScale" from other apps: pick Photos (Immich) or Files (Nextcloud). */

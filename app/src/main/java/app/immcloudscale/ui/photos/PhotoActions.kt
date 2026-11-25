@@ -3,6 +3,9 @@ package app.immcloudscale.ui.photos
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,12 +52,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import app.immcloudscale.data.backup.PhoneCopies
 import app.immcloudscale.data.immich.AlbumDto
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.RemoteImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
@@ -198,4 +204,40 @@ fun AlbumPickerDialog(onDismiss: () -> Unit, onPick: (AlbumDto) -> Unit, onCreat
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** Asks before anything goes to the trash: it leaves the library and this phone (both keep it for 30 days). */
+@Composable
+fun TrashConfirmDialog(count: Int, onConfirm: () -> Unit, onDismiss: () -> Unit) = AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(if (count == 1) "Move to trash?" else "Move $count items to trash?") },
+    text = {
+        Text(
+            "${if (count == 1) "It's" else "They're"} removed from your library and from this phone. " +
+                "You can restore ${if (count == 1) "it" else "them"} from Trash for 30 days.",
+        )
+    },
+    confirmButton = { TextButton(onClick = onConfirm) { Text("Move to trash") } },
+    dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+)
+
+/**
+ * Moves this phone's own copies of [AssetDto]s to the phone's trash, so something deleted in the app doesn't
+ * stay on the phone. Android confirms it unless the app has "Media management" access.
+ */
+@Composable
+fun rememberPhoneTrash(): (List<AssetDto>) -> Unit {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
+    return remember(ctx) {
+        { assets ->
+            scope.launch {
+                val sender = withContext(Dispatchers.IO) {
+                    runCatching { PhoneCopies.trashRequest(ctx, PhoneCopies.find(ctx, PhoneCopies.mediaIds(ctx, assets))) }.getOrNull()
+                }
+                if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build())
+            }
+        }
+    }
 }

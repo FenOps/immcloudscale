@@ -88,12 +88,13 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
-    private fun act(label: String, removeFromList: Boolean, block: suspend (List<String>) -> Unit) {
+    private fun act(label: String, removeFromList: Boolean, onDone: () -> Unit = {}, block: suspend (List<String>) -> Unit) {
         val ids = _state.value.selected.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
             try {
                 block(ids)
+                onDone()
                 _state.update { s ->
                     s.copy(
                         selected = emptySet(),
@@ -112,7 +113,8 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         _state.update { s -> s.copy(assets = s.assets.map { a -> if (a.id in it) a.copy(isFavorite = fav) else a }) }
     }
     fun archiveSelected(archive: Boolean = true) = act(if (archive) "Archived" else "Unarchived", true) { graph.immich.setArchived(it, archive) }
-    fun trashSelected() = act("Moved to trash:", true) { graph.immich.delete(it) }
+    /** [onDone] runs once the server has them in its trash (the phone's copies follow then). */
+    fun trashSelected(onDone: () -> Unit = {}) = act("Moved to trash:", true, onDone) { graph.immich.delete(it) }
     fun deleteForeverSelected() = act("Deleted", true) { graph.immich.delete(it, force = true) }
     fun restoreSelected() = act("Restored", true) { graph.immich.restore(it) }
     fun addSelectedToAlbum(albumId: String) = act("Added to album:", false) { graph.immich.addToAlbum(albumId, it) }

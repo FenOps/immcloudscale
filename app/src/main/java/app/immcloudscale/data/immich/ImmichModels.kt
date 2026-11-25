@@ -66,6 +66,9 @@ data class AssetDto(
     val thumbhash: String? = null,
     val exifInfo: ExifInfo? = null,
     val people: List<PersonDto> = emptyList(),
+    /** Which phone uploaded it, and that phone's ID for the file (see PhoneCopies). */
+    val deviceId: String = "",
+    val deviceAssetId: String = "",
 ) {
     val isVideo get() = type == "VIDEO"
     /** "0:00:12.345000" → "0:12" for the tile badge. */

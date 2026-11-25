@@ -100,6 +100,27 @@ class ImmichClient(
     }
 
     suspend fun asset(id: String): AssetDto = parse(call("GET", "/assets/$id"))
+
+    /** Every asset one phone uploaded (not in the trash). */
+    suspend fun assetsFrom(deviceId: String): List<AssetDto> {
+        val out = mutableListOf<AssetDto>()
+        var page = 1
+        while (true) {
+            val p = parse<SearchResponse>(call("POST", "/search/metadata", buildJsonObject {
+                put("deviceId", deviceId); put("page", page); put("size", 1000)
+            })).assets
+            out += p.items
+            if (p.nextPage == null || p.items.isEmpty()) return out
+            page++
+        }
+    }
+
+    /** Assets from one phone that went to the trash after [since] (newest first, up to 1000). */
+    suspend fun trashedFrom(deviceId: String, since: Instant): List<AssetDto> = parse<SearchResponse>(
+        call("POST", "/search/metadata", buildJsonObject {
+            put("deviceId", deviceId); put("withDeleted", true); put("trashedAfter", since.toString()); put("size", 1000)
+        }),
+    ).assets.items.filter { it.isTrashed }
     suspend fun albums(): List<AlbumDto> = parse(call("GET", "/albums"))
     suspend fun sharedAlbums(): List<AlbumDto> = parse(call("GET", "/albums?shared=true"))
     suspend fun people(): List<PersonDto> = parse<PeopleResponse>(call("GET", "/people")).people.filter { !it.isHidden }

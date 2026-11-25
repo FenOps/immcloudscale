@@ -66,6 +66,16 @@ data class AppSettings(
     /** "system", "light" or "dark". */
     val theme: String = "system",
 
+    /** Phone copies (MediaStore IDs) of photos deleted in the library elsewhere, waiting to go to the phone's trash. */
+    val phoneTrashPending: Set<Long> = emptySet(),
+    /** When backup last looked for photos deleted elsewhere (epoch ms). */
+    val trashSyncedAt: Long = 0L,
+    /** After each backup, offer to remove backed-up photos older than [freeUpKeepDays] from the phone. */
+    val freeUpAuto: Boolean = false,
+    val freeUpKeepDays: Int = 30,
+    /** Backed-up phone copies (MediaStore IDs) waiting to be removed to free space. */
+    val freeUpPending: Set<Long> = emptySet(),
+
     val filesGrid: Boolean = false,
     val photoColumns: Int = 4,
 
@@ -121,6 +131,11 @@ class SettingsStore(private val context: Context) {
         val backupDays = stringSetPreferencesKey("backup_days")
         val backupTime = stringPreferencesKey("backup_time")
         val theme = stringPreferencesKey("theme")
+        val phoneTrashPending = stringSetPreferencesKey("phone_trash_pending")
+        val trashSyncedAt = longPreferencesKey("trash_synced_at")
+        val freeUpAuto = booleanPreferencesKey("free_up_auto")
+        val freeUpKeepDays = stringPreferencesKey("free_up_keep_days")
+        val freeUpPending = stringSetPreferencesKey("free_up_pending")
     }
 
     private fun read(p: Preferences) =
@@ -161,6 +176,11 @@ class SettingsStore(private val context: Context) {
             backupDays = p[K.backupDays]?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet(),
             backupTime = p[K.backupTime]?.toIntOrNull() ?: 2 * 60,
             theme = p[K.theme] ?: "system",
+            phoneTrashPending = p[K.phoneTrashPending]?.mapNotNull { it.toLongOrNull() }?.toSet() ?: emptySet(),
+            trashSyncedAt = p[K.trashSyncedAt] ?: 0L,
+            freeUpAuto = p[K.freeUpAuto] ?: false,
+            freeUpKeepDays = p[K.freeUpKeepDays]?.toIntOrNull() ?: 30,
+            freeUpPending = p[K.freeUpPending]?.mapNotNull { it.toLongOrNull() }?.toSet() ?: emptySet(),
         )
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { read(it) }
@@ -207,6 +227,9 @@ class SettingsStore(private val context: Context) {
             p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
             p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()
             p[K.backupTime] = n.backupTime.toString(); p[K.theme] = n.theme
+            p[K.phoneTrashPending] = n.phoneTrashPending.map { it.toString() }.toSet(); p[K.trashSyncedAt] = n.trashSyncedAt
+            p[K.freeUpAuto] = n.freeUpAuto; p[K.freeUpKeepDays] = n.freeUpKeepDays.toString()
+            p[K.freeUpPending] = n.freeUpPending.map { it.toString() }.toSet()
         }
         saved?.let { state.value = it }
     }

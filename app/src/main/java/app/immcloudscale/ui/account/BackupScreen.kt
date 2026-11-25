@@ -198,6 +198,9 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
             SectionHeader("Schedule")
             BackupScheduleSection(s) { block -> update(block) }
 
+            SectionHeader("Phone storage")
+            FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
+
             SectionHeader("When to back up")
             Toggle(Icons.Outlined.Wifi, "Only on Wi-Fi", "Don't use mobile data", s.backupWifiOnly) { v -> update { it.copy(backupWifiOnly = v) } }
             Toggle(Icons.Outlined.BatteryChargingFull, "Only while charging", "Save battery", s.backupChargingOnly) { v -> update { it.copy(backupChargingOnly = v) } }

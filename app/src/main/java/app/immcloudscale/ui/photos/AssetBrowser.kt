@@ -65,6 +65,8 @@ fun AssetBrowser(
         onPauseOrDispose {}
     }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmTrash by remember { mutableStateOf(false) }
+    val phoneTrash = rememberPhoneTrash()
     val sections = remember(st.assets) { groupByDay(st.assets) }
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
@@ -86,7 +88,7 @@ fun AssetBrowser(
                     onAddToAlbum = { albumPicker = true },
                     onFavorite = { vm.favoriteSelected(!st.assets.filter { it.id in st.selected }.all { it.isFavorite }) },
                     onArchive = { vm.archiveSelected(vm.query != AssetQuery.Archive) },
-                    onDelete = { if (vm.query == AssetQuery.Trash) confirmDelete = true else vm.trashSelected() },
+                    onDelete = { if (vm.query == AssetQuery.Trash) confirmDelete = true else confirmTrash = true },
                     onRestore = vm::restoreSelected,
                 )
             } else topBar()
@@ -128,6 +130,11 @@ fun AssetBrowser(
         onPick = { albumPicker = false; vm.addSelectedToAlbum(it.id) },
         onCreate = { albumPicker = false; vm.newAlbumFromSelected(it) },
     )
+    if (confirmTrash) TrashConfirmDialog(st.selected.size, onDismiss = { confirmTrash = false }, onConfirm = {
+        confirmTrash = false
+        val chosen = st.assets.filter { it.id in st.selected }
+        vm.trashSelected { phoneTrash(chosen) }
+    })
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text("Delete forever?") },

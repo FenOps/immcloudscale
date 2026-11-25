@@ -96,6 +96,8 @@ fun ViewerScreen(onBack: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var albumPicker by remember { mutableStateOf(false) }
     var confirmForever by remember { mutableStateOf<AssetDto?>(null) }
+    var confirmTrash by remember { mutableStateOf<AssetDto?>(null) }
+    val phoneTrash = rememberPhoneTrash()
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
     val trash = ViewerSession.query == AssetQuery.Trash
@@ -175,11 +177,18 @@ fun ViewerScreen(onBack: () -> Unit) {
                 } else if (current != null) {
                     BarAction(Icons.Outlined.Share, "Share") { run { shareAssets(ctx, listOf(current)) } }
                     BarAction(Icons.Outlined.Info, "Info") { info = current }
-                    BarAction(Icons.Outlined.DeleteOutline, "Delete") { run { g.immich.delete(listOf(current.id)); remove(current, "Moved to trash") } }
+                    BarAction(Icons.Outlined.DeleteOutline, "Delete") { confirmTrash = current }
                 }
             }
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+    }
+
+    confirmTrash?.let { a ->
+        TrashConfirmDialog(1, onDismiss = { confirmTrash = null }, onConfirm = {
+            confirmTrash = null
+            run { g.immich.delete(listOf(a.id)); remove(a, "Moved to trash"); phoneTrash(listOf(a)) }
+        })
     }
 
     confirmForever?.let { a ->
