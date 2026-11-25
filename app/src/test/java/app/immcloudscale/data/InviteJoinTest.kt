@@ -7,6 +7,10 @@ import app.immcloudscale.data.tailscale.TailscaleManager
 import app.immcloudscale.data.tailscale.TsStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -51,8 +55,8 @@ class InviteJoinTest {
         assertEquals(mapOf("10.9.9.9" to "100.64.0.66"), bridge.routes) // the home server is NOT sent to the invite's tailnet
         assertEquals("tskey-invite", bridge.startedWithKey)
         ts.inviteDone()
-        assertTrue(bridge.routes.isEmpty())
-        assertTrue(!bridge.running)
+        assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
+        assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists()) // the temporary identity is deleted
         assertEquals(paired, app.graph.settings.current()) // nothing from the link was saved
     }
 
@@ -96,6 +100,25 @@ class InviteJoinTest {
         assertEquals(listOf(java.net.Proxy.NO_PROXY), selector.select(java.net.URI("http://192.168.1.50:2283/api/assets")))
         assertTrue(selector.select(java.net.URI("http://10.9.9.9:8790/api/v1/pair"))[0] != java.net.Proxy.NO_PROXY)
         ts.inviteDone()
-        assertTrue(bridge.routes.isEmpty())
+        assertTrue("10.9.9.9" !in bridge.routes)
+    }
+
+    @Test fun aJoinWhoseScreenWentAwayStillCleansUp() = runBlocking {
+        app.graph.settings.update { paired }
+        val bridge = FakeBridge(joins = true)
+        val ts = TailscaleManager(app, app.graph.settings, CoroutineScope(Dispatchers.Default), bridge)
+        val job = launch {
+            try {
+                ts.connectForInvite("http://10.9.9.9:8790", "100.64.0.66", "tskey-x", "", onSignIn = {})
+                awaitCancellation()
+            } finally {
+                ts.inviteDone()
+            }
+        }
+        while (!ts.inviting || bridge.routes.isEmpty()) delay(10)
+        job.cancelAndJoin()
+        assertTrue(!ts.inviting)
+        assertTrue("10.9.9.9" !in bridge.routes) // the phone's own Tailscale may come back; the invite's route doesn't
+        assertTrue(!java.io.File(app.cacheDir, "tailscale-invite").exists())
     }
 }

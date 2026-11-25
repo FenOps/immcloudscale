@@ -43,7 +43,7 @@ func (s *Server) Invites() []state.Pairing {
 // CancelInvite makes a pairing code unusable before it expires, also while someone is redeeming it.
 func (s *Server) CancelInvite(code string) error {
 	code = normCode(code)
-	found := false
+	found, inFlight := false, false
 	err := s.Store.Update(func(st *state.State) error {
 		kept := st.Pairings[:0]
 		for _, p := range st.Pairings {
@@ -54,6 +54,10 @@ func (s *Server) CancelInvite(code string) error {
 			kept = append(kept, p)
 		}
 		st.Pairings = kept
+		if !found {
+			// With the store locked, so a failed pairing can't give the code back between this and the check.
+			inFlight = s.cancelInFlight(code)
+		}
 		return nil
 	})
 	if err != nil {
@@ -62,7 +66,7 @@ func (s *Server) CancelInvite(code string) error {
 	if found {
 		return nil
 	}
-	if s.cancelInFlight(code) {
+	if inFlight {
 		return errors.New("someone is joining with this invite right now: if they finish, they're in (remove their phone under Phones); otherwise it stays cancelled")
 	}
 	return errors.New("that invite was already used or has expired")

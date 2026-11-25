@@ -597,21 +597,22 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 		return ErrBadCode
 	})
 	if err != nil {
+		if pairing.Code != "" {
+			s.codeInFlight(code, false) // the state couldn't be saved, so the code is still there
+		}
 		return res, err
 	}
 	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry, unless an
-	// admin cancelled it in the meantime.
+	// admin cancelled it in the meantime. Both happen with the store locked, so a cancel can't fall in between.
 	ok := false
 	defer func() {
-		cancelled := s.codeInFlight(code, false)
-		if !ok && !cancelled {
-			_ = s.Store.Update(func(st *state.State) error {
-				if pairing.Expires.After(s.Now()) {
-					st.Pairings = append(st.Pairings, pairing)
-				}
-				return nil
-			})
-		}
+		_ = s.Store.Update(func(st *state.State) error {
+			cancelled := s.codeInFlight(code, false)
+			if !ok && !cancelled && pairing.Expires.After(s.Now()) {
+				st.Pairings = append(st.Pairings, pairing)
+			}
+			return nil
+		})
 	}()
 
 	st := s.Store.Read()
@@ -650,8 +651,13 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	dev.NCAppPassword = appPass
 
 	err = s.Store.Update(func(st *state.State) error {
-		if st.FindUser(u.Name) == nil {
+		cur := st.FindUser(u.Name)
+		if cur == nil {
 			return ErrUserGone // removed while this pairing was in progress
+		}
+		if pairing.CreatedBy != "" && cur.IsAdmin {
+			ok = true // made an admin meanwhile: the invite is used up
+			return fmt.Errorf("%s is an admin now; pair the phone at home instead of with this invite", u.Name)
 		}
 		if !st.Config.VPNEnabled {
 			dev.PublicKey = ""

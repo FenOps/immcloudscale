@@ -8,6 +8,7 @@ import app.immcloudscale.data.SettingsStore
 import app.immcloudscale.tsbridge.Tsbridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -112,6 +113,7 @@ class TailscaleManager(
      */
     suspend fun connectForInvite(server: String, ip: String, key: String, controlUrl: String, onSignIn: (String) -> Unit) {
         val host = server.toHttpUrlOrNull()?.host ?: throw IOException("That invite has no server address")
+        if (inviting) throw IOException("Already joining a server with an invite; wait for that to finish")
         val s = settings.current()
         if (listOf(s.pairedServer, s.immichUrl, s.ncUrl).any { it.toHttpUrlOrNull()?.host.equals(host, ignoreCase = true) }) {
             // Same address as this phone's server, but reached through someone else's tailnet: refuse.
@@ -138,20 +140,24 @@ class TailscaleManager(
      * Ends an invite join, whether it worked or not: the route goes, the temporary identity is stopped and
      * deleted, and the phone's own Tailscale comes back as the network calls for it.
      */
-    suspend fun inviteDone() {
+    suspend fun inviteDone() = withContext(NonCancellable) { // also when the screen that started the join has gone
         val host = inviteServer?.toHttpUrlOrNull()?.host
         inviteServer = null
-        if (!inviting) return
-        lock.withLock {
-            withContext(Dispatchers.IO) {
-                host?.let { runCatching { bridge.setRoute(it, "") } }
-                runCatching { bridge.stop() }
-                inviteDir().deleteRecursively()
+        if (!inviting) return@withContext
+        try {
+            lock.withLock {
+                withContext(Dispatchers.IO) {
+                    host?.let { runCatching { bridge.setRoute(it, "") } }
+                    runCatching { bridge.stop() }
+                    inviteDir().deleteRecursively()
+                }
+                _state.value = TsState(TsStatus.Off)
             }
-            _state.value = TsState(TsStatus.Off)
+        } finally {
+            inviting = false
         }
-        inviting = false
         onNetwork(homeBeforeInvite)
+        checkHome() // the phone may now be paired with the invite's server, whose home network is another one
     }
 
     private fun inviteDir() = File(context.cacheDir, "tailscale-invite")
@@ -297,7 +303,7 @@ class TailscaleManager(
         val s = settings.current()
         if (!s.tsEnabled) return false
         start()
-        return _state.value.status == TsStatus.Connected
+        return !inviting && _state.value.status == TsStatus.Connected // an invite join may have started meanwhile
     }
 
     private fun read(): TsState {
