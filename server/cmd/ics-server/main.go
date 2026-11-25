@@ -91,7 +91,7 @@ func main() {
 			server := fmt.Sprintf("http://%s:%d", c.LANAddress, c.AdminPort)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetEscapeHTML(false) // keep "&" in the link readable for shell scripts
-			check(enc.Encode(map[string]any{"server": server, "code": p.Code, "link": web.PairLink(server, p.Code, p.Expires, s.TailscaleJoin()), "expires": p.Expires}))
+			check(enc.Encode(map[string]any{"server": server, "code": p.Code, "link": web.PairLink(server, p.Code, p.Expires, homeTailscale(s)), "expires": p.Expires}))
 			return
 		}
 		printPairing(s, args[1])
@@ -420,12 +420,22 @@ func keepAwake() {
 	}
 }
 
+// homeTailscale is what a code shown here carries about Tailscale: the address, never the join key (codes from
+// the command line are scanned at home, and pairing hands the key over anyway).
+func homeTailscale(s *core.Server) *core.TailscaleInfo {
+	ts := s.TailscaleJoin()
+	if ts == nil {
+		return nil
+	}
+	return &core.TailscaleInfo{IP: ts.IP, ControlURL: ts.ControlURL}
+}
+
 func printPairing(s *core.Server, user string) {
 	p, err := s.StartPairing(user)
 	check(err)
 	c := s.Store.Read().Config
 	server := fmt.Sprintf("http://%s:%d", c.LANAddress, c.AdminPort)
-	link := web.PairLink(server, p.Code, p.Expires, s.TailscaleJoin())
+	link := web.PairLink(server, p.Code, p.Expires, homeTailscale(s))
 	q, err := qrcode.New(link, qrcode.Low)
 	check(err)
 	fmt.Printf("\nPair %s's phone: scan this with the phone's camera, or open ImmCloudScale → Scan QR code.\n", user)

@@ -142,6 +142,15 @@ func TestInvitesFromAnAdminPhone(t *testing.T) {
 	if !strings.Contains(inv.Link, "ts=100.101.102.103") || !strings.Contains(inv.Link, "exp=") {
 		t.Fatal(inv.Link)
 	}
+	// With a join key saved, only invites sent from the app carry it; the console's QR (scanned at home) doesn't.
+	s.SetTailscaleKey("tskey-auth-secret", "")
+	w = call("POST", "/api/v1/manage/invites", `{"name":"tom"}`, "dev_a:a")
+	if !strings.Contains(w.Body.String(), "tskey-auth-secret") {
+		t.Fatal("invite without the key:", w.Body)
+	}
+	if c := do(h, "POST", "/api/admin/pairings", `{"user":"tom"}`, true); strings.Contains(c.Body.String(), "tskey") {
+		t.Fatal("console pairing link carries the join key:", c.Body)
+	}
 	list := call("GET", "/api/v1/manage/invites", "", "dev_a:a").Body.String()
 	if !strings.Contains(list, inv.Code) || !strings.Contains(list, `"createdBy":"camille"`) {
 		t.Fatal(list)

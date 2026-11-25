@@ -43,6 +43,11 @@ type Server struct {
 	// TailscaleIP is this machine's Tailscale address, "" when it has none; nil means no Tailscale (tests).
 	TailscaleIP func() string
 
+	// Codes being redeemed right now, and those cancelled meanwhile (so a failed pairing doesn't give them back).
+	codesMu   sync.Mutex
+	inflight  map[string]bool
+	cancelled map[string]bool
+
 	tokMu      sync.Mutex
 	tok        string
 	tokUntil   time.Time
@@ -592,10 +597,13 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	if err != nil {
 		return res, err
 	}
-	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry.
+	s.codeInFlight(code, true)
+	// A failure on our side (Immich/Nextcloud down…) gives the code back so the person can retry, unless an
+	// admin cancelled it in the meantime.
 	ok := false
 	defer func() {
-		if !ok {
+		cancelled := s.codeInFlight(code, false)
+		if !ok && !cancelled {
 			_ = s.Store.Update(func(st *state.State) error {
 				if pairing.Expires.After(s.Now()) {
 					st.Pairings = append(st.Pairings, pairing)
