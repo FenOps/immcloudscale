@@ -142,7 +142,7 @@ private fun ImmichCard() {
             OutlinedButton(onClick = {
                 scope.launch {
                     g.settings.update { it.copy(immichToken = "", immichUserName = "", immichEmail = "", backupEnabled = false) }
-                    g.timelineCache.clear() // signed out: the saved timeline goes too
+                    g.forgetLibrary() // signed out: the saved timeline and thumbnails go too
                 }
             }) {
                 Text("Sign out")

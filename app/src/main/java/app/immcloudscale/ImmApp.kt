@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -76,6 +77,14 @@ class AppGraph(val context: Context) {
     }
     val offline = OfflineStore(context)
     val timelineCache = TimelineCache(context.noBackupFilesDir)
+
+    /** Forgets what the phone keeps of the photo library: the saved timeline and the cached thumbnails. */
+    suspend fun forgetLibrary() {
+        timelineCache.clear()
+        val loader = coil3.SingletonImageLoader.get(context)
+        loader.memoryCache?.clear()
+        withContext(Dispatchers.IO) { loader.diskCache?.clear() }
+    }
     val members = MembersClient(http) { settingsState.value }
 
     /** Pairs with an ImmCloudScale server, which answers with Immich, Nextcloud and remote access settings for this phone. */
@@ -166,6 +175,12 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
             .withIndex()
             // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.
             .onEach { (i, s) -> if (i > 0 || s.backupEnabled) BackupWorker.schedule(this, s) }
+            .launchIn(graph.scope)
+        // Another account or server (or signing out): the saved timeline and the thumbnails of the old one go.
+        graph.settingsState
+            .distinctUntilChanged { a, b -> a.immichUrl == b.immichUrl && a.immichEmail == b.immichEmail }
+            .withIndex()
+            .onEach { (i, _) -> if (i > 0) graph.forgetLibrary() }
             .launchIn(graph.scope)
         // Thumbnails downloaded ahead on Wi-Fi while charging, while wanted (see ThumbnailWorker).
         graph.settingsState

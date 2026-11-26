@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -91,15 +92,16 @@ fun AssetGrid(
         }
     }
     LaunchedEffect(nearEnd, sections.sumOf { it.assets.size }) { if (nearEnd) onLoadMore() }
-    // Fetch the thumbnails of the next screens ahead of the scroll, into the disk cache.
+    // Fetch the thumbnails of the next screens ahead of the scroll, into the disk cache; a new position cancels
+    // what's still queued for the old one, so a fast fling doesn't hold up the tiles on screen.
     val ctx = LocalContext.current
     val all = remember(sections) { sections.flatMap { it.assets } }
+    val indexOf = remember(all) { HashMap<String, Int>(all.size * 2).also { m -> all.forEachIndexed { i, a -> m[a.id] = i } } }
     val ahead by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key } }
-    LaunchedEffect(ahead, all) {
-        val key = ahead ?: return@LaunchedEffect
-        val at = all.indexOfFirst { it.id == key }
-        if (at < 0) return@LaunchedEffect
-        prefetch(ctx, all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) })
+    DisposableEffect(ahead, all) {
+        val at = (ahead as? String)?.let { indexOf[it] }
+        val batch = if (at == null) emptyList() else prefetch(ctx, all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) })
+        onDispose { batch.forEach { it.dispose() } }
     }
 
     LazyVerticalGrid(
@@ -243,17 +245,20 @@ fun AssetTile(
     }
 }
 
-private const val PREFETCH = 90
+private const val PREFETCH = 40
 
-/** Recently asked-for thumbnails, so scrolling back and forth doesn't ask again. */
+/** Thumbnails already fetched ahead this session, so scrolling back and forth doesn't ask again. */
 private val prefetched = java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>() {
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
 })
 
-private fun prefetch(ctx: android.content.Context, urls: List<String>) {
+private fun prefetch(ctx: android.content.Context, urls: List<String>): List<coil3.request.Disposable> {
     val loader = coil3.SingletonImageLoader.get(ctx)
-    urls.filter { it.startsWith("http") && prefetched.add(it) }.forEach { url ->
-        // Disk only: the memory cache keeps what's on screen.
-        loader.enqueue(coil3.request.ImageRequest.Builder(ctx).data(url).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build())
+    return urls.filter { it.startsWith("http") && it !in prefetched }.map { url ->
+        // Disk only: the memory cache keeps what's on screen. Remembered once it arrived (a failure is tried again).
+        loader.enqueue(
+            coil3.request.ImageRequest.Builder(ctx).data(url).memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
+                .listener(onSuccess = { _, _ -> prefetched.add(url) }).build(),
+        )
     }
 }

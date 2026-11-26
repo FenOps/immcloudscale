@@ -24,6 +24,23 @@ class TimelineTest {
         assertEquals(saved, mergeNewest(saved, emptyList()))
     }
 
+    @Test fun duplicatesNeverReachTheGrid() {
+        val saved = listOf(a("x", 18), a("x", 18), a("old", 10))
+        assertEquals(listOf("new", "x", "old"), mergeNewest(saved, listOf(a("new", 25), a("x", 18))).map { it.id })
+        assertEquals(listOf("x", "old"), mergeNewest(saved, emptyList()).map { it.id })
+    }
+
+    @Test fun savedPhotosSharingTheCutoffTimeStay() {
+        val merged = mergeNewest(listOf(a("same-time", 18), a("old", 10)), listOf(a("new", 25), a("x", 18)))
+        assertEquals(listOf("new", "x", "same-time", "old"), merged.map { it.id })
+    }
+
+    @Test fun phonePhotosMergeInByDate() {
+        val server = listOf(a("s3", 20), a("s2", 15), a("s1", 5))
+        val phone = listOf(a("local:9", 22), a("local:8", 10))
+        assertEquals(listOf("local:9", "s3", "s2", "local:8", "s1"), mergeByDate(server, phone).map { it.id })
+    }
+
     @Test fun theSavedTimelineRoundTripsPerAccountAndSlim() = runBlocking {
         val cache = TimelineCache(tmp.root)
         val full = AssetDto(

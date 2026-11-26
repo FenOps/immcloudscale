@@ -35,9 +35,11 @@ class ThumbnailWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
             if (disk.openSnapshot(url)?.use { true } == true) continue // already here
             val r = loader.execute(ImageRequest.Builder(applicationContext).data(url).memoryCachePolicy(CachePolicy.DISABLED).build())
             if (r is ErrorResult) {
-                if (++failed >= 20) return Result.retry() // the server isn't answering: try again later
+                // Many in a row: the server isn't answering, so later. A few here and there (gone since): skipped.
+                if (++failed >= 20) return Result.retry()
             } else {
                 fetched++
+                failed = 0
             }
         }
         return Result.success()

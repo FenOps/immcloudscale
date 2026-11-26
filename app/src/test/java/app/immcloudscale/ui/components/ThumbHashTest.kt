@@ -28,7 +28,10 @@ class ThumbHashTest {
         }
     }
 
-    @Test fun aDamagedHashDoesntCrash() {
-        runCatching { ThumbHash.decode(byteArrayOf(1, 2, 3, 4, 5)) } // too short: an image of sorts or an error, never a crash
+    @Test fun aDamagedHashGivesAnErrorNotAHalfDrawnPicture() {
+        // Too short: the decoder refuses (bitmap() turns that into "no preview"); a long enough one always decodes.
+        assertTrue(runCatching { ThumbHash.decode(byteArrayOf(1, 2, 3, 4, 5)) }.isFailure)
+        val junk = ThumbHash.decode(ByteArray(40) { (it * 37).toByte() })
+        assertTrue(junk.w in 1..32 && junk.h in 1..32 && junk.argb.size == junk.w * junk.h)
     }
 }

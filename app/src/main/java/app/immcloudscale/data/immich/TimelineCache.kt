@@ -1,6 +1,8 @@
 package app.immcloudscale.data.immich
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -18,6 +20,7 @@ class TimelineCache(private val dir: File) {
     data class Timeline(val assets: List<AssetDto>, val synced: Long)
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = false }
+    private val lock = Mutex() // one save (or clear) at a time
 
     private fun file(server: String, account: String): File {
         val h = MessageDigest.getInstance("SHA-256").digest("$server\u0000$account".toByteArray())
@@ -26,9 +29,12 @@ class TimelineCache(private val dir: File) {
     }
 
     suspend fun load(server: String, account: String): Timeline? = withContext(Dispatchers.IO) {
-        val f = file(server, account)
-        if (!f.exists()) return@withContext null
-        runCatching { json.decodeFromString(Saved.serializer(), f.readText()) }.getOrNull()?.let { Timeline(it.assets, it.synced) }
+        lock.withLock {
+            val f = file(server, account)
+            if (!f.exists()) return@withLock null
+            runCatching { json.decodeFromString(Saved.serializer(), f.readText()) }.getOrNull()
+                ?.let { Timeline(it.assets.distinctBy { a -> a.id }, it.synced) }
+        }
     }
 
     /** Saves [assets] (photos only on the phone are left out), keeping just what the grid needs. */
@@ -36,15 +42,17 @@ class TimelineCache(private val dir: File) {
         val slim = assets.filter { !it.isLocal }.map { a ->
             a.copy(people = emptyList(), exifInfo = a.exifInfo?.let { e -> ExifInfo(city = e.city, state = e.state, country = e.country) })
         }
-        dir.mkdirs()
-        val f = file(server, account)
-        val tmp = File(dir, f.name + ".tmp")
-        tmp.writeText(json.encodeToString(Saved.serializer(), Saved(synced, slim)))
-        tmp.renameTo(f)
+        lock.withLock {
+            dir.mkdirs()
+            val f = file(server, account)
+            val tmp = File.createTempFile(f.name, ".tmp", dir)
+            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(synced, slim.distinctBy { it.id })))
+            if (!tmp.renameTo(f)) tmp.delete()
+        }
     }
 
     /** Forgets every saved timeline (e.g. on signing out). */
     suspend fun clear() = withContext(Dispatchers.IO) {
-        dir.listFiles { f -> f.name.startsWith("timeline-") }?.forEach { it.delete() }
+        lock.withLock { dir.listFiles { f -> f.name.startsWith("timeline-") }?.forEach { it.delete() } }
     }
 }

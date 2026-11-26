@@ -37,6 +37,9 @@ import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.ErrorState
 import app.immcloudscale.ui.components.Pullable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.produceState
 
 /**
  * A photo grid screen with everything around it: pull to refresh, selection mode and its actions,
@@ -71,7 +74,10 @@ fun AssetBrowser(
     var collage by remember { mutableStateOf(false) }
     var confirmLock by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
-    val sections = remember(st.assets) { groupByDay(st.assets) }
+    // Grouping a large library into days takes a moment: done off the main thread.
+    val sections by produceState(groupByDay(st.assets.take(300)), st.assets) {
+        value = withContext(Dispatchers.Default) { groupByDay(st.assets) }
+    }
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
     BackHandler(st.selecting) { vm.clearSelection() }
