@@ -184,10 +184,10 @@ class ScreenshotTest {
     @Test fun backupStatus() = paparazzi.snapshot {
         ImmTheme(dark = false, dynamic = false) {
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                BackupWhereStatus(settings, atHome = true, TsState(TsStatus.Off), {}, compact = true)
-                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Connected), {}, compact = true)
-                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Starting), {})
-                BackupWhereStatus(settings.copy(tsEnabled = false), atHome = false, TsState(TsStatus.Off), {}, compact = true)
+                BackupWhereStatus(settings, atHome = true, TsState(TsStatus.Off), true, {}, compact = true)
+                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Connected), true, {}, compact = true)
+                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Starting), true, {}, compact = true)
+                BackupWhereStatus(settings.copy(tsEnabled = false), atHome = false, TsState(TsStatus.Off), true, {}, compact = true)
             }
         }
     }

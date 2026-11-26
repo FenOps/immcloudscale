@@ -7,6 +7,7 @@ import app.immcloudscale.data.tailscale.TsStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,7 +37,7 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
     init {
         checkServices()
         viewModelScope.launch { ts.collect { if (it.status == TsStatus.Connected) checkServices() } }
-        viewModelScope.launch { atHome.collect { checkServices() } }
+        viewModelScope.launch { atHome.drop(1).collect { checkServices() } }
     }
 
     fun checkServices() = viewModelScope.launch {

@@ -7,6 +7,9 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,6 +37,9 @@ class NetworkMonitor(
     private val networks = ConcurrentHashMap<Network, NetworkCapabilities>()
     @Volatile private var lastKey: String? = null
     private val decisions = Mutex()
+    private val _unmetered = MutableStateFlow(true)
+    /** The current network doesn't charge by the byte (Wi-Fi, usually): "Only on Wi-Fi" backup can run. */
+    val unmetered: StateFlow<Boolean> = _unmetered.asStateFlow()
 
     fun start() {
         if (registered) return
@@ -58,6 +64,7 @@ class NetworkMonitor(
             ?: all.firstOrNull { it.value.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) }
             ?: all.firstOrNull { it.value.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) }
             ?: all.firstOrNull()
+        _unmetered.value = current?.value?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
         val key = current?.key?.toString() ?: "none"
         if (key == lastKey) return
         lastKey = key

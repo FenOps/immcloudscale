@@ -306,6 +306,9 @@ home connection, with no router settings.
 
 ### Remote access with Tailscale
 
+(The server also sets up its own WireGuard VPN, shown as **Home VPN** in the console and as the "VPN" line in Step 3's box.
+The app doesn't use it any more, so you don't need to forward any port.)
+
 Tailscale is a free service that connects your phone to your server from anywhere. It runs **inside the ImmCloudScale app**,
 so you don't need the Tailscale app on your phone, and it works even when your internet provider shares one address
 between customers ("CGNAT"), where port forwarding can't.
@@ -376,6 +379,7 @@ or on the server `sudo ics-server user admin <name>`.
 | Phone: "That pairing code is wrong or has expired" | Make a new code in the admin console (**Pair a phone**). Codes last 15 minutes. |
 | Phone: "App not installed" | An older ImmCloudScale build signed with a different key is on the phone (for example version 0.1.0). Uninstall it first, then install again. Later versions update in place. |
 | Backup says "Only some photos can be backed up" | Tap **Open settings** → Permissions → Photos and videos → **Allow all**. |
+| No internet on the phone after updating to 0.3.3 | Older versions had their own VPN, which is gone. If Android's **Always-on VPN** was set to ImmCloudScale: Settings → Network & internet → VPN → ImmCloudScale's gear → turn **Always-on VPN** off. |
 | Works at home but not away | Check Step 6: `sudo ics-server tailscale` must say Tailscale is running, and the phone's **Network** tab must have **Connect away from home Wi-Fi** on. |
 
 **Ask Claude for help.** On the server, run `claude` and describe the problem, for example:

@@ -146,6 +146,7 @@ fun PhotosScreen(
     val settings by g.settingsState.collectAsStateWithLifecycle()
     val atHome by g.tailscale.home.collectAsStateWithLifecycle()
     val ts by g.tailscale.state.collectAsStateWithLifecycle()
+    val unmetered by g.network.unmetered.collectAsStateWithLifecycle()
     // Backup progress only matters once backup is on; don't start WorkManager before that.
     val work by remember(settings.backupEnabled) {
         if (settings.backupEnabled) {
@@ -169,7 +170,7 @@ fun PhotosScreen(
             )
             // Where backup runs right now, on the start page: the home Wi-Fi, or anywhere through Remote access.
             if (settings.immichConfigured && settings.backupEnabled) BackupWhereStatus(
-                settings, atHome, ts, onOpenNetwork, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), compact = true,
+                settings, atHome, ts, unmetered, onOpenNetwork, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), compact = true,
             )
         }
     }

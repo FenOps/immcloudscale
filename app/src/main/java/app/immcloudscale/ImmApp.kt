@@ -37,8 +37,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.withIndex
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -151,8 +151,7 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
         super.onCreate()
         graph = AppGraph(this)
         graph.network.start()
-        // Saving once removes what older versions stored for the WireGuard VPN, its private key included.
-        graph.scope.launch { graph.settings.update { it } }
+        graph.scope.launch { graph.settings.dropRetired() }
         // Reschedule backup with the settings that changed (not a separately collected copy, which can lag).
         graph.settingsState
             .distinctUntilChanged { a, b ->

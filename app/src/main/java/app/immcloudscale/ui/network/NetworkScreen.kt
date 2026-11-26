@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -114,14 +115,16 @@ fun NetworkContent(
 @Composable
 private fun ReachBadge(svc: ServiceCheck) {
     val (text, color) = when (svc.reach) {
-        Reach.Up -> "${svc.latencyMs} ms" to GoogleColors.Online
+        Reach.Up -> "${svc.latencyMs} ms" to Color(0xFF137333) // darker than the dot, for readable small text
         Reach.Down -> "Unreachable" to MaterialTheme.colorScheme.error
         Reach.Checking -> "Checking…" to MaterialTheme.colorScheme.onSurfaceVariant
         Reach.NotSetUp -> "—" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (svc.reach == Reach.Up || svc.reach == Reach.Down) Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(6.dp))
+        if (svc.reach == Reach.Up || svc.reach == Reach.Down) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (svc.reach == Reach.Up) GoogleColors.Online else color))
+            Spacer(Modifier.width(6.dp))
+        }
         Text(text, color = color, style = MaterialTheme.typography.labelMedium)
     }
 }

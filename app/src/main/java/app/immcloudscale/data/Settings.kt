@@ -42,7 +42,7 @@ data class AppSettings(
     val tsControlUrl: String = "",
 
     val backupEnabled: Boolean = false,
-    val backupWifiOnly: Boolean = true,
+    val backupWifiOnly: Boolean = false,
     val backupChargingOnly: Boolean = false,
     val backupVideos: Boolean = true,
     val backupFolders: Set<String> = emptySet(),
@@ -108,7 +108,7 @@ class SettingsStore(private val context: Context) {
         val ncUser = stringPreferencesKey("nc_user")
         val ncPass = stringPreferencesKey("nc_pass")
         val ncUserId = stringPreferencesKey("nc_user_id")
-        /** Left by versions with the WireGuard VPN (and the backup "where" choice): removed on the next save. */
+        /** Left by versions with the WireGuard VPN (and the backup "where" choice); see [SettingsStore.dropRetired]. */
         val retired = listOf(
             stringPreferencesKey("vpn_config"), booleanPreferencesKey("vpn_full"), stringSetPreferencesKey("vpn_excluded"),
             booleanPreferencesKey("vpn_auto"), stringSetPreferencesKey("vpn_trusted"), booleanPreferencesKey("backup_anywhere"),
@@ -161,7 +161,7 @@ class SettingsStore(private val context: Context) {
             ncAppPassword = p[K.ncPass] ?: "",
             ncUserId = p[K.ncUserId] ?: "",
             backupEnabled = p[K.backupEnabled] ?: false,
-            backupWifiOnly = p[K.backupWifi] ?: true,
+            backupWifiOnly = p[K.backupWifi] ?: false,
             backupChargingOnly = p[K.backupCharging] ?: false,
             backupVideos = p[K.backupVideos] ?: true,
             backupFolders = p[K.backupFolders] ?: emptySet(),
@@ -211,6 +211,18 @@ class SettingsStore(private val context: Context) {
     // Serialised so the in-memory copy always ends up equal to the newest saved settings.
     suspend fun update(block: (AppSettings) -> AppSettings) = writeLock.withLock { save(block) }
 
+    /**
+     * Once, after updating from a version with the WireGuard VPN: removes what it stored (its private key included).
+     * Backup then runs on mobile data too, as it now runs anywhere; "Only on Wi-Fi" turns that off again.
+     */
+    suspend fun dropRetired() = writeLock.withLock {
+        if (context.dataStore.data.first().asMap().keys.none { it in K.retired }) return@withLock
+        context.dataStore.edit { p ->
+            K.retired.forEach { p.remove(it) }
+            p[K.backupWifi] = false
+        }
+    }
+
     private suspend fun save(block: (AppSettings) -> AppSettings) {
         var saved: AppSettings? = null
         context.dataStore.edit { p ->
@@ -226,7 +238,6 @@ class SettingsStore(private val context: Context) {
             p[K.immichApiKey] = n.immichTokenIsApiKey; p[K.immichUserName] = n.immichUserName
             p[K.immichEmail] = n.immichEmail
             p[K.ncUrl] = n.ncUrl; p[K.ncUser] = n.ncUser; p[K.ncPass] = n.ncAppPassword; p[K.ncUserId] = n.ncUserId
-            K.retired.forEach { p.remove(it) }
             p[K.backupEnabled] = n.backupEnabled; p[K.backupWifi] = n.backupWifiOnly
             p[K.backupCharging] = n.backupChargingOnly; p[K.backupVideos] = n.backupVideos
             p[K.backupFolders] = n.backupFolders; p[K.backupSince] = n.backupSince

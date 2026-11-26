@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.PublicOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,10 +26,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.tailscale.TsState
@@ -51,6 +56,14 @@ fun remoteAccessAvailable(s: AppSettings) = s.pairedServer.isNotBlank() || s.tsS
  */
 @Composable
 fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAccessActions) {
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if (confirmSignOut) AlertDialog(
+        onDismissRequest = { confirmSignOut = false },
+        title = { Text("Sign out of Tailscale?") },
+        text = { Text("You'll need to sign in again to back up and see your photos away from home.") },
+        confirmButton = { TextButton(onClick = { confirmSignOut = false; a.onSignOut() }) { Text("Sign out") } },
+        dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
+    )
     val connected = ts.status == TsStatus.Connected
     val (icon, title, detail) = when {
         s.tsServerIp.isBlank() -> Triple(
@@ -81,18 +94,18 @@ fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAcce
                 }
             }
             Text(detail, style = MaterialTheme.typography.bodyMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.toggleable(s.tsEnabled, enabled = s.tsServerIp.isNotBlank(), role = Role.Switch, onValueChange = a.onEnabled),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
                     Text("Connect away from home Wi-Fi", style = MaterialTheme.typography.bodyLarge)
-                    Text(
+                    if (!s.tsEnabled) Text(
                         "Turn this on to back up and see your photos and files when you're not on your home Wi-Fi.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(
-                    s.tsEnabled, a.onEnabled, enabled = s.tsServerIp.isNotBlank(),
-                    modifier = Modifier.semantics { contentDescription = "Connect away from home Wi-Fi" },
-                )
+                Switch(s.tsEnabled, onCheckedChange = null, enabled = s.tsServerIp.isNotBlank())
             }
             if (s.tsServerIp.isNotBlank()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
@@ -101,7 +114,7 @@ fun RemoteAccessCard(ts: TsState, s: AppSettings, atHome: Boolean, a: RemoteAcce
                     connected -> OutlinedButton(onClick = a.onDisconnect) { Text("Disconnect") }
                     ts.status != TsStatus.Starting && !atHome -> OutlinedButton(onClick = a.onConnect) { Text("Connect now") }
                 }
-                if (s.tsAuthKey.isBlank() && (connected || ts.status == TsStatus.Off)) TextButton(onClick = a.onSignOut) { Text("Sign out of Tailscale") }
+                if (s.tsAuthKey.isBlank() && (connected || ts.status == TsStatus.Off)) TextButton(onClick = { confirmSignOut = true }) { Text("Sign out of Tailscale") }
             }
         }
     }
