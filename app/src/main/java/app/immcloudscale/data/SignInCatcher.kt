@@ -1,8 +1,9 @@
 package app.immcloudscale.data
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -24,19 +25,25 @@ class SignInCatcher(private val port: Int = 53682) {
      * Waits for the browser and returns the address it opened, or null when stopped or the port is taken. Cancelling
      * the wait (a new attempt, the dialog closing) frees the port straight away.
      */
-    suspend fun await(): String? = coroutineScope {
-        if (stopped) return@coroutineScope null
-        val server = withContext(Dispatchers.IO) {
-            runCatching { ServerSocket(port, 4, InetAddress.getByName("127.0.0.1")) }.getOrNull()
-        } ?: return@coroutineScope null
-        socket = server
-        // accept() blocks a thread that cancelling can't interrupt; closing the socket does.
-        val closer = launch { try { awaitCancellation() } finally { runCatching { server.close() } } }
+    suspend fun await(): String? = withContext(Dispatchers.IO) {
+        if (stopped) return@withContext null
+        // The previous attempt may let go of the port a moment after this one starts.
+        var server: ServerSocket? = null
+        for (i in 0 until 5) {
+            server = runCatching { ServerSocket(port, 4, InetAddress.getByName("127.0.0.1")) }.getOrNull()
+            if (server != null) break
+            delay(100)
+        }
+        val srv = server ?: return@withContext null
+        socket = srv
+        // accept() blocks a thread that cancelling can't interrupt; closing the socket does. Started undispatched,
+        // so its finally is registered before anything else can happen, even if the wait is already cancelled.
+        val closer = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { runCatching { srv.close() } } }
         try {
-            if (stopped) null else withContext(Dispatchers.IO) { acceptUntilDone(server) }
+            if (stopped) null else acceptUntilDone(srv)
         } finally {
             closer.cancel()
-            runCatching { server.close() }
+            runCatching { srv.close() }
         }
     }
 
