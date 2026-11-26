@@ -166,14 +166,17 @@ class AppGuiTest {
         }
     }
 
-    /** Away from home Wi-Fi: the server doesn't answer and remote access is on. The app must not close. */
+    /**
+     * Away from home Wi-Fi: the server doesn't answer and remote access can't start. The screens must still work.
+     * (Tailscale itself can't run here; tsbridge_test.go covers it starting the way it does on a phone.)
+     */
     @Test fun awayFromHome() {
         val g = ApplicationProvider.getApplicationContext<ImmApp>().graph
         val away = "http://127.0.0.1:9"
         runBlocking {
             g.settings.update {
                 it.copy(
-                    immichUrl = "$away", immichToken = "demo", immichTokenIsApiKey = true, immichUserName = "Camille Martin",
+                    immichUrl = away, immichToken = "demo", immichTokenIsApiKey = true, immichUserName = "Camille Martin",
                     ncUrl = "$away/nc", ncUser = "camille", ncAppPassword = "demo", ncUserId = "camille",
                     vpnConfig = DEMO_VPN, vpnAutoConnect = true, backupEnabled = true, backupAnywhere = true,
                     pairedServer = away, pairedServerName = "homeserver", pairedServerId = "ics_home",
