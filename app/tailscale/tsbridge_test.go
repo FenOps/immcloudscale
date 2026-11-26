@@ -203,3 +203,25 @@ func TestPairThroughAnInvite(t *testing.T) {
 	}
 	t.Log("paired through Tailscale")
 }
+
+// TestStartsWithoutAHomeOrTempDirectory starts the bridge the way an Android app runs it: no home, cache or temp
+// directory, and "/" as the working directory. Only the identity directory it's given is writable.
+func TestStartsWithoutAHomeOrTempDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if f, err := os.CreateTemp("/var/lib", "w"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("run as a user who can't write to /var/lib (like an Android app)")
+	}
+	for _, k := range []string{"HOME", "XDG_CACHE_HOME", "STATE_DIRECTORY", "TS_LOGS_DIR"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("TMPDIR", "/nonexistent")
+	wd, _ := os.Getwd()
+	os.Chdir("/")
+	defer os.Chdir(wd)
+	if err := Start(dir, "test-phone", "", "http://127.0.0.1:9"); err != nil {
+		t.Fatal(err)
+	}
+	Stop()
+}

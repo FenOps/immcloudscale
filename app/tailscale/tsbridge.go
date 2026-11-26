@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +47,9 @@ func Start(dir, hostname, authKey, controlURL string) error {
 	if srv != nil {
 		return nil
 	}
+	if err := useAppDirs(dir); err != nil {
+		return err
+	}
 	s := &tsnet.Server{
 		Dir:      dir,
 		Hostname: hostname,
@@ -71,6 +76,27 @@ func Start(dir, hostname, authKey, controlURL string) error {
 	}
 	srv, ln, token = s, l, hex.EncodeToString(b)
 	go http.Serve(l, proxy(s, token))
+	return nil
+}
+
+// useAppDirs gives Tailscale places to write inside the app's own storage. An Android app has no home, cache or
+// writable temp directory, and without them Tailscale's log setup panics ("no safe place found to store log state").
+func useAppDirs(dir string) error {
+	logs := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		return err
+	}
+	os.Setenv("TS_LOGS_DIR", logs)
+	if f, err := os.CreateTemp("", "probe"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		return nil
+	}
+	tmp := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return err
+	}
+	os.Setenv("TMPDIR", tmp)
 	return nil
 }
 
