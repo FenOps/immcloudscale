@@ -66,6 +66,12 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
   behind CGNAT. It connects by itself when you leave the home Wi-Fi and stops when you're back
 * Live health checks of your Immich and Nextcloud servers with latency
 
+### Import from Google
+* Copies each connected Google account's Drive into Files and keeps it in sync (rclone, read-only access)
+* Imports Google Photos from Takeout exports, delivered to Drive or dropped in a folder (immich-go): dates, places and
+  albums kept, duplicates skipped
+* A "Move to your own NAS" checklist, with reminders until Google Photos backup is off
+
 ### Across the app
 * Google-style account card: who you are on each server, backup status, photo and file storage bars, remote access
 * "Share to ImmCloudScale" from any app: photos and videos go to Immich, other files to Nextcloud

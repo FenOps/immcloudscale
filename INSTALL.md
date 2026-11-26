@@ -367,6 +367,35 @@ or on the server `sudo ics-server user admin <name>`.
 
 ---
 
+## Move from Google (optional)
+
+Bring your Google Drive and Google Photos to your server, from as many Google accounts as you like. In the app:
+**Account → Import from Google**. Nothing is deleted from Google.
+
+**1. A Google API key (once, about 10 minutes, admins only).** Google asks every home server for its own free key.
+1. Open [console.cloud.google.com](https://console.cloud.google.com) and create a project (any name).
+2. **APIs & Services → Library**: turn on **Google Drive API**.
+3. **Google Auth Platform → Branding**: app name `ImmCloudScale` and your email. **Audience**: External, then **Publish app**.
+4. **Clients → Create client → Desktop app**. Paste its client ID and secret in the app, or on the server:
+   `sudo ics-server google-key --client-id <id> --client-secret <secret>`
+
+**2. Connect each Google account** (Connect a Google account). Google may say the app isn't verified: it's your own
+key, so tap **Advanced → Go to ImmCloudScale**. After you allow access the browser shows a page that doesn't load:
+copy its address into the app. The Drive is copied into Files → **Google Drive (your address)** and checked for changes
+every 6 hours. Google Docs, Sheets and Slides arrive as Word, Excel and PowerPoint files.
+
+The first time, the server spends a few minutes (longer on a small machine) getting its import tools ready.
+
+**3. Photos.** Google lets photos leave only through **Google Takeout**: at [takeout.google.com](https://takeout.google.com),
+select only **Google Photos**, choose delivery **Add to Drive**, `.zip`, **50 GB**, and create the export. When it lands
+in that account's Drive, the server imports it by itself: dates, places and albums are kept, every photo is tagged
+**From Google**, and photos already on the server are skipped. (Delivered another way? Put the zip files in
+Files → **Google Takeout**.)
+
+**4. Move to your own NAS.** Google doesn't let other apps switch off its backup, so the app shows a checklist (and
+reminds you every few days): turn off **Google Photos backup** on every phone, stop **Google Drive for desktop** on
+your computers, and check everything arrived before deleting anything in Google.
+
 ## Troubleshooting
 
 | Problem | What to do |
