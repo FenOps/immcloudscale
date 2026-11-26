@@ -318,17 +318,37 @@ func (s *Server) googleRound(ctx context.Context) {
 		}
 	}
 	if len(due) == 0 && len(exports) == 0 {
+		s.keepRetries(retry, nil)
 		return
 	}
 	if !s.ensureTools(ctx) {
+		s.keepRetries(retry, nil)
 		return
 	}
 	for _, a := range due {
 		s.syncDrive(ctx, a)
 	}
 	// Looked for again: the Drive copies may have brought archives (imported once they've settled).
+	tried := map[string]bool{}
 	for _, e := range s.pendingExports(s.Store.Read(), retry) {
 		s.importExport(ctx, e)
+		tried[e.person] = true
+	}
+	s.keepRetries(retry, tried)
+}
+
+// keepRetries keeps "Try again" requests that no export answered yet (still settling, say) for the next round.
+func (s *Server) keepRetries(retry, tried map[string]bool) {
+	s.googleMu.Lock()
+	defer s.googleMu.Unlock()
+	for p := range retry {
+		if tried[p] {
+			continue
+		}
+		if s.work.retry == nil {
+			s.work.retry = map[string]bool{}
+		}
+		s.work.retry[p] = true
 	}
 }
 

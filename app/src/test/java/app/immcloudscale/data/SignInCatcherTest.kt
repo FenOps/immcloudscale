@@ -54,4 +54,16 @@ class SignInCatcherTest {
         get("http://127.0.0.1:53784/?state=s&code=c")
         assertEquals("http://127.0.0.1:53784/?state=s&code=c", caught.await())
     }
+
+    @Test fun aNewAttemptCatchesAfterTheOldOneIsAbandoned() = runBlocking {
+        val catcher = SignInCatcher(port = 53785)
+        val first = async { catcher.await() }
+        delay(300)
+        first.cancel() // "Open sign-in again"
+        delay(200)
+        val second = async { catcher.await() }
+        delay(300)
+        get("http://127.0.0.1:53785/?state=s2&code=c2")
+        assertEquals("http://127.0.0.1:53785/?state=s2&code=c2", second.await())
+    }
 }

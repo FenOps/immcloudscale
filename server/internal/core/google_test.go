@@ -455,3 +455,22 @@ func TestRemovingAnAccountKeepsTheFiles(t *testing.T) {
 	}
 	_ = state.State{}
 }
+
+func TestAnExportWithoutPhotosSaysSo(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	f := withGoogle(t, s)
+	c := withClock(s)
+	f.report = "Asset Tracking Report:\nTotal Assets:          0  (0 B)\n  Errors:              0  (0 B)\n"
+	p := filepath.Join(filesRoot(s.Store.Read().Config, "camille"), TakeoutFolder, "takeout-20251126T101500Z-001.zip")
+	put(t, p)
+	s.googleRound(context.Background())
+	c.tick(31 * time.Minute)
+	s.googleRound(context.Background())
+	im := s.Store.Read().Imports
+	if len(im) != 1 || !strings.Contains(im[0].Error, "no photos") {
+		t.Fatalf("%+v", im)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("the archive was deleted")
+	}
+}
