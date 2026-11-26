@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/FenOps/immcloudscale/server/internal/google"
 	"github.com/FenOps/immcloudscale/server/internal/immich"
 	"github.com/FenOps/immcloudscale/server/internal/nextcloud"
 	"github.com/FenOps/immcloudscale/server/internal/stack"
@@ -47,6 +48,14 @@ type Server struct {
 	codesMu   sync.Mutex
 	inflight  map[string]bool
 	cancelled map[string]bool
+
+	// Moving away from Google (see google.go). Google nil means no tools here (tests that don't need them).
+	Google         *google.Tools
+	GoogleTokenURL string
+	googleMu       sync.Mutex
+	logins         map[string]googleLogin
+	work           googleWork
+	kick           chan struct{}
 
 	tokMu      sync.Mutex
 	tok        string
@@ -94,6 +103,7 @@ func New(st *state.Store) *Server {
 		WaitTimeout:  20 * time.Minute,
 		PortFree:     PortFree,
 		TailscaleIP:  cachedTailscaleIP(tailscaleIPCmd),
+		Google:       google.NewTools("/var/lib/immcloudscale/tools", "/var/cache/immcloudscale"),
 	}
 }
 

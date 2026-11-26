@@ -157,6 +157,71 @@ func (h *Handler) Routes() http.Handler {
 		}
 		w.WriteHeader(204)
 	}))
+	// Moving away from Google: each person connects their own accounts; admins add the Google API key.
+	mux.Handle("GET /api/v1/me/google", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.GoogleStatus(u.Name))
+	}))
+	mux.Handle("POST /api/v1/manage/google/key", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ ClientID, ClientSecret string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if err := h.S.SetGoogleKey(in.ClientID, in.ClientSecret); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	mux.Handle("POST /api/v1/me/google/connect", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ For string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		owner := strings.ToLower(strings.TrimSpace(in.For))
+		if owner == "" {
+			owner = u.Name
+		}
+		if owner != u.Name && !u.IsAdmin {
+			writeErr(w, 403, core.ErrNotAdmin)
+			return
+		}
+		link, err := h.S.StartGoogleLogin(u.Name, owner)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"url": link})
+	}))
+	mux.Handle("POST /api/v1/me/google/finish", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ URL string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		a, err := h.S.FinishGoogleLogin(r.Context(), u.Name, in.URL)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 201, a)
+	}))
+	mux.Handle("POST /api/v1/me/google/accounts/{id}/sync", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		if err := h.S.SyncGoogleNow(u.Name, r.PathValue("id")); err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		w.WriteHeader(202)
+	}))
+	mux.Handle("DELETE /api/v1/me/google/accounts/{id}", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		if err := h.S.RemoveGoogle(u.Name, r.PathValue("id"), u.IsAdmin); err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	mux.Handle("POST /api/v1/me/google/import", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		h.S.ImportNow()
+		w.WriteHeader(202)
+	}))
 	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
 		writeJSON(w, 200, h.S.Requests())
 	}))

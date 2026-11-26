@@ -91,14 +91,47 @@ type Config struct {
 	// Handed to phones at pairing so the app joins the tailnet without a sign-in (optional).
 	TailscaleAuthKey    string `json:"tailscaleAuthKey,omitempty"`
 	TailscaleControlURL string `json:"tailscaleControlUrl,omitempty"`
+
+	// The person's own Google API key (a "Desktop app" OAuth client), needed to read Google Drive.
+	GoogleClientID     string `json:"googleClientId,omitempty"`
+	GoogleClientSecret string `json:"googleClientSecret,omitempty"`
+}
+
+// GoogleAccount is a Google account whose Drive is copied into a person's files.
+type GoogleAccount struct {
+	ID     string    `json:"id"`
+	Email  string    `json:"email"`
+	Person string    `json:"person"`
+	Token  string    `json:"token"` // rclone's token: read-only access to the Drive
+	Added  time.Time `json:"added"`
+	Synced time.Time `json:"synced,omitempty"`
+	Error  string    `json:"error,omitempty"`
+	Files  int       `json:"files"`
+	Bytes  int64     `json:"bytes"`
+	// Takeout archives in the Drive that were imported and removed here, so syncing doesn't fetch them again.
+	SkipTakeout []string `json:"skipTakeout,omitempty"`
+}
+
+// TakeoutImport is one Google Takeout export imported into a person's photos.
+type TakeoutImport struct {
+	Person     string    `json:"person"`
+	Export     string    `json:"export"` // e.g. "takeout-20251126T101500Z", its archives' common name
+	Source     string    `json:"source"` // the Google account or folder it came from
+	At         time.Time `json:"at"`
+	Imported   int       `json:"imported"`
+	Duplicates int       `json:"duplicates"`
+	Errors     int       `json:"errors"`
+	Error      string    `json:"error,omitempty"`
 }
 
 type State struct {
-	Config   Config        `json:"config"`
-	Users    []User        `json:"users"`
-	Devices  []Device      `json:"devices"`
-	Pairings []Pairing     `json:"pairings"`
-	Requests []JoinRequest `json:"joinRequests,omitempty"`
+	Config   Config          `json:"config"`
+	Users    []User          `json:"users"`
+	Devices  []Device        `json:"devices"`
+	Pairings []Pairing       `json:"pairings"`
+	Requests []JoinRequest   `json:"joinRequests,omitempty"`
+	Google   []GoogleAccount `json:"google,omitempty"`
+	Imports  []TakeoutImport `json:"takeoutImports,omitempty"`
 }
 
 // Store serialises access to the state file.

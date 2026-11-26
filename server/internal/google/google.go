@@ -345,6 +345,8 @@ func (t *Tools) ImportTakeout(ctx context.Context, server, apiKey, tag string, z
 	args := []string{
 		"upload", "from-google-photos", "--server=" + server, "--no-ui", "--pause-immich-jobs=false",
 		"--on-errors=continue", "--log-file=" + logFile.Name(), "--tag=" + tag,
+		// Photos whose details are missing are imported too (with the date from the file), so nothing is left behind.
+		"--include-unmatched",
 	}
 	// The key goes in the environment, where other users on the machine can't read it from the process list.
 	out, err := t.Run(ctx, []string{"IMMICH_GO_UPLOAD_API_KEY=" + apiKey}, t.path("immich-go"), append(args, zips...)...)
