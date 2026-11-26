@@ -141,8 +141,8 @@ private fun ImmichCard() {
         if (s.immichConfigured) {
             OutlinedButton(onClick = {
                 scope.launch {
+                    // Signing out also forgets the saved timeline and thumbnails (see ImmApp).
                     g.settings.update { it.copy(immichToken = "", immichUserName = "", immichEmail = "", backupEnabled = false) }
-                    g.forgetLibrary() // signed out: the saved timeline and thumbnails go too
                 }
             }) {
                 Text("Sign out")

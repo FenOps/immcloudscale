@@ -12,6 +12,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.SharingStarted
+import app.immcloudscale.data.immich.groupByDay
+import app.immcloudscale.data.immich.DaySection
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -37,6 +42,11 @@ data class AssetListState(
 class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : ViewModel() {
     private val _state = MutableStateFlow(AssetListState())
     val state: StateFlow<AssetListState> = _state.asStateFlow()
+    /** The assets grouped into days, worked out off the main thread whenever they change (ready on return to the screen). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val sections: StateFlow<List<DaySection>> = _state.map { it.assets }.distinctUntilChanged()
+        .mapLatest { withContext(Dispatchers.Default) { groupByDay(it) } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private var page = 1
     private var job: Job? = null
     private var loadedAt = 0L
@@ -120,13 +130,15 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
             // Another account or server: nothing of the previous one may show or be saved under this one.
             listKey = key
             fullSyncAt = 0
-            _state.update { it.copy(assets = emptyList(), selected = emptySet()) }
+            _state.update { it.copy(assets = emptyList(), memories = emptyList(), selected = emptySet()) }
         }
         removedMeanwhile.clear()
         editedMeanwhile.clear()
         job = viewModelScope.launch {
             var known = _state.value.assets.filter { !it.isLocal }
-            if (known.isEmpty()) graph.timelineCache.load(key.first, key.second)?.let { saved ->
+            // Without the account's address yet (mid sign-in), nothing is loaded or saved: it could be someone else's.
+            val keyed = key.second.isNotBlank()
+            if (known.isEmpty() && keyed) graph.timelineCache.load(key.first, key.second)?.let { saved ->
                 known = saved.assets
                 fullSyncAt = saved.synced
             }
@@ -136,6 +148,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
             try {
                 val head = graph.immich.assets(query, 1, HEAD).items
                 known = withContext(Dispatchers.Default) { mergeNewest(known, head) }
+                pending = runCatching { pendingOnPhone(known) }.getOrDefault(emptyList()) // just backed up: not pending any more
                 show(known)
                 if (System.currentTimeMillis() - fullSyncAt > FULL_EVERY || known.size <= head.size) {
                     val all = withContext(Dispatchers.Default) {
@@ -154,7 +167,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                     pending = runCatching { pendingOnPhone(known) }.getOrDefault(emptyList())
                     show(known)
                 }
-                if (cacheKey() == key) graph.timelineCache.save(key.first, key.second, _state.value.assets, fullSyncAt)
+                if (keyed && cacheKey() == key) graph.timelineCache.save(key.first, key.second, _state.value.assets, fullSyncAt)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // With a saved timeline there's still something to show: only say so when there's nothing.
@@ -177,10 +190,10 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         if (!s.backupEnabled) return@withContext emptyList()
         val mine = PhoneCopies.deviceId(graph.context)
         val done = server.asSequence().filter { it.deviceId == mine }.map { it.deviceAssetId }.toHashSet()
-        // Already on the server under the same name (from another app, or skipped by backup as a duplicate).
-        val names = server.asSequence().map { it.originalFileName.lowercase() }.toHashSet()
+        // Already on the server under the same name and day (from another app, or skipped by backup as a duplicate).
+        val named = server.asSequence().map { it.originalFileName.lowercase() + "|" + it.fileCreatedAt.take(10) }.toHashSet()
         LocalMediaSource.query(graph.context, s.backupSince, s.backupVideos, s.backupFolders)
-            .filter { m -> "${m.id}-${m.size}" !in done && m.name.lowercase() !in names }
+            .filter { m -> "${m.id}-${m.size}" !in done }
             .map { m ->
                 AssetDto(
                     id = "local:${m.id}", type = if (m.mime.startsWith("video")) "VIDEO" else "IMAGE", originalFileName = m.name,
@@ -188,13 +201,14 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                     localUri = m.uri.toString(),
                 )
             }
-            .sortedByDescending { it.fileCreatedAt }
+            .filter { a -> a.originalFileName.lowercase() + "|" + a.fileCreatedAt.take(10) !in named }
+            .sortedByDescending { it.takenAt() }
     }
 
     private fun persist() {
         if (!timeline) return
         val key = listKey ?: return
-        if (key != cacheKey()) return
+        if (key != cacheKey() || key.second.isBlank()) return
         val assets = _state.value.assets
         viewModelScope.launch { runCatching { graph.timelineCache.save(key.first, key.second, assets, fullSyncAt) } }
     }

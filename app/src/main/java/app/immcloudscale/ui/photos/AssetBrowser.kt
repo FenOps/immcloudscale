@@ -30,15 +30,12 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
-import app.immcloudscale.data.immich.groupByDay
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.CenteredLoading
 import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.ErrorState
 import app.immcloudscale.ui.components.Pullable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 
 /**
  * A photo grid screen with everything around it: pull to refresh, selection mode and its actions,
@@ -74,8 +71,7 @@ fun AssetBrowser(
     var confirmLock by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
     // Grouping a large library into days takes a moment: done off the main thread.
-    var sections by remember { mutableStateOf(groupByDay(st.assets.take(300))) }
-    LaunchedEffect(st.assets) { sections = withContext(Dispatchers.Default) { groupByDay(st.assets) } }
+    val sections by vm.sections.collectAsStateWithLifecycle()
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
     BackHandler(st.selecting) { vm.clearSelection() }

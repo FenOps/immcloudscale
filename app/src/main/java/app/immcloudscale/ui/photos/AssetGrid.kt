@@ -98,11 +98,15 @@ fun AssetGrid(
     val all = remember(sections) { sections.flatMap { it.assets } }
     val indexOf = remember(all) { HashMap<String, Int>(all.size * 2).also { m -> all.forEachIndexed { i, a -> m[a.id] = i } } }
     val ahead by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key } }
-    DisposableEffect(ahead, all) {
-        val at = (ahead as? String)?.let { indexOf[it] }
-        val batch = if (at == null) emptyList() else prefetch(ctx, all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) })
-        onDispose { batch.forEach { it.dispose() } }
+    val running = remember { HashMap<String, coil3.request.Disposable>() }
+    LaunchedEffect(ahead, all) {
+        val at = (ahead as? String)?.let { indexOf[it] } ?: return@LaunchedEffect
+        val window = all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) }.toSet()
+        // Downloads still ahead keep going; those scrolled past are cancelled.
+        running.keys.filter { it !in window }.forEach { running.remove(it)?.dispose() }
+        prefetch(ctx, window.filter { it !in running }).forEach { (url, d) -> running[url] = d }
     }
+    DisposableEffect(Unit) { onDispose { running.values.forEach { it.dispose() }; running.clear() } }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -252,13 +256,16 @@ private val prefetched = java.util.Collections.newSetFromMap(object : java.util.
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
 })
 
-private fun prefetch(ctx: android.content.Context, urls: List<String>): List<coil3.request.Disposable> {
+/** Forgets what was fetched ahead (the image cache was cleared). */
+internal fun forgetPrefetched() = prefetched.clear()
+
+private fun prefetch(ctx: android.content.Context, urls: List<String>): List<Pair<String, coil3.request.Disposable>> {
     val loader = coil3.SingletonImageLoader.get(ctx)
     return urls.filter { it.startsWith("http") && it !in prefetched }.map { url ->
         // Disk only: the memory cache keeps what's on screen. Remembered once it arrived (a failure is tried again).
         loader.enqueue(
             coil3.request.ImageRequest.Builder(ctx).data(url).memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
                 .listener(onSuccess = { _, _ -> prefetched.add(url) }).build(),
-        )
+        ).let { url to it }
     }
 }

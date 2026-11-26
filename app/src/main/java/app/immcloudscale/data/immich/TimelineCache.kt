@@ -46,8 +46,12 @@ class TimelineCache(private val dir: File) {
             dir.mkdirs()
             val f = file(server, account)
             val tmp = File.createTempFile(f.name, ".tmp", dir)
-            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(synced, slim.distinctBy { it.id })))
-            if (!tmp.renameTo(f)) tmp.delete()
+            try {
+                tmp.writeText(json.encodeToString(Saved.serializer(), Saved(synced, slim.distinctBy { it.id })))
+                tmp.renameTo(f)
+            } finally {
+                tmp.delete() // a no-op once renamed
+            }
         }
     }
 

@@ -81,6 +81,7 @@ class AppGraph(val context: Context) {
     /** Forgets what the phone keeps of the photo library: the saved timeline and the cached thumbnails. */
     suspend fun forgetLibrary() {
         timelineCache.clear()
+        app.immcloudscale.ui.photos.forgetPrefetched()
         val loader = coil3.SingletonImageLoader.get(context)
         loader.memoryCache?.clear()
         withContext(Dispatchers.IO) { loader.diskCache?.clear() }
