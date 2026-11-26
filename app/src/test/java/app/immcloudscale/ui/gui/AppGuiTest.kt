@@ -93,7 +93,7 @@ class AppGuiTest {
                     immichUrl = home.base, immichToken = "demo", immichTokenIsApiKey = true,
                     immichUserName = "Camille Martin", immichEmail = "camille@example.com",
                     ncUrl = home.base + "/nc", ncUser = "camille", ncAppPassword = "demo", ncUserId = "camille",
-                    vpnConfig = DEMO_VPN, backupEnabled = true, lastBackupAt = System.currentTimeMillis() - 4 * 60_000,
+                    backupEnabled = true, lastBackupAt = System.currentTimeMillis() - 4 * 60_000,
                     pairedServer = home.base, pairedServerName = "homeserver",
                 )
             }
@@ -178,7 +178,7 @@ class AppGuiTest {
                 it.copy(
                     immichUrl = away, immichToken = "demo", immichTokenIsApiKey = true, immichUserName = "Camille Martin",
                     ncUrl = "$away/nc", ncUser = "camille", ncAppPassword = "demo", ncUserId = "camille",
-                    vpnConfig = DEMO_VPN, vpnAutoConnect = true, backupEnabled = true, backupAnywhere = true,
+                    backupEnabled = true,
                     pairedServer = away, pairedServerName = "homeserver", pairedServerId = "ics_home",
                     tsEnabled = true, tsServerIp = "100.64.0.1", tsAuthKey = "tskey-auth-demo",
                     deviceToken = "t", pairedDeviceId = "dev_x",
@@ -205,8 +205,8 @@ class AppGuiTest {
         runBlocking {
             g.settings.update {
                 it.copy(
-                    vpnConfig = "", pairedServerId = "ics_demo", pairedDeviceId = "dev_demo", deviceToken = "demo", isAdmin = true,
-                    tsServerIp = "100.101.102.103", tsEnabled = true, backupAnywhere = true,
+                    pairedServerId = "ics_demo", pairedDeviceId = "dev_demo", deviceToken = "demo", isAdmin = true,
+                    tsServerIp = "100.101.102.103", tsEnabled = true,
                 )
             }
         }
@@ -302,19 +302,5 @@ class AppGuiTest {
             tab("Files")
             shot("14-files-dark")
         }
-    }
-
-    companion object {
-        val DEMO_VPN = """
-            [Interface]
-            PrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=
-            Address = 10.8.0.2/32
-            # Name = homeserver
-            [Peer]
-            PublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=
-            AllowedIPs = 10.8.0.0/24, 192.168.1.0/24
-            Endpoint = myhome.duckdns.org:51820
-            PersistentKeepalive = 25
-        """.trimIndent()
     }
 }

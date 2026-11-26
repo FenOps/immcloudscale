@@ -32,12 +32,6 @@ data class AppSettings(
     /** Nextcloud's internal user ID (used in WebDAV paths); differs from ncUser when signing in with an email. */
     val ncUserId: String = "",
 
-    val vpnConfig: String = "",
-    /** Route all traffic through home (Tailscale "exit node"); otherwise only the NAS / LAN subnets. */
-    val vpnFullTunnel: Boolean = false,
-    val vpnExcludedApps: Set<String> = emptySet(),
-    val vpnAutoConnect: Boolean = false,
-    val vpnTrustedSsids: Set<String> = emptySet(),
 
     /** Remote access through Tailscale, run inside the app: connects by itself away from home. */
     val tsEnabled: Boolean = false,
@@ -56,8 +50,6 @@ data class AppSettings(
     val lastBackupAt: Long = 0L,
     /** Files the last backup run couldn't send (unsupported type, unreadable). */
     val backupSkipped: Int = 0,
-    /** Back up away from home too (through Tailscale), not only on the home Wi-Fi. */
-    val backupAnywhere: Boolean = false,
     /** Days to back up on, 1 (Monday) to 7; empty means whenever there's something new. */
     val backupDays: Set<Int> = emptySet(),
     /** Time of day for scheduled backups, in minutes after midnight. */
@@ -83,7 +75,7 @@ data class AppSettings(
     val pairedServer: String = "",
     val pairedServerName: String = "",
     val pairedDeviceId: String = "",
-    /** The server's ID from pairing; checked before sending credentials on Wi-Fi without the VPN. */
+    /** The server's ID from pairing; checked before sending credentials on Wi-Fi without Tailscale. */
     val pairedServerId: String = "",
     /** This phone's secret from pairing: signs member management requests (admins). */
     val deviceToken: String = "",
@@ -101,7 +93,6 @@ data class AppSettings(
 ) {
     val immichConfigured get() = immichUrl.isNotBlank() && immichToken.isNotBlank()
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
-    val vpnConfigured get() = vpnConfig.isNotBlank()
 }
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
@@ -117,11 +108,11 @@ class SettingsStore(private val context: Context) {
         val ncUser = stringPreferencesKey("nc_user")
         val ncPass = stringPreferencesKey("nc_pass")
         val ncUserId = stringPreferencesKey("nc_user_id")
-        val vpnConfig = stringPreferencesKey("vpn_config")
-        val vpnFull = booleanPreferencesKey("vpn_full")
-        val vpnExcluded = stringSetPreferencesKey("vpn_excluded")
-        val vpnAuto = booleanPreferencesKey("vpn_auto")
-        val vpnTrusted = stringSetPreferencesKey("vpn_trusted")
+        /** Left by versions with the WireGuard VPN (and the backup "where" choice): removed on the next save. */
+        val retired = listOf(
+            stringPreferencesKey("vpn_config"), booleanPreferencesKey("vpn_full"), stringSetPreferencesKey("vpn_excluded"),
+            booleanPreferencesKey("vpn_auto"), stringSetPreferencesKey("vpn_trusted"), booleanPreferencesKey("backup_anywhere"),
+        )
         val backupEnabled = booleanPreferencesKey("backup_enabled")
         val backupWifi = booleanPreferencesKey("backup_wifi")
         val backupCharging = booleanPreferencesKey("backup_charging")
@@ -148,7 +139,6 @@ class SettingsStore(private val context: Context) {
         val tsServerIp = stringPreferencesKey("ts_server_ip")
         val tsAuthKey = stringPreferencesKey("ts_auth_key")
         val tsControlUrl = stringPreferencesKey("ts_control_url")
-        val backupAnywhere = booleanPreferencesKey("backup_anywhere")
         val backupDays = stringSetPreferencesKey("backup_days")
         val backupTime = stringPreferencesKey("backup_time")
         val theme = stringPreferencesKey("theme")
@@ -170,11 +160,6 @@ class SettingsStore(private val context: Context) {
             ncUser = p[K.ncUser] ?: "",
             ncAppPassword = p[K.ncPass] ?: "",
             ncUserId = p[K.ncUserId] ?: "",
-            vpnConfig = p[K.vpnConfig] ?: "",
-            vpnFullTunnel = p[K.vpnFull] ?: false,
-            vpnExcludedApps = p[K.vpnExcluded] ?: emptySet(),
-            vpnAutoConnect = p[K.vpnAuto] ?: false,
-            vpnTrustedSsids = p[K.vpnTrusted] ?: emptySet(),
             backupEnabled = p[K.backupEnabled] ?: false,
             backupWifiOnly = p[K.backupWifi] ?: true,
             backupChargingOnly = p[K.backupCharging] ?: false,
@@ -201,7 +186,6 @@ class SettingsStore(private val context: Context) {
             tsServerIp = p[K.tsServerIp] ?: "",
             tsAuthKey = p[K.tsAuthKey] ?: "",
             tsControlUrl = p[K.tsControlUrl] ?: "",
-            backupAnywhere = p[K.backupAnywhere] ?: false,
             backupDays = p[K.backupDays]?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet(),
             backupTime = p[K.backupTime]?.toIntOrNull() ?: 2 * 60,
             theme = p[K.theme] ?: "system",
@@ -242,9 +226,7 @@ class SettingsStore(private val context: Context) {
             p[K.immichApiKey] = n.immichTokenIsApiKey; p[K.immichUserName] = n.immichUserName
             p[K.immichEmail] = n.immichEmail
             p[K.ncUrl] = n.ncUrl; p[K.ncUser] = n.ncUser; p[K.ncPass] = n.ncAppPassword; p[K.ncUserId] = n.ncUserId
-            p[K.vpnConfig] = n.vpnConfig; p[K.vpnFull] = n.vpnFullTunnel
-            p[K.vpnExcluded] = n.vpnExcludedApps; p[K.vpnAuto] = n.vpnAutoConnect
-            p[K.vpnTrusted] = n.vpnTrustedSsids
+            K.retired.forEach { p.remove(it) }
             p[K.backupEnabled] = n.backupEnabled; p[K.backupWifi] = n.backupWifiOnly
             p[K.backupCharging] = n.backupChargingOnly; p[K.backupVideos] = n.backupVideos
             p[K.backupFolders] = n.backupFolders; p[K.backupSince] = n.backupSince
@@ -257,7 +239,7 @@ class SettingsStore(private val context: Context) {
             p[K.lockedSession] = n.lockedSession; p[K.serverMl] = n.serverMachineLearning
             p[K.tsEnabled] = n.tsEnabled; p[K.tsServerIp] = n.tsServerIp
             p[K.tsAuthKey] = n.tsAuthKey; p[K.tsControlUrl] = n.tsControlUrl
-            p[K.backupAnywhere] = n.backupAnywhere; p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()
+            p[K.backupDays] = n.backupDays.map { it.toString() }.toSet()
             p[K.backupTime] = n.backupTime.toString(); p[K.theme] = n.theme
             p[K.phoneTrashPending] = n.phoneTrashPending; p[K.trashSyncedAt] = n.trashSyncedAt
             p[K.freeUpAuto] = n.freeUpAuto; p[K.freeUpKeepDays] = n.freeUpKeepDays.toString()

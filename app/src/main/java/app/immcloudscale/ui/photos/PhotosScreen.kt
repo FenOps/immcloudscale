@@ -37,7 +37,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,14 +55,12 @@ import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.immich.AssetQuery
 import app.immcloudscale.data.immich.MemoryDto
 import app.immcloudscale.graph
-import app.immcloudscale.ui.account.BackupWhereChooser
-import app.immcloudscale.ui.account.chooseBackupWhere
+import app.immcloudscale.ui.account.BackupWhereStatus
 import app.immcloudscale.ui.components.EmptyState
 import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.Pinwheel
 import app.immcloudscale.ui.components.RemoteImage
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 enum class BackupIndicator { Off, Done, Running }
@@ -147,6 +144,8 @@ fun PhotosScreen(
     val ctx = LocalContext.current
     val g = ctx.graph
     val settings by g.settingsState.collectAsStateWithLifecycle()
+    val atHome by g.tailscale.home.collectAsStateWithLifecycle()
+    val ts by g.tailscale.state.collectAsStateWithLifecycle()
     // Backup progress only matters once backup is on; don't start WorkManager before that.
     val work by remember(settings.backupEnabled) {
         if (settings.backupEnabled) {
@@ -162,17 +161,15 @@ fun PhotosScreen(
         settings.backupEnabled -> BackupIndicator.Done
         else -> BackupIndicator.Off
     }
-    val scope = rememberCoroutineScope()
     val topBar: @Composable () -> Unit = {
         Column {
             PhotosTopBar(
                 settings.immichUserName.ifBlank { settings.ncUser.ifBlank { "Me" } }, indicator, progress,
                 onSearch, onCreate, onBackupSettings, onAccount,
             )
-            // Where backup runs, right on the start page: home Wi-Fi only, or anywhere through Tailscale.
-            if (settings.immichConfigured && settings.backupEnabled) BackupWhereChooser(
-                settings, { anywhere -> scope.launch { g.settings.update { chooseBackupWhere(it, anywhere) } } }, onOpenNetwork,
-                Modifier.padding(horizontal = 16.dp, vertical = 4.dp), compact = true,
+            // Where backup runs right now, on the start page: the home Wi-Fi, or anywhere through Remote access.
+            if (settings.immichConfigured && settings.backupEnabled) BackupWhereStatus(
+                settings, atHome, ts, onOpenNetwork, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), compact = true,
             )
         }
     }

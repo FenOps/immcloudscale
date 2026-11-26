@@ -96,13 +96,6 @@ fun ServersScreen(onBack: (() -> Unit)?, onNetwork: () -> Unit, onDone: () -> Un
             )
             ImmichCard()
             NextcloudCard()
-            ServerCard(Icons.Outlined.Hub, "Home VPN", "WireGuard", s.vpnConfigured, if (s.vpnConfigured) "Configured" else "Reach your NAS when you're away from home") {
-                FilledTonalButton(onClick = onNetwork) { Text(if (s.vpnConfigured) "Open Network" else "Set up VPN") }
-            }
-            Text(
-                "Tip: set up the VPN first if your servers are only reachable at home; then use their VPN or LAN address here.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

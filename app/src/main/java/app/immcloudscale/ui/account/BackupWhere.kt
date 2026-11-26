@@ -2,85 +2,110 @@ package app.immcloudscale.ui.account
 
 import android.app.TimePickerDialog
 import android.text.format.DateFormat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.tailscale.TsState
+import app.immcloudscale.data.tailscale.TsStatus
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-/**
- * Where backup runs: only on the home Wi-Fi, or anywhere (away from home the app connects through Tailscale
- * by itself, so choosing "Anywhere" also turns on Remote access).
- */
-fun chooseBackupWhere(s: AppSettings, anywhere: Boolean) =
-    s.copy(backupAnywhere = anywhere, tsEnabled = if (anywhere && s.tsServerIp.isNotBlank()) true else s.tsEnabled)
+/** Where backup runs right now: at home straight to the server, away from home through Remote access. */
+data class BackupWhere(val away: Boolean, val text: String, val needsNetwork: Boolean)
 
-/** [compact] (on the Photos page) explains only when something needs doing. */
-@OptIn(ExperimentalMaterial3Api::class)
+fun backupWhere(s: AppSettings, atHome: Boolean, ts: TsState): BackupWhere = when {
+    atHome -> BackupWhere(false, "Backing up straight to your server on the home Wi-Fi.", false)
+    s.tsServerIp.isBlank() -> BackupWhere(true, "Away from home, backup needs Remote access, which your server doesn't offer yet. See the Network tab.", true)
+    !s.tsEnabled -> BackupWhere(true, "Away from home, backup needs Remote access, which is off. Turn it on in the Network tab.", true)
+    ts.status == TsStatus.Connected -> BackupWhere(true, "Backing up anywhere: the app reaches your server through Remote access.", false)
+    ts.status == TsStatus.NeedsLogin || ts.status == TsStatus.Error ->
+        BackupWhere(true, "Away from home, Remote access needs you. Open the Network tab.", true)
+    else -> BackupWhere(true, "Away from home: connecting to your server through Remote access…", false)
+}
+
+/**
+ * Shows where backup runs, following the connection by itself: "Home Wi-Fi" on the home network, "Anywhere"
+ * elsewhere. [compact] (on the Photos page) explains only when something needs doing.
+ */
 @Composable
-fun BackupWhereChooser(
+fun BackupWhereStatus(
     s: AppSettings,
-    onChange: (anywhere: Boolean) -> Unit,
+    atHome: Boolean,
+    ts: TsState,
     onOpenNetwork: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
+    val w = backupWhere(s, atHome, ts)
     Column(modifier) {
         if (compact) Text(
-            "Back up on", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "Backing up on", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SegmentedButton(
-                selected = !s.backupAnywhere, onClick = { onChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2),
-                icon = { SegmentedButtonDefaults.Icon(!s.backupAnywhere) { Icon(Icons.Outlined.Home, null) } },
-            ) { Text("Home Wi-Fi only") }
-            SegmentedButton(
-                selected = s.backupAnywhere, onClick = { onChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2),
-                icon = { SegmentedButtonDefaults.Icon(s.backupAnywhere) { Icon(Icons.Outlined.Public, null) } },
-            ) { Text("Anywhere") }
+        Row(
+            Modifier.fillMaxWidth().clip(CircleShape).border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                .semantics(mergeDescendants = true) { contentDescription = if (w.away) "Backing up anywhere" else "Backing up on home Wi-Fi" },
+        ) {
+            Place(Icons.Outlined.Home, "Home Wi-Fi", !w.away)
+            Place(Icons.Outlined.Public, "Anywhere", w.away)
         }
-        val (text, needsNetwork) = when {
-            !s.backupAnywhere -> "Backs up only when you're on your home Wi-Fi." to false
-            s.tsServerIp.isBlank() -> "Away from home, backup needs Remote access, which your server doesn't offer yet. See the Network tab." to true
-            !s.tsEnabled -> "Away from home, backup needs Remote access, which is off. Turn it on in the Network tab." to true
-            else -> "Backs up wherever you are. Away from home Wi-Fi, the app connects to your server by itself." to false
-        }
-        if (!compact || needsNetwork) Text(
-            text, style = MaterialTheme.typography.bodySmall,
-            color = if (needsNetwork) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        if (!compact || w.needsNetwork) Text(
+            w.text, style = MaterialTheme.typography.bodySmall,
+            color = if (w.needsNetwork) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp),
         )
-        if (needsNetwork) TextButton(onClick = onOpenNetwork) { Text("Open Network") }
+        if (w.needsNetwork) TextButton(onClick = onOpenNetwork) { Text("Open Network") }
+    }
+}
+
+@Composable
+private fun RowScope.Place(icon: ImageVector, label: String, here: Boolean) {
+    Row(
+        Modifier.weight(1f).background(if (here) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent).padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(if (here) Icons.Filled.Check else icon, null, Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            label, style = MaterialTheme.typography.labelLarge,
+            color = if (here) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

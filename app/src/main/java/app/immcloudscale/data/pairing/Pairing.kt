@@ -3,7 +3,6 @@ package app.immcloudscale.data.pairing
 import android.net.Uri
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HttpException
-import app.immcloudscale.data.vpn.WgRoutes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -24,20 +23,12 @@ data class PairResult(
     val user: UserInfo,
     val immich: ImmichInfo,
     val nextcloud: NextcloudInfo,
-    val wireguard: WireGuardInfo? = null,
     val tailscale: TailscaleInfo? = null,
 ) {
     @Serializable data class ServerInfo(val name: String = "", val version: String = "", val id: String = "")
     @Serializable data class UserInfo(val name: String, val email: String = "", val isAdmin: Boolean = false)
     @Serializable data class ImmichInfo(val url: String, val apiKey: String)
     @Serializable data class NextcloudInfo(val url: String, val user: String, val appPassword: String)
-    @Serializable data class WireGuardInfo(
-        val address: String,
-        val serverPublicKey: String,
-        val endpoint: String,
-        val allowedIps: String,
-        val dns: String = "",
-    )
     /** Present when the server is on a tailnet; authKey lets the app join it without a sign-in. */
     @Serializable data class TailscaleInfo(val ip: String, val authKey: String = "", val controlUrl: String = "")
 }
@@ -46,7 +37,6 @@ data class PairResult(
 private data class PairRequest(
     val code: String,
     val deviceName: String,
-    val wgPublicKey: String,
     /** This phone's previous device ID, so the server retires the old entry when it pairs again. */
     val replacesDevice: String = "",
 )
@@ -109,10 +99,10 @@ object Pairing {
         Regex("""immcloudscale://pair\?\S+""").find(text)?.value?.let { parseLink(it.trimEnd('.', ',', ')', '"', '\'')) }
 
     suspend fun pair(
-        http: OkHttpClient, server: String, code: String, deviceName: String, wgPublicKey: String, replacesDevice: String = "",
+        http: OkHttpClient, server: String, code: String, deviceName: String, replacesDevice: String = "",
     ): PairResult =
         withContext(Dispatchers.IO) {
-            val body = json.encodeToString(PairRequest.serializer(), PairRequest(normalizeCode(code), deviceName, wgPublicKey, replacesDevice))
+            val body = json.encodeToString(PairRequest.serializer(), PairRequest(normalizeCode(code), deviceName, replacesDevice))
             val req = Request.Builder().url(normalizeServer(server) + "/api/v1/pair")
                 .post(body.toRequestBody("application/json".toMediaType())).build()
             val call = runCatching { http.newCall(req).execute() }.getOrElse { e ->
@@ -138,18 +128,13 @@ object Pairing {
             }
         }
 
-    /** Applies a pairing to the settings; [privateKey] is the WireGuard key generated on this phone. */
-    fun apply(s: AppSettings, r: PairResult, privateKey: String, server: String): AppSettings {
-        val wg = r.wireguard
+    /** Applies a pairing to the settings. */
+    fun apply(s: AppSettings, r: PairResult, server: String): AppSettings {
         return s.copy(
             immichUrl = r.immich.url.trimEnd('/'), immichToken = r.immich.apiKey, immichTokenIsApiKey = true,
             immichUserName = r.user.name, immichEmail = r.user.email,
             ncUrl = r.nextcloud.url.trimEnd('/'), ncUser = r.nextcloud.user, ncAppPassword = r.nextcloud.appPassword,
             ncUserId = r.nextcloud.user,
-            vpnConfig = if (wg == null) s.vpnConfig else WgRoutes.buildConfig(
-                privateKey = privateKey, address = wg.address, dns = wg.dns,
-                serverPublicKey = wg.serverPublicKey, endpoint = wg.endpoint, allowedIps = wg.allowedIps,
-            ),
             pairedServer = normalizeServer(server), pairedDeviceId = r.deviceId, pairedServerName = r.server.name,
             pairedServerId = r.server.id,
             deviceToken = r.deviceToken, isAdmin = r.user.isAdmin,
@@ -160,7 +145,6 @@ object Pairing {
             tsServerIp = r.tailscale?.ip ?: s.tsServerIp,
             tsAuthKey = r.tailscale?.authKey ?: s.tsAuthKey,
             tsControlUrl = r.tailscale?.controlUrl ?: s.tsControlUrl,
-            backupAnywhere = if (r.tailscale != null) true else s.backupAnywhere,
         )
     }
 }

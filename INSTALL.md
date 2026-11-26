@@ -208,9 +208,8 @@ My user name: alex   My email: alex@example.com
    If something fails, read the logs, fix it, and explain what you changed.
 5. Show me, clearly, in one summary: the admin console address and password, my web sign-in for Photos and Files,
    and a fresh pairing code (`sudo ics-server pair <name>`). Save the same summary to ~/immcloudscale-setup/README-mine.txt (chmod 600).
-6. Explain how to set up remote access on my router (forward UDP 51820 to this machine). Ask whether I want a free DuckDNS
-   name in case my home IP changes. If yes, I'll give you the DuckDNS token; set up the updater (cron) and run
-   `sudo ics-server config --endpoint <name>.duckdns.org`.
+6. Set up remote access with Tailscale as INSTALL.md, Step 6 describes (install Tailscale, `sudo tailscale up`, then
+   `sudo ics-server tailscale --auth-key …` with a tagged key I create). No router settings are needed.
 7. When everything works, remove /etc/sudoers.d/90-claude-install.
 
 Ask before deleting anything, formatting disks, or changing firewall rules beyond what the installer does.
@@ -302,10 +301,10 @@ its permissions already allowed, and pairs it.
 
 ## Step 6: Use it away from home (10 minutes)
 
-At home everything already works. To reach your photos and files from anywhere, pick one of two ways.
-**Option A works on every home connection** (no router settings) and is the one most people should use.
+At home everything already works. To reach your photos and files from anywhere, use Remote access. It works on every
+home connection, with no router settings.
 
-### Option A: Remote access with Tailscale (recommended)
+### Remote access with Tailscale
 
 Tailscale is a free service that connects your phone to your server from anywhere. It runs **inside the ImmCloudScale app**,
 so you don't need the Tailscale app on your phone, and it works even when your internet provider shares one address
@@ -334,38 +333,8 @@ Then run `sudo ics-server tailscale` to check: it shows the server's Tailscale a
 Pairing hands the phone what it needs; Remote access then switches on by itself.
 
 **4. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data and open ImmCloudScale. The **Network** tab says
-**Connected from outside** after a few seconds, and your photos load. To back up away from home too, choose **Anywhere**
-at the top of the Photos page.
-
-### Option B: your own VPN with port forwarding
-
-Only if your home has a public internet address. Your router has to let the VPN in.
-
-**1. Forward one port on your router.** Open the router's admin page (often `http://192.168.1.1` or `http://192.168.0.1`; the address is on the
-router's sticker) and find **Port forwarding**. It's sometimes called "Virtual server", "NAT" or "Port mapping". Add a rule:
-
-| Setting | Value |
-|---|---|
-| Name | `ImmCloudScale` |
-| Protocol | **UDP** |
-| External port | **51820** |
-| Internal IP address | your server's address, e.g. **192.168.1.50** |
-| Internal port | **51820** |
-
-Save. Forward **only** this one port; never the 2283, 8080 or 8790 ports.
-🤖 Not sure where it is? Ask Claude: *"How do I set up port forwarding on my (router brand and model)?"*
-
-**2. If your home internet address changes** (true for most home connections), give your home a free name that follows it:
-1. Go to [duckdns.org](https://www.duckdns.org), sign in, and create a name, e.g. `alexhome` (giving you `alexhome.duckdns.org`).
-2. On the server, run `sudo ics-server config --endpoint alexhome.duckdns.org`.
-3. Set up the DuckDNS updater by following duckdns.org's **install → linux cron** instructions, or 🤖 ask Claude on the server:
-   *"Set up the DuckDNS updater for alexhome with token <your token>"*.
-4. Pair your phones again (admin console → **Pair a phone**) so they learn the new name.
-
-**3. Test it.** On the phone, turn **Wi-Fi off** so you're on mobile data. Open ImmCloudScale → **Network** tab → switch the VPN **on**.
-
-> **Port forwarding didn't help?** Compare the "WAN IP" on your router's status page with [whatismyip.com](https://whatismyip.com).
-> If they differ, your provider shares one address between customers ("CGNAT") and port forwarding can't work: use Option A.
+**Connected from outside** after a few seconds, and your photos load. Backup keeps going too: the top of the Photos page
+switches from **Home Wi-Fi** to **Anywhere** by itself.
 
 ---
 
@@ -407,7 +376,7 @@ or on the server `sudo ics-server user admin <name>`.
 | Phone: "That pairing code is wrong or has expired" | Make a new code in the admin console (**Pair a phone**). Codes last 15 minutes. |
 | Phone: "App not installed" | An older ImmCloudScale build signed with a different key is on the phone (for example version 0.1.0). Uninstall it first, then install again. Later versions update in place. |
 | Backup says "Only some photos can be backed up" | Tap **Open settings** → Permissions → Photos and videos → **Allow all**. |
-| Works at home but not away | Check Step 6: the rule must be **UDP** 51820 to the right address. If your home address changed, set up DuckDNS. |
+| Works at home but not away | Check Step 6: `sudo ics-server tailscale` must say Tailscale is running, and the phone's **Network** tab must have **Connect away from home Wi-Fi** on. |
 
 **Ask Claude for help.** On the server, run `claude` and describe the problem, for example:
 *"ImmCloudScale on this server isn't working: the Photos app can't connect. Diagnose and fix it."*

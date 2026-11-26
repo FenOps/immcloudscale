@@ -1,20 +1,13 @@
 package app.immcloudscale.ui.network
 
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.immcloudscale.AppGraph
 import app.immcloudscale.data.tailscale.TsStatus
-import app.immcloudscale.data.vpn.PeerStats
-import app.immcloudscale.data.vpn.VpnManager
-import app.immcloudscale.data.vpn.WgRoutes
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -22,19 +15,12 @@ import java.util.concurrent.TimeUnit
 
 enum class Reach { Checking, Up, Down, NotSetUp }
 data class ServiceCheck(val name: String, val url: String, val reach: Reach, val latencyMs: Long? = null)
-data class AppEntry(val pkg: String, val label: String)
 
-data class NetworkUi(
-    val stats: List<PeerStats> = emptyList(),
-    val services: List<ServiceCheck> = emptyList(),
-    val apps: List<AppEntry>? = null,
-    val message: String? = null,
-)
+data class NetworkUi(val services: List<ServiceCheck> = emptyList())
 
 class NetworkViewModel(private val g: AppGraph) : ViewModel() {
     private val _ui = MutableStateFlow(NetworkUi())
     val ui = _ui.asStateFlow()
-    val vpn = g.vpn.state
     val settings = g.settingsState
     val ts = g.tailscale.state
     val atHome = g.tailscale.home
@@ -48,15 +34,9 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
     fun tsSignOut() = viewModelScope.launch { g.tailscale.logout() }
 
     init {
-        viewModelScope.launch {
-            while (isActive) {
-                _ui.update { it.copy(stats = g.vpn.stats()) }
-                delay(2000)
-            }
-        }
         checkServices()
-        viewModelScope.launch { vpn.collect { if (it.status == app.immcloudscale.data.vpn.VpnStatus.Connected) { delay(1500); checkServices() } } }
         viewModelScope.launch { ts.collect { if (it.status == TsStatus.Connected) checkServices() } }
+        viewModelScope.launch { atHome.collect { checkServices() } }
     }
 
     fun checkServices() = viewModelScope.launch {
@@ -81,50 +61,4 @@ class NetworkViewModel(private val g: AppGraph) : ViewModel() {
         }
         _ui.update { it.copy(services = results) }
     }
-
-    fun connect() = viewModelScope.launch { g.vpn.connectByUser() }
-    fun disconnect() = viewModelScope.launch { g.vpn.disconnectByUser() }
-
-    private fun save(reapply: Boolean = true, block: (app.immcloudscale.data.AppSettings) -> app.immcloudscale.data.AppSettings) =
-        viewModelScope.launch { g.settings.update(block); if (reapply) g.vpn.reapply() }
-
-    fun setExitNode(on: Boolean) = save { it.copy(vpnFullTunnel = on) }
-    fun setAutoConnect(on: Boolean) = save(false) { it.copy(vpnAutoConnect = on) }
-    fun setExcluded(pkgs: Set<String>) = save { it.copy(vpnExcludedApps = pkgs) }
-    fun addTrusted(ssid: String) = save(false) { it.copy(vpnTrustedSsids = it.vpnTrustedSsids + ssid) }
-    fun removeTrusted(ssid: String) = save(false) { it.copy(vpnTrustedSsids = it.vpnTrustedSsids - ssid) }
-    fun currentSsid() = g.vpn.currentSsid()
-
-    /** Returns an error message, or null when the config was saved. */
-    fun importConfig(text: String): String? {
-        val err = VpnManager.validate(text)
-        if (err != null) return err
-        save { it.copy(vpnConfig = text.trim() + "\n") }
-        _ui.update { it.copy(message = "Configuration saved") }
-        return null
-    }
-
-    fun removeConfig() = viewModelScope.launch {
-        g.vpn.disconnect()
-        g.settings.update { it.copy(vpnConfig = "", vpnAutoConnect = false) }
-    }
-
-    fun consumeMessage() = _ui.update { it.copy(message = null) }
-
-    fun loadApps() {
-        if (_ui.value.apps != null) return
-        viewModelScope.launch {
-            val pm = g.context.packageManager
-            val apps = withContext(Dispatchers.IO) {
-                pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                    .filter { it.packageName != g.context.packageName && (it.flags and ApplicationInfo.FLAG_SYSTEM == 0 || pm.getLaunchIntentForPackage(it.packageName) != null) }
-                    .map { AppEntry(it.packageName, pm.getApplicationLabel(it).toString()) }
-                    .sortedBy { it.label.lowercase() }
-            }
-            _ui.update { it.copy(apps = apps) }
-        }
-    }
-
-    fun summary() = WgRoutes.summarize(settings.value.vpnConfig)
-    fun publicKey() = VpnManager.publicKeyOf(settings.value.vpnConfig)
 }

@@ -14,12 +14,11 @@ import java.util.concurrent.TimeUnit
  * Stops credentials going to a stranger's device. (The server ID is public on purpose: it only has to tell
  * "my server" from "some other device at the same address", not keep anyone out.) A paired phone reaches
  * its server at a home LAN address (e.g. 192.168.1.50); on another Wi-Fi network that uses the same
- * numbers, that address belongs to someone else. So before credentials go to a private address without the VPN, ask the server there for its ID and
+ * numbers, that address belongs to someone else. So before credentials go to a private address without Tailscale, ask the server there for its ID and
  * compare it with the one saved at pairing. The answer is remembered per network.
  */
 class HomeGuard(
     private val settings: () -> AppSettings,
-    private val vpnConnected: () -> Boolean,
     private val probe: (String) -> String? = ::fetchServerId,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
@@ -37,14 +36,14 @@ class HomeGuard(
         val hosts = listOf(s.pairedServer, s.immichUrl, s.ncUrl).mapNotNull { it.toHttpUrlOrNull()?.host?.lowercase() }
         if (url.host.lowercase() !in hosts) return
         if (!isPrivateHost(url.host)) return // public names (e.g. HTTPS behind a domain) aren't ambiguous
-        if (viaTailscale || vpnConnected()) return // through a tunnel, private addresses are always home
+        if (viaTailscale) return // through Tailscale, private addresses are always home
         // One check at a time: a screen of thumbnails shouldn't send a probe per image.
         synchronized(this) {
             val key = networkKey
             verified?.let { (k, at) -> if (k == key && now() - at < 10 * 60_000) return }
             val id = runCatching { probe(s.pairedServer) }.getOrNull()
             if (id != s.pairedServerId) {
-                throw IOException("Not on your home network: turn on the VPN in the Network tab to reach your server")
+                throw IOException("Not on your home network: turn on Remote access in the Network tab to reach your server")
             }
             verified = key to now()
         }

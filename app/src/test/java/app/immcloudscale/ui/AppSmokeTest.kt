@@ -44,9 +44,7 @@ class AppSmokeTest {
         compose.onNodeWithText("Connect your files").assertExists()
         compose.onNodeWithText("Network").performClick()
         compose.onNodeWithText("Reach your NAS from anywhere").assertExists()
-        compose.onNodeWithText("Add this device").performClick()
-        compose.onNodeWithText("Server public key").assertExists()
-        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Pair with your server").assertExists()
         compose.onNodeWithText("Collections").performClick()
         compose.onNodeWithText("Favorites").assertExists()
     }

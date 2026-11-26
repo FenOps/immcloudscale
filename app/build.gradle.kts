@@ -114,8 +114,6 @@ dependencies {
     // QR scanning for server pairing (Google Play services; no camera permission needed)
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // Userspace WireGuard (wireguard-go) behind Android's VpnService
-    implementation("com.wireguard.android:tunnel:1.0.20230706")
 
     // Tailscale inside the app (built from app/tailscale by the buildTailscale task below)
     implementation(files("libs/tsbridge.aar"))

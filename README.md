@@ -1,4 +1,4 @@
-# ImmCloudScale: photos, files and home VPN for your NAS
+# ImmCloudScale: photos, files and remote access for your NAS
 
 [![CI](https://github.com/FenOps/immcloudscale/actions/workflows/ci.yml/badge.svg)](https://github.com/FenOps/immcloudscale/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
@@ -9,14 +9,14 @@ One Android app that does the work of three self-hosted apps, laid out like Goog
 |---|---|---|
 | **Photos** + **Collections** | your [Immich](https://immich.app) server | Immich app |
 | **Files** | your [Nextcloud](https://nextcloud.com) server (WebDAV + OCS) | Nextcloud Files app |
-| **Network** | a WireGuard tunnel to your home (wireguard-go, the engine Tailscale is built on) | Tailscale / WireGuard app |
+| **Network** | remote access to your server through Tailscale, built into the app | Tailscale app |
 
 ![Photos, Collections, Files, Network and account screens](docs/screens.png)
 
 ![Selection mode and dark theme](docs/screens-2.png)
 
 Each feature comes from the one product that does it best, so nothing is duplicated: photos and videos
-live in Immich, everything else in Nextcloud, and the VPN makes both reachable away from home.
+live in Immich, everything else in Nextcloud, and remote access makes both reachable away from home.
 
 ## Quick start: the server and the app
 
@@ -26,7 +26,7 @@ live in Immich, everything else in Nextcloud, and the VPN makes both reachable a
    curl -fsSL https://raw.githubusercontent.com/FenOps/immcloudscale/main/server/deploy/install.sh | sudo bash
    ```
 2. **On the phone**, install `ImmCloudScale-<version>.apk` from [Releases](https://github.com/FenOps/immcloudscale/releases/latest)
-   and scan the pairing QR code. Photos, files and the home VPN are configured in one step.
+   and scan the pairing QR code. Photos, files and remote access are configured in one step.
 
 **→ Step-by-step guide: [INSTALL.md](INSTALL.md)**, including prompts that let Claude Code do most of the installation for you.
 
@@ -61,17 +61,13 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 * In-app preview of images (zoomable), video and audio (streamed), PDFs (rendered on the phone) and text/code
 * Search by file name across the whole account; storage quota in the account card
 
-### Network (home VPN)
-* One switch to connect to home, with status, current network, this device's tunnel address and public key
-* **Exit node**: route all traffic through home, or only the NAS and home LAN (split by route)
-* **Split tunnelling** per app: chosen apps bypass the VPN
-* **Auto-connect** when you leave trusted Wi-Fi networks, and disconnect when you're back; **Always-on VPN** support
-* Device list with online status, last handshake and traffic counters
+### Network (remote access)
+* **Remote access** through Tailscale, running inside the app: no Tailscale app and no router settings, and it works
+  behind CGNAT. It connects by itself when you leave the home Wi-Fi and stops when you're back
 * Live health checks of your Immich and Nextcloud servers with latency
-* Set up by importing a `.conf` file, pasting one, or **Add this device**: the phone generates its key pair and shows the public key to add on the NAS
 
 ### Across the app
-* Google-style account card: who you are on each server, backup status, photo and file storage bars, VPN state
+* Google-style account card: who you are on each server, backup status, photo and file storage bars, remote access
 * "Share to ImmCloudScale" from any app: photos and videos go to Immich, other files to Nextcloud
 * Material 3 with Google's palette, dynamic colour on Android 12+, light and dark themes, edge to edge
 
@@ -82,17 +78,15 @@ To connect servers you already run instead, the app asks for:
 
 1. **Immich**: server URL (e.g. `http://192.168.1.10:2283`), then email + password, or an API key (Immich → Account settings → API keys).
 2. **Nextcloud**: server URL, then **Sign in with browser** (Nextcloud Login Flow v2, gives the app its own app password), or a user name + app password.
-3. **VPN** (optional): a WireGuard config for this phone. Most NAS systems can make one: Synology VPN Server, Unraid's VPN Manager, TrueNAS, OpenMediaVault, wg-easy in Docker, or a router (UniFi, OpenWrt, FRITZ!Box, OPNsense…).
 
-If your servers are only reachable at home, set up the VPN first and use their LAN or tunnel addresses.
+Away from home, servers you connect this way are reachable only if they are on the internet or you use your own VPN app.
 Plain HTTP and certificates from a CA installed on the phone are allowed, since home servers often use them.
 
-### About "Tailscale"
-The Network tab runs **WireGuard** through `wireguard-go`, the same userspace engine Tailscale uses, and adds
-Tailscale-style controls on top: exit node, split tunnelling, auto-connect and a device list. It connects
-to a WireGuard server you run: the ImmCloudScale Server sets one up and adds each paired phone automatically. It does not talk to Tailscale's or Headscale's coordination
-servers, so there is no NAT traversal or automatic key exchange between devices: the NAS needs a reachable
-WireGuard port (port forward, or a VPS relay).
+### About Tailscale
+Remote access uses [tsnet](https://tailscale.com/kb/1244/tsnet), Tailscale's library, built into the app. The phone joins
+your tailnet (Tailscale's or your own Headscale) and only your server's addresses go through it; the rest of the
+tailnet stays out of reach. The ImmCloudScale Server tells paired phones its Tailscale address and, if you give it one,
+a join key, so phones connect without signing in.
 
 ## Build
 
@@ -141,13 +135,13 @@ then `./gradlew :app:assembleRelease` or `:app:bundleRelease`.
 
 ```
 app/src/main/java/app/immcloudscale/
-  ImmApp.kt              app graph (settings, one OkHttp client, Immich, Nextcloud, VPN), Coil setup, share uploads
+  ImmApp.kt              app graph (settings, one OkHttp client, Immich, Nextcloud, Tailscale), Coil setup, share uploads
   data/
     Settings.kt          DataStore-backed settings
     Http.kt              auth interceptor: picks Immich token or Nextcloud basic auth by URL
     immich/              Immich REST client, models, day grouping
     nextcloud/           WebDAV/OCS client, multistatus parser, Login Flow v2
-    vpn/                 GoBackend tunnel manager, routing rules, auto-connect, config helpers
+    tailscale/           Tailscale inside the app (tsnet bridge), remote access and invite joins
     backup/              MediaStore scan + Immich backup worker
     pairing/             pairing with an ImmCloudScale server (QR / deep link / code)
   ui/
@@ -156,7 +150,7 @@ app/src/main/java/app/immcloudscale/
 ```
 
 ## Privacy
-Credentials (Immich token, Nextcloud app password, WireGuard private key) are stored in the app's private storage
+Credentials (Immich token, Nextcloud app password, Tailscale identity) are stored in the app's private storage
 and excluded from Android backups. The app only talks to the servers you configure.
 
 ## License
