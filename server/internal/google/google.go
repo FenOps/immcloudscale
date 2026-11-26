@@ -340,8 +340,12 @@ type Report struct {
 	Found      bool `json:"-"` // the importer's report was there at all
 }
 
-// ErrNoReport means the importer ended without saying what it did: nothing may be deleted then.
-var ErrNoReport = errors.New("the importer ended without a report of what it imported")
+var (
+	// ErrNoReport means the importer ended without saying what it did: nothing may be deleted then.
+	ErrNoReport = errors.New("the importer ended without a report of what it imported")
+	// ErrNoPhotos means the archives hold no photos (a Takeout of something else).
+	ErrNoPhotos = errors.New("these archives have no photos in them: was Google Photos selected in Takeout?")
+)
 
 // ImportTakeout imports Google Takeout archives into Immich with the person's API key, tagging every photo
 // with [tag] and recreating Google's albums.
@@ -363,8 +367,12 @@ func (t *Tools) ImportTakeout(ctx context.Context, server, apiKey, tag string, z
 	defer cancel()
 	out, err := t.Run(ctx, []string{"IMMICH_GO_UPLOAD_API_KEY=" + apiKey}, t.path("immich-go"), append(args, zips...)...)
 	r := ParseReport(string(out))
-	if err == nil && (!r.Found || r.Imported+r.Duplicates == 0) {
+	switch {
+	case err != nil:
+	case !r.Found:
 		err = ErrNoReport
+	case r.Imported+r.Duplicates == 0:
+		err = ErrNoPhotos
 	}
 	return r, err
 }

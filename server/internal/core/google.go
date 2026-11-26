@@ -56,6 +56,7 @@ type googleWork struct {
 	buildAt   time.Time       // when building last failed
 	syncing   map[string]bool // account IDs
 	importing map[string]bool // people
+	retry     map[string]bool // people who asked to try failed exports again
 	// The archives seen per export, and since when unchanged: an export is imported only once its archives have
 	// stopped changing here (their own dates can be old: copies keep Google's).
 	seen map[string]seenSet
@@ -250,8 +251,16 @@ func (s *Server) SyncGoogleNow(person, id string) error {
 	return err
 }
 
-// ImportNow looks for Takeout archives to import right away.
-func (s *Server) ImportNow() { s.kickGoogle() }
+// ImportNow looks for Takeout archives to import right away, trying [person]'s failed exports again too.
+func (s *Server) ImportNow(person string) {
+	s.googleMu.Lock()
+	if s.work.retry == nil {
+		s.work.retry = map[string]bool{}
+	}
+	s.work.retry[person] = true
+	s.googleMu.Unlock()
+	s.kickGoogle()
+}
 
 func (s *Server) googleTokenURL() string {
 	if s.GoogleTokenURL != "" {
@@ -296,7 +305,12 @@ func (s *Server) googleRound(ctx context.Context) {
 	if s.Google == nil || st.Config.DataDir == "" {
 		return
 	}
-	exports := s.pendingExports(st)
+	// "Try again" requests apply to this round.
+	s.googleMu.Lock()
+	retry := s.work.retry
+	s.work.retry = nil
+	s.googleMu.Unlock()
+	exports := s.pendingExports(st, retry)
 	due := []state.GoogleAccount{}
 	for _, a := range st.Google {
 		if s.Now().Sub(a.Synced) >= driveEvery {
@@ -313,7 +327,7 @@ func (s *Server) googleRound(ctx context.Context) {
 		s.syncDrive(ctx, a)
 	}
 	// Looked for again: the Drive copies may have brought archives (imported once they've settled).
-	for _, e := range s.pendingExports(s.Store.Read()) {
+	for _, e := range s.pendingExports(s.Store.Read(), retry) {
 		s.importExport(ctx, e)
 	}
 }
@@ -445,7 +459,7 @@ type export struct {
 
 // pendingExports finds Takeout exports whose archives have stopped changing for a while. Imported archives are
 // deleted, so whatever is there is new, apart from exports that failed recently or too often.
-func (s *Server) pendingExports(st state.State) []export {
+func (s *Server) pendingExports(st state.State, retry map[string]bool) []export {
 	failed := map[string]int{}
 	recent := map[string]bool{}
 	for _, im := range st.Imports {
@@ -461,7 +475,7 @@ func (s *Server) pendingExports(st state.State) []export {
 	}
 	var out []export
 	seen := map[string]bool{}
-	scan := func(person, dir, source, accountID, folder string) {
+	scan := func(person, dir, source, accountID, folder string, copied time.Time) {
 		groups := map[string][]string{}
 		sizes := map[string][]string{}
 		_ = filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
@@ -496,7 +510,14 @@ func (s *Server) pendingExports(st state.State) []export {
 				s.work.seen[key] = cur
 			}
 			s.googleMu.Unlock()
-			if s.Now().Sub(cur.since) < takeoutSettle || recent[key] || failed[key] >= maxAttempts {
+			if s.Now().Sub(cur.since) < takeoutSettle {
+				continue
+			}
+			// From a Drive copy: unchanged across one more copy, since Google may still have been adding parts.
+			if accountID != "" && !copied.After(cur.since) {
+				continue
+			}
+			if !retry[person] && (recent[key] || failed[key] >= maxAttempts) {
 				continue
 			}
 			parts := strings.SplitN(key, "\x00", 3)
@@ -505,14 +526,14 @@ func (s *Server) pendingExports(st state.State) []export {
 		}
 	}
 	for _, u := range st.Users {
-		scan(u.Name, filepath.Join(filesRoot(st.Config, u.Name), TakeoutFolder), "Takeout", "", "")
+		scan(u.Name, filepath.Join(filesRoot(st.Config, u.Name), TakeoutFolder), "Takeout", "", "", time.Time{})
 	}
 	for _, a := range st.Google {
 		if s.isBusy(s.work.syncing, a.ID) {
 			continue // still copying: its archives may be incomplete
 		}
 		folder := driveFolder(a.Email)
-		scan(a.Person, filepath.Join(filesRoot(st.Config, a.Person), folder, "Takeout"), a.Email, a.ID, folder)
+		scan(a.Person, filepath.Join(filesRoot(st.Config, a.Person), folder, "Takeout"), a.Email, a.ID, folder, a.Synced)
 	}
 	s.googleMu.Lock()
 	for k := range s.work.seen {

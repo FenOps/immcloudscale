@@ -33,4 +33,25 @@ class SignInCatcherTest {
         catcher.stop()
         assertNull(caught.await())
     }
+
+    @Test fun aSilentOrBrokenConnectionDoesntStopTheWait() = runBlocking {
+        val catcher = SignInCatcher(port = 53783)
+        val caught = async { catcher.await() }
+        delay(300)
+        java.net.Socket("127.0.0.1", 53783).use { delay(5_500) } // says nothing until the catcher gives up on it
+        java.net.Socket("127.0.0.1", 53783).apply { setSoLinger(true, 0) }.close() // reset straight away
+        delay(200)
+        assertTrue(get("http://127.0.0.1:53783/?state=s&code=c").contains("All set"))
+        assertEquals("http://127.0.0.1:53783/?state=s&code=c", caught.await())
+    }
+
+    @Test fun stoppingBeforeItStartsLeavesThePortFree() = runBlocking {
+        val catcher = SignInCatcher(port = 53784)
+        catcher.stop()
+        val again = SignInCatcher(port = 53784)
+        val caught = async { again.await() }
+        delay(300)
+        get("http://127.0.0.1:53784/?state=s&code=c")
+        assertEquals("http://127.0.0.1:53784/?state=s&code=c", caught.await())
+    }
 }

@@ -337,6 +337,13 @@ func TestNothingIsDeletedWithoutAReport(t *testing.T) {
 	if n := len(s.Store.Read().Imports); n != maxAttempts {
 		t.Fatalf("%d attempts", n)
 	}
+	// "Try again" in the app tries once more, whatever the count.
+	f.report = ""
+	s.ImportNow("camille")
+	s.googleRound(context.Background())
+	if _, err := os.Stat(p); err == nil {
+		t.Fatal("Try again didn't import")
+	}
 }
 
 func TestAFailedToolBuildWaitsBeforeTryingAgain(t *testing.T) {
@@ -407,6 +414,11 @@ func TestTakeoutDeliveredToDriveIsImportedAndNotFetchedAgain(t *testing.T) {
 
 	p := filepath.Join(filesRoot(s.Store.Read().Config, "camille"), "Google Drive (camille@gmail.com)/Takeout/takeout-20251126T101500Z-001.zip")
 	c.tick(31 * time.Minute)
+	s.googleRound(context.Background())
+	if len(s.Store.Read().Imports) != 0 {
+		t.Fatal("imported before another Drive copy showed Google had finished adding parts")
+	}
+	s.SyncGoogleNow("camille", s.Store.Read().Google[0].ID) // the next copy finds nothing new
 	s.googleRound(context.Background())
 	st := s.Store.Read()
 	if len(st.Imports) != 1 || st.Imports[0].Source != "camille@gmail.com" {

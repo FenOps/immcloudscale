@@ -105,6 +105,7 @@ class GoogleActions(
     val onOpen: (String) -> Unit = {},
     val onOpenGooglePhotos: () -> Unit = {},
     val onStep: (String, Boolean) -> Unit = { _, _ -> },
+    val onRetryImports: () -> Unit = {},
 )
 
 /** Moving from Google: Drive copied and kept in sync, Google Photos imported from Takeout, then a checklist. */
@@ -156,6 +157,7 @@ fun GoogleImportScreen(onBack: () -> Unit, onOpenBackup: () -> Unit = {}) {
             onRemove = { removing = it },
             onOpen = { url -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
             onOpenGooglePhotos = { openGooglePhotos(ctx) },
+            onRetryImports = { act { g.members.importNow(); snack.showSnackbar("Trying again in a moment") } },
             onStep = { step, done ->
                 scope.launch { g.settings.update { it.copy(googleDone = if (done) it.googleDone + step else it.googleDone - step) } }
             },
@@ -253,6 +255,9 @@ fun GoogleImportContent(
             item { TakeoutSteps(status, a) }
             if (status.importing) item { Notice(null, "Importing photos. This can take a while for a big library.") }
             status.imports.forEach { im -> item(key = "im-" + im.export + im.at) { ImportRow(im) } }
+            if (status.imports.firstOrNull()?.let { it.error != null || it.errors > 0 } == true && !status.importing) item {
+                TextButton(onClick = a.onRetryImports, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Try the import again") }
+            }
 
             if (status.accounts.isNotEmpty() || status.imports.isNotEmpty() || GoogleSteps.STARTED in s.googleDone) {
                 item { SectionHeader("Finish moving to your server") }
@@ -506,6 +511,7 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
     var forPerson by rememberSaveable { mutableStateOf("") }
     var pasted by rememberSaveable { mutableStateOf("") }
     var opened by rememberSaveable { mutableStateOf(false) }
+    var attempt by rememberSaveable { mutableStateOf(0) } // each "Open sign-in" waits for its own answer
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(isAdmin) {
@@ -521,15 +527,15 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
             busy = false
         }
     }
-    LaunchedEffect(opened) {
-        if (!opened) return@LaunchedEffect
+    LaunchedEffect(attempt) {
+        if (attempt == 0) return@LaunchedEffect
         val caught = catcher.await() ?: return@LaunchedEffect
         pasted = caught
         finish(caught)
     }
     // Back from the browser with the address copied: fill it in.
-    LifecycleResumeEffect(Unit) {
-        if (pasted.isBlank()) {
+    LifecycleResumeEffect(opened) {
+        if (opened && pasted.isBlank()) {
             val clip = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
             if (looksDone(clip)) pasted = clip.trim()
         }
@@ -564,7 +570,10 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
                     busy = true
                     scope.launch {
                         runCatching { g.members.connectGoogle(forPerson) }
-                            .onSuccess { url -> opened = true; error = null; runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } }
+                            .onSuccess { url ->
+                                opened = true; attempt++; error = null; pasted = ""
+                                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                            }
                             .onFailure { error = it.message }
                         busy = false
                     }

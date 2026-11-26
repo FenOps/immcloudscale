@@ -219,7 +219,7 @@ func (h *Handler) Routes() http.Handler {
 		w.WriteHeader(204)
 	}))
 	mux.Handle("POST /api/v1/me/google/import", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
-		h.S.ImportNow()
+		h.S.ImportNow(u.Name)
 		w.WriteHeader(202)
 	}))
 	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
