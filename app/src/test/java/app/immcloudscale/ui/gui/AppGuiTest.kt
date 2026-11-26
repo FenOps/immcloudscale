@@ -166,6 +166,38 @@ class AppGuiTest {
         }
     }
 
+    /**
+     * Away from home Wi-Fi: the server doesn't answer and remote access can't start. The screens must still work.
+     * (Tailscale itself can't run here; tsbridge_test.go covers it starting the way it does on a phone.)
+     */
+    @Test fun awayFromHome() {
+        val g = ApplicationProvider.getApplicationContext<ImmApp>().graph
+        val away = "http://127.0.0.1:9"
+        runBlocking {
+            g.settings.update {
+                it.copy(
+                    immichUrl = away, immichToken = "demo", immichTokenIsApiKey = true, immichUserName = "Camille Martin",
+                    ncUrl = "$away/nc", ncUser = "camille", ncAppPassword = "demo", ncUserId = "camille",
+                    vpnConfig = DEMO_VPN, vpnAutoConnect = true, backupEnabled = true, backupAnywhere = true,
+                    pairedServer = away, pairedServerName = "homeserver", pairedServerId = "ics_home",
+                    tsEnabled = true, tsServerIp = "100.64.0.1", tsAuthKey = "tskey-auth-demo",
+                    deviceToken = "t", pairedDeviceId = "dev_x",
+                )
+            }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            g.tailscale.onNetwork(false)
+            settle(4000)
+            for (t in listOf("Collections", "Files", "Network", "Photos")) {
+                tab(t)
+                settle(2500)
+            }
+            compose.onAllNodesWithContentDescription("Account and settings").onFirst().performClick()
+            settle(2500)
+            shot("40-away-from-home")
+        }
+    }
+
     /** The features added in 0.3.0: remote access, backup choices, deleting, editing, members and more. */
     @Test fun newFeatures() {
         signIn()

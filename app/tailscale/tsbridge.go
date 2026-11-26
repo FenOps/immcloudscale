@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -39,11 +41,20 @@ var (
 // Start joins the tailnet. dir keeps this phone's Tailscale identity between runs. authKey may be empty:
 // the phone then needs a sign-in, whose page AuthURL returns. controlURL is empty for Tailscale's servers,
 // or a Headscale address. Calling Start again while running does nothing.
-func Start(dir, hostname, authKey, controlURL string) error {
+func Start(dir, hostname, authKey, controlURL string) (err error) {
+	// A panic while starting would close the whole app; report it as an error instead.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("Tailscale couldn't start: %v", r)
+		}
+	}()
 	mu.Lock()
 	defer mu.Unlock()
 	if srv != nil {
 		return nil
+	}
+	if err := useAppDirs(dir); err != nil {
+		return err
 	}
 	s := &tsnet.Server{
 		Dir:      dir,
@@ -72,6 +83,16 @@ func Start(dir, hostname, authKey, controlURL string) error {
 	srv, ln, token = s, l, hex.EncodeToString(b)
 	go http.Serve(l, proxy(s, token))
 	return nil
+}
+
+// useAppDirs gives Tailscale's logs a place inside the app's own storage. An Android app has no home, cache or
+// writable temp directory, and without one Tailscale's log setup panics ("no safe place found to store log state").
+func useAppDirs(dir string) error {
+	logs := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		return err
+	}
+	return os.Setenv("TS_LOGS_DIR", logs)
 }
 
 // Stop leaves the tailnet until the next Start. The phone stays signed in. Routes are forgotten: they belong to
