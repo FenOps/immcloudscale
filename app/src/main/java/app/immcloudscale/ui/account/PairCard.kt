@@ -72,7 +72,7 @@ fun scanPairingCode(context: android.content.Context, onLink: (PairLink) -> Unit
 
 /**
  * "Pair with ImmCloudScale Server": one code from the server's console sets up photos, files
- * and the home VPN together.
+ * and remote access together.
  */
 @Composable
 fun PairCard(onPaired: () -> Unit) {

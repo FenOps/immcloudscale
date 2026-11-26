@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -96,13 +95,6 @@ fun ServersScreen(onBack: (() -> Unit)?, onNetwork: () -> Unit, onDone: () -> Un
             )
             ImmichCard()
             NextcloudCard()
-            ServerCard(Icons.Outlined.Hub, "Home VPN", "WireGuard", s.vpnConfigured, if (s.vpnConfigured) "Configured" else "Reach your NAS when you're away from home") {
-                FilledTonalButton(onClick = onNetwork) { Text(if (s.vpnConfigured) "Open Network" else "Set up VPN") }
-            }
-            Text(
-                "Tip: set up the VPN first if your servers are only reachable at home; then use their VPN or LAN address here.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

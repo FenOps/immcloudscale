@@ -52,7 +52,6 @@ import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.immich.ServerStorage
 import app.immcloudscale.data.nextcloud.Quota
 import app.immcloudscale.data.tailscale.TsStatus
-import app.immcloudscale.data.vpn.VpnStatus
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.Pinwheel
@@ -60,12 +59,11 @@ import app.immcloudscale.ui.components.formatAgo
 import app.immcloudscale.ui.components.formatBytes
 import kotlinx.coroutines.launch
 
-/** Google's account card, adapted: who you are on each server, backup, storage, and the VPN. */
+/** Google's account card, adapted: who you are on each server, backup, storage, and remote access. */
 @Composable
 fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> Unit, onNetwork: () -> Unit, onMembers: () -> Unit = {}) {
     val g = LocalContext.current.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
-    val vpn by g.vpn.state.collectAsStateWithLifecycle()
     var immichStorage by remember { mutableStateOf<ServerStorage?>(null) }
     var quota by remember { mutableStateOf<Quota?>(null) }
     LaunchedEffect(Unit) {
@@ -80,9 +78,10 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
         val scope = rememberCoroutineScope()
         val ts by g.tailscale.state.collectAsStateWithLifecycle()
         val routing = ts.status == TsStatus.Connected && !g.tailscale.atHome
+        val needsYou = !g.tailscale.atHome && (ts.status == TsStatus.NeedsLogin || ts.status == TsStatus.Error)
         AccountCard(
-            s, vpn.status == VpnStatus.Connected, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers,
-            onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing,
+            s, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers,
+            onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing, remoteNeedsYou = needsYou,
         )
     }
 }
@@ -90,7 +89,6 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
 @Composable
 fun AccountCard(
     s: AppSettings,
-    vpnConnected: Boolean,
     immichStorage: ServerStorage?,
     quota: Quota?,
     onDismiss: () -> Unit,
@@ -100,6 +98,7 @@ fun AccountCard(
     onMembers: () -> Unit = {},
     onTheme: (String) -> Unit = {},
     remoteConnected: Boolean = false,
+    remoteNeedsYou: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -153,12 +152,12 @@ fun AccountCard(
                 modifier = Modifier.clickable { onDismiss(); onNetwork() },
                 colors = rowColors,
                 leadingContent = { Icon(Icons.Outlined.Hub, null) },
-                headlineContent = { Text(if (s.vpnConfigured) (if (vpnConnected) "Connected to home" else "Home VPN") else "Remote access") },
+                headlineContent = { Text("Remote access") },
                 supportingContent = {
                     Text(
                         when {
-                            s.vpnConfigured -> if (vpnConnected) "WireGuard tunnel is up" else "Not connected"
                             remoteConnected -> "Connected from outside"
+                            remoteNeedsYou -> "Needs you: open the Network tab"
                             s.tsEnabled && s.tsServerIp.isNotBlank() -> "On when you're away from home"
                             else -> "Off"
                         },

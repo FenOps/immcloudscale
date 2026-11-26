@@ -17,10 +17,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,7 +97,7 @@ fun EmptyState(
             body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center,
         )
-        if (action != null) TextButton(onClick = onAction, modifier = Modifier.padding(top = 12.dp)) { Text(action) }
+        if (action != null) FilledTonalButton(onClick = onAction, modifier = Modifier.padding(top = 16.dp)) { Text(action) }
     }
 }
 

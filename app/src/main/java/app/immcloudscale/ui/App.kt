@@ -138,7 +138,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
     var account by remember { mutableStateOf(false) }
     var newAlbum by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val start = remember { if (settings.immichConfigured || settings.nextcloudConfigured || settings.vpnConfigured) "main" else "setup" }
+    val start = remember { if (settings.immichConfigured || settings.nextcloudConfigured) "main" else "setup" }
 
     NavHost(
         nav, start,
@@ -245,7 +245,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         title = { Text("You're all set") },
         text = {
             Text(
-                "Your photos, files and home VPN are connected to ${settings.pairedServerName.ifBlank { "your server" }}.\n\n" +
+                "Your photos, files and remote access are set up with ${settings.pairedServerName.ifBlank { "your server" }}.\n\n" +
                     "Turn on backup so the photos and videos on this phone are copied to your server automatically?",
             )
         },

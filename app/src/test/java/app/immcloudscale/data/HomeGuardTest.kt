@@ -25,15 +25,15 @@ class HomeGuardTest {
 
     @Test fun cafeWithTheSameAddressGetsNoCredentials() {
         var probes = 0
-        val guard = HomeGuard({ paired }, { false }, probe = { probes++; "someone-elses-device" })
+        val guard = HomeGuard({ paired }, probe = { probes++; "someone-elses-device" })
         val e = runCatching { guard.check("http://192.168.1.50:2283/api/users/me".toHttpUrl()) }.exceptionOrNull()
-        assertTrue(e is IOException && e.message!!.contains("turn on the VPN"))
+        assertTrue(e is IOException && e.message!!.contains("turn on Remote access"))
         assertEquals(1, probes)
     }
 
     @Test fun homeIsVerifiedOncePerNetwork() {
         var probes = 0
-        val guard = HomeGuard({ paired }, { false }, probe = { probes++; "ics_home" })
+        val guard = HomeGuard({ paired }, probe = { probes++; "ics_home" })
         guard.networkKey = "wifi-1"
         repeat(3) { guard.check("http://192.168.1.50:2283/api/x".toHttpUrl()) }
         assertEquals(1, probes)
@@ -44,21 +44,21 @@ class HomeGuardTest {
 
     @Test fun pairedThroughAHostNameStillGuardsTheLanAddress() {
         val viaName = paired.copy(pairedServer = "http://nas.local:8790")
-        val guard = HomeGuard({ viaName }, { false }, probe = { "someone-elses-device" })
+        val guard = HomeGuard({ viaName }, probe = { "someone-elses-device" })
         val e = runCatching { guard.check("http://192.168.1.50:2283/api/users/me".toHttpUrl()) }.exceptionOrNull()
         assertTrue("the Immich LAN address must still be checked", e is IOException)
     }
 
     @Test fun onlyThePairedServersAddressIsChecked() {
         // A server set up by hand at another LAN address isn't checked against the paired one.
-        HomeGuard({ paired }, { false }, probe = { error("must not probe") }).check("http://192.168.2.10:2283/api".toHttpUrl())
+        HomeGuard({ paired }, probe = { error("must not probe") }).check("http://192.168.2.10:2283/api".toHttpUrl())
     }
 
-    @Test fun vpnPublicHostsAndManualSetupsSkipTheCheck() {
-        val guard = HomeGuard({ paired }, { true }, probe = { error("must not probe") })
-        guard.check("http://192.168.1.50:2283/api/x".toHttpUrl()) // VPN up
-        HomeGuard({ paired }, { false }, probe = { error("must not probe") }).check("https://photos.example.com/api".toHttpUrl())
-        HomeGuard({ paired.copy(pairedServerId = "") }, { false }, probe = { error("must not probe") })
+    @Test fun tailscalePublicHostsAndManualSetupsSkipTheCheck() {
+        val guard = HomeGuard({ paired }, probe = { error("must not probe") })
+        guard.check("http://192.168.1.50:2283/api/x".toHttpUrl(), viaTailscale = true)
+        HomeGuard({ paired }, probe = { error("must not probe") }).check("https://photos.example.com/api".toHttpUrl())
+        HomeGuard({ paired.copy(pairedServerId = "") }, probe = { error("must not probe") })
             .check("http://192.168.1.50:2283/api".toHttpUrl())
     }
 
@@ -66,7 +66,7 @@ class HomeGuardTest {
         val server = MockWebServer().apply { start() }
         val base = server.url("/").toString().trimEnd('/')
         val s = paired.copy(immichUrl = base, pairedServer = base) // MockWebServer stands in for the paired server
-        val guard = HomeGuard({ s }, { false }, probe = { "wrong" })
+        val guard = HomeGuard({ s }, probe = { "wrong" })
         val http = buildHttpClient({ s }, guard)
         // MockWebServer listens on 127.0.0.1, which counts as private, so the guard applies.
         val r = runCatching { http.newCall(Request.Builder().url("$base/api/users/me").build()).execute() }
@@ -80,7 +80,7 @@ class HomeGuardTest {
         val server = MockWebServer().apply { start() }
         val base = server.url("/").toString().trimEnd('/')
         val s = paired.copy(immichUrl = base, pairedServer = base)
-        val http = buildHttpClient({ s }, HomeGuard({ s }, { false }, probe = { "wrong" }))
+        val http = buildHttpClient({ s }, HomeGuard({ s }, probe = { "wrong" }))
         val req = Request.Builder().url("$base/api/v1/manage/users").header("Authorization", "Device dev_x:secret").build()
         assertTrue(runCatching { http.newCall(req).execute() }.isFailure)
         assertEquals(0, server.requestCount)
@@ -96,7 +96,7 @@ class HomeGuardTest {
             override fun proxy() = null
             override fun token() = "t"
         }
-        val http = buildHttpClient({ s }, HomeGuard({ s }, { false }, probe = { "wrong" }), route)
+        val http = buildHttpClient({ s }, HomeGuard({ s }, probe = { "wrong" }), route)
         assertTrue(runCatching { http.newCall(Request.Builder().url("$base/api/users/me").build()).execute() }.isFailure)
         assertEquals(0, server.requestCount)
         server.shutdown()

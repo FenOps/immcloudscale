@@ -9,6 +9,7 @@ import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.HomeRoute
 import app.immcloudscale.data.HttpException
+import app.immcloudscale.data.NetworkMonitor
 import app.immcloudscale.data.SettingsStore
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
@@ -18,8 +19,6 @@ import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.data.tailscale.TailscaleManager
-import app.immcloudscale.data.vpn.VpnManager
-import app.immcloudscale.data.vpn.VpnStatus
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -39,6 +38,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.withIndex
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -52,7 +52,7 @@ class AppGraph(val context: Context) {
     val settings = SettingsStore(context)
     val settingsState: StateFlow<AppSettings> = settings.state
     val tailscale = TailscaleManager(context, settings, scope)
-    val homeGuard: HomeGuard = HomeGuard({ settingsState.value }, { vpn.state.value.status == VpnStatus.Connected })
+    val homeGuard: HomeGuard = HomeGuard({ settingsState.value })
     val http = buildHttpClient({ settingsState.value }, homeGuard, object : HomeRoute {
         override fun proxy() = tailscale.proxy()
         override fun token() = tailscale.proxyToken()
@@ -61,7 +61,7 @@ class AppGraph(val context: Context) {
     })
     val immich = ImmichClient(http) { settingsState.value.immichUrl }
     val nextcloud = NextcloudClient(http, { settingsState.value.ncUrl }, { settingsState.value.let { it.ncUserId.ifBlank { it.ncUser } } })
-    val vpn: VpnManager = VpnManager(context, settings, scope, { key -> homeGuard.networkKey = key }) { home, info ->
+    val network = NetworkMonitor(context, settings, scope, { key -> homeGuard.networkKey = key }) { home, info ->
         info?.let(tailscale::learnServerIp)
         // Connections made on the old network (direct, or through Tailscale) mustn't be reused on the new one.
         http.connectionPool.evictAll()
@@ -74,17 +74,12 @@ class AppGraph(val context: Context) {
     val offline = OfflineStore(context)
     val members = MembersClient(http) { settingsState.value }
 
-    /**
-     * Pairs with an ImmCloudScale server: the WireGuard key pair is made here and only the public
-     * key is sent; the server answers with Immich, Nextcloud and VPN settings for this phone.
-     */
+    /** Pairs with an ImmCloudScale server, which answers with Immich, Nextcloud and remote access settings for this phone. */
     suspend fun pairWithServer(server: String, code: String) {
-        val (priv, pub) = app.immcloudscale.data.vpn.VpnManager.newKeyPair()
         val name = listOf(android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, android.os.Build.MODEL)
             .distinct().joinToString(" ").take(60)
-        val result = Pairing.pair(http, server, code, name, pub, settingsState.value.pairedDeviceId)
-        vpn.disconnect()
-        settings.update { Pairing.apply(it, result, priv, server) }
+        val result = Pairing.pair(http, server, code, name, settingsState.value.pairedDeviceId)
+        settings.update { Pairing.apply(it, result, server) }
     }
 
     /**
@@ -155,7 +150,8 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
-        graph.vpn.startAutoConnectMonitor()
+        graph.network.start()
+        graph.scope.launch { graph.settings.dropRetired() }
         // Reschedule backup with the settings that changed (not a separately collected copy, which can lag).
         graph.settingsState
             .distinctUntilChanged { a, b ->

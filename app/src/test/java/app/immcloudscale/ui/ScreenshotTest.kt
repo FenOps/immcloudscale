@@ -1,15 +1,19 @@
 package app.immcloudscale.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import app.immcloudscale.data.AppSettings
@@ -23,11 +27,10 @@ import app.immcloudscale.data.immich.ServerStorage
 import app.immcloudscale.data.immich.groupByDay
 import app.immcloudscale.data.nextcloud.CloudFile
 import app.immcloudscale.data.nextcloud.Quota
-import app.immcloudscale.data.vpn.PeerStats
-import app.immcloudscale.data.vpn.VpnState
-import app.immcloudscale.data.vpn.VpnStatus
-import app.immcloudscale.data.vpn.WgRoutes
+import app.immcloudscale.data.tailscale.TsState
+import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.ui.account.AccountCard
+import app.immcloudscale.ui.account.BackupWhereStatus
 import app.immcloudscale.ui.collections.CollectionsContent
 import app.immcloudscale.ui.collections.CollectionsState
 import app.immcloudscale.ui.files.FilesActions
@@ -37,6 +40,8 @@ import app.immcloudscale.ui.network.NetworkActions
 import app.immcloudscale.ui.network.NetworkContent
 import app.immcloudscale.ui.network.NetworkUi
 import app.immcloudscale.ui.network.Reach
+import app.immcloudscale.ui.network.RemoteAccessActions
+import app.immcloudscale.ui.network.RemoteAccessCard
 import app.immcloudscale.ui.network.ServiceCheck
 import app.immcloudscale.ui.photos.AssetGrid
 import app.immcloudscale.ui.photos.BackupIndicator
@@ -75,17 +80,7 @@ class ScreenshotTest {
     private val settings = AppSettings(
         immichUrl = "http://nas.lan:2283", immichToken = "t", immichUserName = "Camille Martin", immichEmail = "camille@home.lan",
         ncUrl = "https://cloud.home.lan", ncUser = "camille", ncAppPassword = "p",
-        vpnConfig = """
-            [Interface]
-            PrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=
-            Address = 10.8.0.2/24
-            DNS = 10.8.0.1
-            # Name = Home NAS
-            [Peer]
-            PublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=
-            AllowedIPs = 10.8.0.0/24, 192.168.1.0/24
-            Endpoint = home.example.org:51820
-        """.trimIndent(),
+        pairedServer = "http://nas.lan:8790", pairedServerId = "ics_home", tsServerIp = "100.101.102.103", tsEnabled = true,
         backupEnabled = true, lastBackupAt = now - 5 * 60_000,
     )
 
@@ -172,18 +167,28 @@ class ScreenshotTest {
 
     @Test fun network() = paparazzi.snapshot {
         Frame(Tab.Network) { pad ->
-            val summary = WgRoutes.summarize(settings.vpnConfig)
             NetworkContent(
-                VpnState(VpnStatus.Connected, network = "Mobile data", since = now - 600_000), settings,
+                settings,
                 NetworkUi(
-                    stats = listOf(PeerStats(summary.peers[0].publicKey, 48_300_000, 2_100_000, now - 40_000)),
                     services = listOf(
                         ServiceCheck("Immich", settings.immichUrl, Reach.Up, 38),
                         ServiceCheck("Nextcloud", settings.ncUrl, Reach.Up, 52),
                     ),
                 ),
-                summary, "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=", NetworkActions(), bottomPadding = pad,
-            )
+                NetworkActions(), bottomPadding = pad,
+            ) { RemoteAccessCard(TsState(TsStatus.Connected, ip = "100.64.0.9"), settings, atHome = false, RemoteAccessActions()) }
+        }
+    }
+
+    /** The Photos page's backup status as it follows the connection: home, away and connected, away and Remote access off. */
+    @Test fun backupStatus() = paparazzi.snapshot {
+        ImmTheme(dark = false, dynamic = false) {
+            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                BackupWhereStatus(settings, atHome = true, TsState(TsStatus.Off), true, {}, compact = true)
+                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Connected), true, {}, compact = true)
+                BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Starting), true, {}, compact = true)
+                BackupWhereStatus(settings.copy(tsEnabled = false), atHome = false, TsState(TsStatus.Off), true, {}, compact = true)
+            }
         }
     }
 
@@ -191,7 +196,7 @@ class ScreenshotTest {
         ImmTheme(dark = false, dynamic = false) {
             Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0x66000000)), contentAlignment = Alignment.Center) {
                 AccountCard(
-                    settings, vpnConnected = true,
+                    settings,
                     immichStorage = ServerStorage("8 TiB", "2.3 TiB", "5.7 TiB", 28.7),
                     quota = Quota(312_000_000_000, 688_000_000_000), {}, {}, {}, {},
                 )

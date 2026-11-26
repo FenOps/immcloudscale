@@ -6,8 +6,6 @@ import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
-import app.immcloudscale.data.vpn.VpnManager
-import app.immcloudscale.data.vpn.WgRoutes
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -58,25 +56,18 @@ class PairingTest {
 
     @Test fun pairsAndConfiguresEverything() = runTest {
         val server = MockWebServer().apply { enqueue(MockResponse().setBody(realResponse)); start() }
-        val (priv, pub) = VpnManager.newKeyPair()
-        val r = Pairing.pair(OkHttpClient(), server.url("/").toString(), "ecs8wrts", "Pixel 9", pub)
+        val r = Pairing.pair(OkHttpClient(), server.url("/").toString(), "ecs8wrts", "Pixel 9")
         val req = server.takeRequest()
         assertEquals("/api/v1/pair", req.path)
         val body = Json.parseToJsonElement(req.body.readUtf8()).jsonObject
         assertEquals("ECS8-WRTS", body["code"]!!.jsonPrimitive.content)
-        assertEquals(pub, body["wgPublicKey"]!!.jsonPrimitive.content)
-        assertTrue("the private key must never be sent", !body.toString().contains(priv))
+        assertNull("no VPN key is sent any more", body["wgPublicKey"])
 
-        val s = Pairing.apply(AppSettings(), r, priv, "192.0.2.2")
-        assertTrue(s.immichConfigured && s.nextcloudConfigured && s.vpnConfigured)
+        val s = Pairing.apply(AppSettings(), r, "192.0.2.2")
+        assertTrue(s.immichConfigured && s.nextcloudConfigured)
         assertTrue(s.immichTokenIsApiKey)
         assertEquals("http://192.0.2.2:8080", s.ncUrl)
         assertEquals("http://192.0.2.2:8790", s.pairedServer)
-        assertNull(VpnManager.validate(s.vpnConfig))
-        assertEquals(VpnManager.publicKeyOf(s.vpnConfig), pub)
-        val summary = WgRoutes.summarize(s.vpnConfig)
-        assertEquals(listOf("10.8.0.2/32"), summary.addresses)
-        assertEquals("192.0.2.2:51820", summary.peers.single().endpoint)
         server.shutdown()
     }
 
@@ -85,7 +76,7 @@ class PairingTest {
             enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"that pairing code is wrong or has expired"}"""))
             start()
         }
-        val e = runCatching { Pairing.pair(OkHttpClient(), server.url("/").toString(), "AAAA-BBBB", "x", "k") }.exceptionOrNull()
+        val e = runCatching { Pairing.pair(OkHttpClient(), server.url("/").toString(), "AAAA-BBBB", "x") }.exceptionOrNull()
         assertEquals("that pairing code is wrong or has expired", e?.message)
         server.shutdown()
     }
@@ -111,11 +102,10 @@ class PairingTest {
         val url = System.getenv("ICS_E2E_SERVER")
         val code = System.getenv("ICS_E2E_CODE")
         assumeTrue(url != null && code != null)
-        val (priv, pub) = VpnManager.newKeyPair()
-        val r = Pairing.pair(OkHttpClient(), url!!, code!!, "Robolectric phone", pub)
-        var settings = Pairing.apply(AppSettings(), r, priv, url)
-        // The same client chain as the app, home-network check included (VPN off, as on home Wi-Fi).
-        val http = buildHttpClient({ settings }, HomeGuard({ settings }, { false }))
+        val r = Pairing.pair(OkHttpClient(), url!!, code!!, "Robolectric phone")
+        var settings = Pairing.apply(AppSettings(), r, url)
+        // The same client chain as the app, home-network check included (as on home Wi-Fi).
+        val http = buildHttpClient({ settings }, HomeGuard({ settings }))
         // The app's own clients, with the credentials the server handed out.
         val immich = ImmichClient(http) { settings.immichUrl }
         assertEquals(r.user.email, immich.me().email)
@@ -126,8 +116,7 @@ class PairingTest {
         assertTrue("uploaded photo missing from the timeline", timeline.items.any { it.originalFileName == "live.jpg" })
         val nc = NextcloudClient(http, { settings.ncUrl }, { settings.ncUser })
         assertTrue(nc.list("/").isNotEmpty())
-        if (r.wireguard != null) assertNull(VpnManager.validate(settings.vpnConfig)) // absent when the server runs without the VPN
-        println("LIVE OK: ${r.user.name} ${r.immich.url} ${r.nextcloud.url} vpn=${r.wireguard?.address}")
+        println("LIVE OK: ${r.user.name} ${r.immich.url} ${r.nextcloud.url}")
     }
 
     /** Live: joining, approving from an admin phone, the locked folder session and duplicates (ICS_E2E_* as above, code for an admin). */
@@ -135,10 +124,9 @@ class PairingTest {
         val url = System.getenv("ICS_E2E_SERVER")
         val code = System.getenv("ICS_E2E_ADMIN_CODE")
         assumeTrue(url != null && code != null)
-        val (priv, pub) = VpnManager.newKeyPair()
-        var settings = Pairing.apply(AppSettings(), Pairing.pair(OkHttpClient(), url!!, code!!, "Admin phone", pub), priv, url)
+        var settings = Pairing.apply(AppSettings(), Pairing.pair(OkHttpClient(), url!!, code!!, "Admin phone"), url)
         assertTrue("pairing an admin gives an admin phone", settings.isAdmin && settings.deviceToken.isNotBlank())
-        val http = buildHttpClient({ settings }, HomeGuard({ settings }, { false }))
+        val http = buildHttpClient({ settings }, HomeGuard({ settings }))
         val members = MembersClient(http) { settings }
 
         val name = "e2e" + System.currentTimeMillis() % 100000

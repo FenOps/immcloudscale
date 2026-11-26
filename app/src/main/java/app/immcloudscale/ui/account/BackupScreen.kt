@@ -80,6 +80,9 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
+    val atHome by g.tailscale.home.collectAsStateWithLifecycle()
+    val ts by g.tailscale.state.collectAsStateWithLifecycle()
+    val unmetered by g.network.unmetered.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var folders by remember { mutableStateOf<List<String>>(emptyList()) }
     val work by remember { WorkManager.getInstance(ctx).getWorkInfosForUniqueWorkFlow(BackupWorker.NOW) }.collectAsStateWithLifecycle(emptyList())
@@ -192,8 +195,8 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
                 }
             }
 
-            SectionHeader("Back up when I'm on")
-            BackupWhereChooser(s, { anywhere -> update { chooseBackupWhere(it, anywhere) } }, onOpenNetwork, Modifier.padding(horizontal = 16.dp))
+            SectionHeader("Where backup runs")
+            BackupWhereStatus(s, atHome, ts, unmetered, onOpenNetwork, Modifier.padding(horizontal = 16.dp))
 
             SectionHeader("Schedule")
             BackupScheduleSection(s) { block -> update(block) }
