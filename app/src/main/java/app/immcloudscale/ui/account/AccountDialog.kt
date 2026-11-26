@@ -166,18 +166,18 @@ fun AccountCard(
                     )
                 },
             )
-            ListItem(
-                colors = rowColors,
-                leadingContent = { Icon(Icons.Outlined.Palette, null) },
-                headlineContent = { Text("Theme") },
-                supportingContent = { ThemeChooser(s.theme, onTheme) },
-            )
             if (s.deviceToken.isNotBlank()) ListItem(
                 modifier = Modifier.clickable { onDismiss(); onGoogle() },
                 colors = rowColors,
                 leadingContent = { Icon(Icons.Outlined.CloudDownload, null) },
                 headlineContent = { Text("Import from Google") },
                 supportingContent = { Text("Move Google Drive and Google Photos to your server") },
+            )
+            ListItem(
+                colors = rowColors,
+                leadingContent = { Icon(Icons.Outlined.Palette, null) },
+                headlineContent = { Text("Theme") },
+                supportingContent = { ThemeChooser(s.theme, onTheme) },
             )
             if (s.isAdmin) ListItem(
                 modifier = Modifier.clickable { onDismiss(); onMembers() },

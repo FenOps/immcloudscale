@@ -4,7 +4,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,16 +16,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Sync
@@ -36,6 +36,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -55,28 +56,34 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.SignInCatcher
 import app.immcloudscale.data.pairing.GoogleAccount
 import app.immcloudscale.data.pairing.GoogleStatus
 import app.immcloudscale.data.pairing.TakeoutImport
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.SectionHeader
 import app.immcloudscale.ui.components.formatAgo
+import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.time.Instant
 
 /** Ticked-off steps of "Move to your own NAS", kept in [AppSettings.googleDone]. */
 object GoogleSteps {
@@ -89,6 +96,8 @@ object GoogleSteps {
 
 class GoogleActions(
     val onBack: () -> Unit = {},
+    val onRetry: () -> Unit = {},
+    val onOpenBackup: () -> Unit = {},
     val onSaveKey: (String, String) -> Unit = { _, _ -> },
     val onConnect: () -> Unit = {},
     val onSync: (GoogleAccount) -> Unit = {},
@@ -100,7 +109,7 @@ class GoogleActions(
 
 /** Moving from Google: Drive copied and kept in sync, Google Photos imported from Takeout, then a checklist. */
 @Composable
-fun GoogleImportScreen(onBack: () -> Unit) {
+fun GoogleImportScreen(onBack: () -> Unit, onOpenBackup: () -> Unit = {}) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
@@ -108,7 +117,7 @@ fun GoogleImportScreen(onBack: () -> Unit) {
     val snack = remember { SnackbarHostState() }
     var status by remember { mutableStateOf<GoogleStatus?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var connecting by remember { mutableStateOf(false) }
+    var connecting by rememberSaveable { mutableStateOf(false) } // survives a trip to the browser
     var removing by remember { mutableStateOf<GoogleAccount?>(null) }
 
     suspend fun load() {
@@ -139,6 +148,8 @@ fun GoogleImportScreen(onBack: () -> Unit) {
         status, error, s, snack,
         GoogleActions(
             onBack = onBack,
+            onRetry = { scope.launch { load() } },
+            onOpenBackup = onOpenBackup,
             onSaveKey = { id, secret -> act { g.members.setGoogleKey(id, secret); snack.showSnackbar("Google key saved") } },
             onConnect = { connecting = true },
             onSync = { a -> act { g.members.syncGoogle(a.id); snack.showSnackbar("Copying ${a.email} again") } },
@@ -205,8 +216,10 @@ fun GoogleImportContent(
             }
             if (status == null) {
                 item {
-                    if (error != null) Notice(Icons.Outlined.ErrorOutline, error, isError = true)
-                    else Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
+                    if (error != null) {
+                        Notice(Icons.Outlined.ErrorOutline, error, isError = true)
+                        TextButton(onClick = a.onRetry, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Try again") }
+                    } else Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
                 }
                 return@LazyColumn
             }
@@ -226,6 +239,11 @@ fun GoogleImportContent(
                 FilledTonalButton(onClick = a.onConnect, enabled = status.keySet, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("Connect a Google account")
                 }
+                if (!status.keySet) Text(
+                    "Available once the Google key is added above.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
             }
 
             item { SectionHeader("Google Photos") }
@@ -234,7 +252,7 @@ fun GoogleImportContent(
             status.imports.forEach { im -> item(key = "im-" + im.export + im.at) { ImportRow(im) } }
 
             if (status.accounts.isNotEmpty() || status.imports.isNotEmpty() || GoogleSteps.STARTED in s.googleDone) {
-                item { SectionHeader("Move to your own NAS") }
+                item { SectionHeader("Finish moving to your server") }
                 item { Checklist(s, status, a) }
             }
         }
@@ -255,7 +273,12 @@ private fun Notice(icon: androidx.compose.ui.graphics.vector.ImageVector?, text:
 @Composable
 private fun Steps(vararg steps: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        steps.forEachIndexed { i, step -> Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium) }
+        steps.forEachIndexed { i, step ->
+            Row {
+                Text("${i + 1}.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(20.dp))
+                Text(step, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            }
+        }
     }
 }
 
@@ -308,7 +331,7 @@ private fun AccountRow(acct: GoogleAccount, a: GoogleActions) {
             else Icon(if (acct.error != null) Icons.Outlined.ErrorOutline else Icons.Outlined.Folder, null,
                 tint = if (acct.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         },
-        headlineContent = { Text(acct.email) },
+        headlineContent = { Text(acct.email, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Column {
                 Text(detail, color = if (acct.error != null && !acct.syncing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -316,9 +339,14 @@ private fun AccountRow(acct: GoogleAccount, a: GoogleActions) {
             }
         },
         trailingContent = {
-            Row {
-                IconButton(onClick = { a.onSync(acct) }, enabled = !acct.syncing) { Icon(Icons.Outlined.Sync, "Copy ${acct.email} now") }
-                TextButton(onClick = { a.onRemove(acct) }) { Text("Disconnect") }
+            var menu by remember { mutableStateOf(false) }
+            IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Options for ${acct.email}") }
+            DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Copy now") }, enabled = !acct.syncing, leadingIcon = { Icon(Icons.Outlined.Sync, null) },
+                    onClick = { menu = false; a.onSync(acct) },
+                )
+                DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menu = false; a.onRemove(acct) })
             }
         },
     )
@@ -342,6 +370,11 @@ private fun TakeoutSteps(status: GoogleStatus, a: GoogleActions) {
                 "Deselect all, then select only Google Photos.",
                 "Delivery method: Add to Drive. Frequency: Export once. File type .zip, size 50 GB.",
                 "Create export. Google takes hours to days; when it lands in that account's Drive, your server imports it by itself.",
+            )
+            Text(
+                "\"Add to Drive\" needs free space in that Google account as big as the photos. Not enough? Choose \"Send download link " +
+                    "via email\" instead, download the files, and put them in Files → ${status.takeoutFolder}.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedButton(onClick = { a.onOpen("https://takeout.google.com/") }) {
                 Icon(Icons.Outlined.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Open Google Takeout")
@@ -405,9 +438,14 @@ private fun Checklist(s: AppSettings, status: GoogleStatus, a: GoogleActions) {
         )
         val nasOn = s.backupEnabled
         ListItem(
-            leadingContent = { Icon(Icons.Outlined.CheckCircle, null, tint = if (nasOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline) },
+            leadingContent = { Checkbox(nasOn, onCheckedChange = null, enabled = false) },
             headlineContent = { Text("This phone backs up to your server") },
-            supportingContent = { Text(if (nasOn) "On" else "Off: turn on backup in Backup settings") },
+            supportingContent = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (nasOn) "On (checked by the app)" else "Off")
+                    if (!nasOn) OutlinedButton(onClick = a.onOpenBackup) { Text("Open Backup") }
+                }
+            },
         )
         val imported = status.imports.filter { it.error == null && it.errors == 0 }
         Step(
@@ -441,7 +479,7 @@ private fun Checklist(s: AppSettings, status: GoogleStatus, a: GoogleActions) {
 @Composable
 private fun Step(done: Boolean, title: String, body: String, onDone: (Boolean) -> Unit, action: (@Composable () -> Unit)? = null) {
     ListItem(
-        modifier = Modifier.clickable { onDone(!done) },
+        modifier = Modifier.toggleable(value = done, role = Role.Checkbox, onValueChange = onDone),
         leadingContent = { Checkbox(done, onCheckedChange = null) },
         headlineContent = { Text(title) },
         supportingContent = {
@@ -462,13 +500,37 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
     val scope = rememberCoroutineScope()
     val me by g.settingsState.collectAsStateWithLifecycle()
     var people by remember { mutableStateOf<List<String>>(emptyList()) }
-    var forPerson by remember { mutableStateOf("") }
-    var pasted by remember { mutableStateOf("") }
-    var opened by remember { mutableStateOf(false) }
+    var forPerson by rememberSaveable { mutableStateOf("") }
+    var pasted by rememberSaveable { mutableStateOf("") }
+    var opened by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(isAdmin) {
         if (isAdmin) people = runCatching { g.members.members().map { it.name } }.getOrDefault(emptyList())
+    }
+    // The phone itself catches the end of the sign-in, so usually nothing needs pasting.
+    val catcher = remember { SignInCatcher() }
+    DisposableEffect(Unit) { onDispose { catcher.stop() } }
+    fun finish(url: String) {
+        busy = true
+        scope.launch {
+            runCatching { g.members.finishGoogle(url) }.onSuccess(onConnected).onFailure { error = it.message }
+            busy = false
+        }
+    }
+    LaunchedEffect(opened) {
+        if (!opened) return@LaunchedEffect
+        val caught = catcher.await() ?: return@LaunchedEffect
+        pasted = caught
+        finish(caught)
+    }
+    // Back from the browser with the address copied: fill it in.
+    LifecycleResumeEffect(Unit) {
+        if (pasted.isBlank()) {
+            val clip = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+            if (looksDone(clip)) pasted = clip.trim()
+        }
+        onPauseOrDispose {}
     }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -492,7 +554,8 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
                 Steps(
                     "Open Google's sign-in and choose the account.",
                     "Google may warn that the app isn't verified: it's your own key, so tap Advanced, then Go to ImmCloudScale. Allow access.",
-                    "The browser then shows a page that doesn't load. That's expected: copy its address and paste it below.",
+                    "Then come back here: the account connects by itself. If the browser shows \"This site can't be reached\" " +
+                        "instead, tap its address bar, tap Copy, and come back; the address fills in below.",
                 )
                 Button(onClick = {
                     busy = true
@@ -505,7 +568,11 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
                 }, enabled = !busy) { Text(if (opened) "Open sign-in again" else "Open Google sign-in") }
                 OutlinedTextField(
                     pasted, { pasted = it }, label = { Text("Address of the page that didn't load") },
-                    placeholder = { Text("http://127.0.0.1:53682/?…") }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("http://127.0.0.1:53682/?…") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    isError = pasted.isNotBlank() && !looksDone(pasted),
+                    supportingText = {
+                        if (pasted.isNotBlank() && !looksDone(pasted)) Text("That isn't the address yet: it starts with http://127.0.0.1 and contains code=")
+                    },
                     trailingIcon = {
                         IconButton(onClick = {
                             pasted = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
@@ -516,17 +583,14 @@ private fun ConnectGoogleDialog(isAdmin: Boolean, onDismiss: () -> Unit, onConne
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                busy = true
-                scope.launch {
-                    runCatching { g.members.finishGoogle(pasted) }.onSuccess(onConnected).onFailure { error = it.message }
-                    busy = false
-                }
-            }, enabled = !busy && opened && pasted.isNotBlank()) { Text("Connect") }
+            TextButton(onClick = { finish(pasted) }, enabled = !busy && looksDone(pasted)) { Text("Connect") }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } },
     )
 }
+
+/** The address Google's sign-in ends on, carrying the code. */
+private fun looksDone(s: String) = s.contains("127.0.0.1") && s.contains("code=")
 
 private fun parseInstant(s: String?): Long = runCatching { Instant.parse(s).toEpochMilli() }.getOrDefault(0L)
 

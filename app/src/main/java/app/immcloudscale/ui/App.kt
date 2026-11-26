@@ -206,7 +206,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
-        composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }) }
+        composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }, onOpenBackup = { nav.navigate("backup") }) }
         composable("duplicates") { DuplicatesScreen(onBack = { nav.popBackStack() }) }
         composable("locked") { LockedFolderScreen(onBack = { nav.popBackStack() }) }
         composable("backup") { BackupScreen(onBack = { nav.popBackStack() }, onOpenNetwork = { nav.popBackStack(); tab = Tab.Network }) }
