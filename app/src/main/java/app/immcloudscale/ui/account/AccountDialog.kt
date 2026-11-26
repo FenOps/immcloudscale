@@ -78,9 +78,10 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
         val scope = rememberCoroutineScope()
         val ts by g.tailscale.state.collectAsStateWithLifecycle()
         val routing = ts.status == TsStatus.Connected && !g.tailscale.atHome
+        val needsYou = !g.tailscale.atHome && (ts.status == TsStatus.NeedsLogin || ts.status == TsStatus.Error)
         AccountCard(
             s, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers,
-            onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing,
+            onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing, remoteNeedsYou = needsYou,
         )
     }
 }
@@ -97,6 +98,7 @@ fun AccountCard(
     onMembers: () -> Unit = {},
     onTheme: (String) -> Unit = {},
     remoteConnected: Boolean = false,
+    remoteNeedsYou: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -155,6 +157,7 @@ fun AccountCard(
                     Text(
                         when {
                             remoteConnected -> "Connected from outside"
+                            remoteNeedsYou -> "Needs you: open the Network tab"
                             s.tsEnabled && s.tsServerIp.isNotBlank() -> "On when you're away from home"
                             else -> "Off"
                         },

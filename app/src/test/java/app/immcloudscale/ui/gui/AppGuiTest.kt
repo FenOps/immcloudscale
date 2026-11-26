@@ -215,7 +215,7 @@ class AppGuiTest {
             shot("15-network-remote-access")
             tab("Photos")
             compose.onNodeWithContentDescription("Backup complete").performClick()
-            compose.onNodeWithText("Back up when I'm on").performScrollTo()
+            compose.onNodeWithText("Where backup runs").performScrollTo()
             shot("16-backup-where-and-schedule")
             compose.onNodeWithText("On a schedule").performScrollTo().performClick()
             compose.onNodeWithText("Phone storage").performScrollTo()
