@@ -17,6 +17,11 @@
     <!-- "Media management" (Android 12+, granted in Settings): trash and free up space without asking each time -->
     <uses-permission android:name="android.permission.MANAGE_MEDIA" />
 
+    <!-- To open Google Photos from "Move to your own NAS" (its backup switch is in its settings) -->
+    <queries>
+        <package android:name="com.google.android.apps.photos" />
+    </queries>
+
     <application
         android:name=".ImmApp"
         android:allowBackup="false"

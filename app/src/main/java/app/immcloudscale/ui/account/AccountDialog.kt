@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Group
@@ -61,7 +62,7 @@ import kotlinx.coroutines.launch
 
 /** Google's account card, adapted: who you are on each server, backup, storage, and remote access. */
 @Composable
-fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> Unit, onNetwork: () -> Unit, onMembers: () -> Unit = {}) {
+fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> Unit, onNetwork: () -> Unit, onMembers: () -> Unit = {}, onGoogle: () -> Unit = {}) {
     val g = LocalContext.current.graph
     val s by g.settingsState.collectAsStateWithLifecycle()
     var immichStorage by remember { mutableStateOf<ServerStorage?>(null) }
@@ -80,7 +81,7 @@ fun AccountDialog(onDismiss: () -> Unit, onServers: () -> Unit, onBackup: () -> 
         val routing = ts.status == TsStatus.Connected && !g.tailscale.atHome
         val needsYou = !g.tailscale.atHome && (ts.status == TsStatus.NeedsLogin || ts.status == TsStatus.Error)
         AccountCard(
-            s, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers,
+            s, immichStorage, quota, onDismiss, onServers, onBackup, onNetwork, onMembers, onGoogle,
             onTheme = { t -> scope.launch { g.settings.update { it.copy(theme = t) } } }, remoteConnected = routing, remoteNeedsYou = needsYou,
         )
     }
@@ -96,6 +97,7 @@ fun AccountCard(
     onBackup: () -> Unit,
     onNetwork: () -> Unit,
     onMembers: () -> Unit = {},
+    onGoogle: () -> Unit = {},
     onTheme: (String) -> Unit = {},
     remoteConnected: Boolean = false,
     remoteNeedsYou: Boolean = false,
@@ -163,6 +165,13 @@ fun AccountCard(
                         },
                     )
                 },
+            )
+            if (s.deviceToken.isNotBlank()) ListItem(
+                modifier = Modifier.clickable { onDismiss(); onGoogle() },
+                colors = rowColors,
+                leadingContent = { Icon(Icons.Outlined.CloudDownload, null) },
+                headlineContent = { Text("Import from Google") },
+                supportingContent = { Text("Move Google Drive and Google Photos to your server") },
             )
             ListItem(
                 colors = rowColors,

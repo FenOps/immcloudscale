@@ -285,3 +285,46 @@ func TestMembersListNeverIncludesPasswords(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestGoogleRoutesKeepToTheirPeople(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.Store.Update(func(st *state.State) error {
+		st.Users = []state.User{{Name: "camille", IsAdmin: true}, {Name: "tom"}}
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("a")}, {ID: "dev_t", User: "tom", TokenHash: hashForTest("t")}}
+		st.Google = []state.GoogleAccount{{ID: "g_1", Email: "camille@gmail.com", Person: "camille", Token: `{"refresh_token":"secret-rt"}`}}
+		return nil
+	})
+	call := func(method, path, body, secret string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		r.Header.Set("Authorization", "Device "+secret)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	key := `{"clientId":"123456789-abcdef.apps.googleusercontent.com","clientSecret":"GOCSPX-abcdefghijk"}`
+	if w := call("POST", "/api/v1/manage/google/key", key, "dev_t:t"); w.Code != 403 {
+		t.Fatalf("non-admin set the key: %d", w.Code)
+	}
+	if w := call("POST", "/api/v1/manage/google/key", key, "dev_a:a"); w.Code != 204 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := call("POST", "/api/v1/me/google/connect", `{"for":"camille"}`, "dev_t:t"); w.Code != 403 {
+		t.Fatalf("tom connected an account for camille: %d", w.Code)
+	}
+	if w := call("POST", "/api/v1/me/google/connect", `{}`, "dev_t:t"); w.Code != 200 || !strings.Contains(w.Body.String(), "accounts.google.com") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := call("GET", "/api/v1/me/google", "", "dev_t:t"); strings.Contains(w.Body.String(), "camille@gmail.com") {
+		t.Fatal("tom sees camille's account")
+	}
+	w := call("GET", "/api/v1/me/google", "", "dev_a:a")
+	if !strings.Contains(w.Body.String(), "camille@gmail.com") || strings.Contains(w.Body.String(), "secret-rt") {
+		t.Fatalf("%s", w.Body)
+	}
+	if w := call("DELETE", "/api/v1/me/google/accounts/g_1", "", "dev_t:t"); w.Code != 404 {
+		t.Fatalf("tom removed camille's account: %d", w.Code)
+	}
+}

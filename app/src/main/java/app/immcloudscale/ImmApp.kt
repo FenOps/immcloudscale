@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import app.immcloudscale.data.AppSettings
+import app.immcloudscale.data.GoogleReminderWorker
 import app.immcloudscale.data.HomeGuard
 import app.immcloudscale.data.HomeRoute
 import app.immcloudscale.data.HttpException
@@ -162,6 +163,12 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
             .withIndex()
             // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.
             .onEach { (i, s) -> if (i > 0 || s.backupEnabled) BackupWorker.schedule(this, s) }
+            .launchIn(graph.scope)
+        // The reminder to switch off Google Photos backup, while it applies (see GoogleReminderWorker).
+        graph.settingsState
+            .distinctUntilChanged { a, b -> GoogleReminderWorker.due(a) == GoogleReminderWorker.due(b) }
+            .withIndex()
+            .onEach { (i, s) -> if (i > 0 || GoogleReminderWorker.due(s)) GoogleReminderWorker.update(this, s) }
             .launchIn(graph.scope)
     }
 

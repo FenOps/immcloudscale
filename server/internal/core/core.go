@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/FenOps/immcloudscale/server/internal/google"
 	"github.com/FenOps/immcloudscale/server/internal/immich"
 	"github.com/FenOps/immcloudscale/server/internal/nextcloud"
 	"github.com/FenOps/immcloudscale/server/internal/stack"
@@ -24,7 +25,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.3.3"
+const Version = "0.4.0"
 
 const ncAdmin = "ics-admin"
 
@@ -47,6 +48,14 @@ type Server struct {
 	codesMu   sync.Mutex
 	inflight  map[string]bool
 	cancelled map[string]bool
+
+	// Moving away from Google (see google.go). Google nil means no tools here (tests that don't need them).
+	Google         *google.Tools
+	GoogleTokenURL string
+	googleMu       sync.Mutex
+	logins         map[string]googleLogin
+	work           googleWork
+	kick           chan struct{}
 
 	tokMu      sync.Mutex
 	tok        string
@@ -94,6 +103,7 @@ func New(st *state.Store) *Server {
 		WaitTimeout:  20 * time.Minute,
 		PortFree:     PortFree,
 		TailscaleIP:  cachedTailscaleIP(tailscaleIPCmd),
+		Google:       google.NewTools("/var/lib/immcloudscale/tools", "/var/cache/immcloudscale"),
 	}
 }
 
@@ -460,6 +470,21 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 			}
 		}
 		st.Pairings = pend
+		// Their Google accounts stop being copied (their token goes), and their import history goes too.
+		gs := st.Google[:0]
+		for _, a := range st.Google {
+			if a.Person != name {
+				gs = append(gs, a)
+			}
+		}
+		st.Google = gs
+		ims := st.Imports[:0]
+		for _, im := range st.Imports {
+			if im.Person != name {
+				ims = append(ims, im)
+			}
+		}
+		st.Imports = ims
 		return nil
 	})
 	if err == nil && hadVPN {

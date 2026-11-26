@@ -50,6 +50,8 @@ data class AppSettings(
     val lastBackupAt: Long = 0L,
     /** Files the last backup run couldn't send (unsupported type, unreadable). */
     val backupSkipped: Int = 0,
+    /** Steps of "Move to your own NAS" the person has ticked off (see GoogleImportScreen). */
+    val googleDone: Set<String> = emptySet(),
     /** Days to back up on, 1 (Monday) to 7; empty means whenever there's something new. */
     val backupDays: Set<Int> = emptySet(),
     /** Time of day for scheduled backups, in minutes after midnight. */
@@ -115,6 +117,7 @@ class SettingsStore(private val context: Context) {
         )
         val backupEnabled = booleanPreferencesKey("backup_enabled")
         val backupWifi = booleanPreferencesKey("backup_wifi")
+        val googleDone = stringSetPreferencesKey("google_done")
         val backupCharging = booleanPreferencesKey("backup_charging")
         val backupVideos = booleanPreferencesKey("backup_videos")
         val backupFolders = stringSetPreferencesKey("backup_folders")
@@ -162,6 +165,7 @@ class SettingsStore(private val context: Context) {
             ncUserId = p[K.ncUserId] ?: "",
             backupEnabled = p[K.backupEnabled] ?: false,
             backupWifiOnly = p[K.backupWifi] ?: false,
+            googleDone = p[K.googleDone] ?: emptySet(),
             backupChargingOnly = p[K.backupCharging] ?: false,
             backupVideos = p[K.backupVideos] ?: true,
             backupFolders = p[K.backupFolders] ?: emptySet(),
@@ -240,6 +244,7 @@ class SettingsStore(private val context: Context) {
             p[K.immichEmail] = n.immichEmail
             p[K.ncUrl] = n.ncUrl; p[K.ncUser] = n.ncUser; p[K.ncPass] = n.ncAppPassword; p[K.ncUserId] = n.ncUserId
             p[K.backupEnabled] = n.backupEnabled; p[K.backupWifi] = n.backupWifiOnly
+            p[K.googleDone] = n.googleDone
             p[K.backupCharging] = n.backupChargingOnly; p[K.backupVideos] = n.backupVideos
             p[K.backupFolders] = n.backupFolders; p[K.backupSince] = n.backupSince
             p[K.lastBackup] = n.lastBackupAt; p[K.backupSkipped] = n.backupSkipped.toString()

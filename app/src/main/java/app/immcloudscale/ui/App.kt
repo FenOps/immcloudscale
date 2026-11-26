@@ -52,6 +52,7 @@ import app.immcloudscale.graph
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.ui.account.AccountDialog
 import app.immcloudscale.ui.account.FreeUpPrompt
+import app.immcloudscale.ui.account.GoogleImportScreen
 import app.immcloudscale.ui.account.MembersScreen
 import app.immcloudscale.ui.account.PairLinkDialog
 import app.immcloudscale.ui.account.BackupScreen
@@ -205,6 +206,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
+        composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }, onOpenBackup = { nav.navigate("backup") }) }
         composable("duplicates") { DuplicatesScreen(onBack = { nav.popBackStack() }) }
         composable("locked") { LockedFolderScreen(onBack = { nav.popBackStack() }) }
         composable("backup") { BackupScreen(onBack = { nav.popBackStack() }, onOpenNetwork = { nav.popBackStack(); tab = Tab.Network }) }
@@ -223,6 +225,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         onBackup = { nav.navigate("backup") },
         onNetwork = { tab = Tab.Network },
         onMembers = { nav.navigate("members") },
+        onGoogle = { nav.navigate("google") },
     )
     if (newAlbum) NewAlbumDialog(onDismiss = { newAlbum = false }) { name ->
         newAlbum = false

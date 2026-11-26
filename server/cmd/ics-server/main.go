@@ -46,6 +46,8 @@ Usage: ics-server <command> [options]
   config                change settings                             [--endpoint --lan-ip]
   tailscale             remote access through Tailscale: show it, or store a key so the app
                         joins without signing in            [--auth-key --control-url --remove-key]
+  google-key            store the Google API key that Import from Google uses
+                                                            [--client-id --client-secret]
   admin-password        print the admin console password
   update                download and apply new Immich / Nextcloud images
   version
@@ -160,6 +162,8 @@ func main() {
 		}
 	case "tailscale":
 		tailscaleCmd(s, args[1:])
+	case "google-key":
+		googleKeyCmd(s, args[1:])
 	case "requests":
 		fs := flag.NewFlagSet("requests", flag.ExitOnError)
 		approve := fs.String("approve", "", "approve the request with this ID")
@@ -468,6 +472,7 @@ func serve(ctx context.Context, s *core.Server, args []string) {
 		*addr = fmt.Sprintf(":%d", port)
 	}
 	srv := &http.Server{Addr: *addr, Handler: web.New(s).Routes(), ReadHeaderTimeout: 10 * time.Second}
+	go s.GoogleWorker(ctx)
 	go func() {
 		<-ctx.Done()
 		sctx, c := context.WithTimeout(context.Background(), 5*time.Second)
@@ -542,6 +547,25 @@ func openFirewall(s *core.Server) {
 		_ = exec.Command("ufw", r...).Run()
 	}
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
+}
+
+// googleKeyCmd stores the Google API key Import from Google uses.
+func googleKeyCmd(s *core.Server, args []string) {
+	fs := flag.NewFlagSet("google-key", flag.ExitOnError)
+	id := fs.String("client-id", "", "the Google client ID (….apps.googleusercontent.com)")
+	secret := fs.String("client-secret", "", "the Google client secret")
+	check(fs.Parse(args))
+	if *id == "" && *secret == "" {
+		if s.Store.Read().Config.GoogleClientID == "" {
+			fmt.Println("No Google API key yet. Create one (see INSTALL.md, Import from Google), then run:")
+			fmt.Println("  sudo ics-server google-key --client-id <id> --client-secret <secret>")
+		} else {
+			fmt.Println("A Google API key is saved; people can connect their Google accounts in the app.")
+		}
+		return
+	}
+	check(s.SetGoogleKey(*id, *secret))
+	fmt.Println("Saved. In the app: Account, Import from Google, Connect a Google account.")
 }
 
 // tailscaleCmd shows remote access through Tailscale and stores the key phones join with.

@@ -31,6 +31,36 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Serializable data class Features(val machineLearning: Boolean = false, val memoryGB: Double = 0.0, val applying: Boolean = false)
 @Serializable data class PairCode(val code: String, val server: String = "", val link: String = "", val expires: String = "", val name: String = "")
 @Serializable data class InviteInfo(val name: String, val code: String, val expires: String, val createdBy: String = "")
+@Serializable data class GoogleAccount(
+    val id: String,
+    val email: String,
+    val person: String = "",
+    val folder: String = "",
+    val synced: String? = null,
+    val error: String? = null,
+    val files: Int = 0,
+    val bytes: Long = 0,
+    val syncing: Boolean = false,
+)
+@Serializable data class TakeoutImport(
+    val export: String,
+    val source: String = "",
+    val at: String = "",
+    val imported: Int = 0,
+    val duplicates: Int = 0,
+    val errors: Int = 0,
+    val error: String? = null,
+)
+@Serializable data class GoogleStatus(
+    val keySet: Boolean = false,
+    val toolsReady: Boolean = false,
+    val toolsBuilding: Boolean = false,
+    val toolsError: String? = null,
+    val accounts: List<GoogleAccount> = emptyList(),
+    val imports: List<TakeoutImport> = emptyList(),
+    val importing: Boolean = false,
+    val takeoutFolder: String = "Google Takeout",
+)
 
 /**
  * Joining a server (someone without an account asks; an admin approves) and managing members from an admin's
@@ -82,6 +112,27 @@ class MembersClient(private val http: OkHttpClient, private val settings: () -> 
     suspend fun invites(): List<InviteInfo> = parse(manage("GET", "/api/v1/manage/invites"))
 
     suspend fun cancelInvite(code: String) { manage("DELETE", "/api/v1/manage/invites/$code") }
+
+    /** Moving from Google: connected accounts, Takeout imports, and whether the server is ready for it. */
+    suspend fun google(): GoogleStatus = parse(manage("GET", "/api/v1/me/google"))
+
+    /** For admins: the Google API key (a "Desktop app" OAuth client) Drive access goes through. */
+    suspend fun setGoogleKey(clientId: String, clientSecret: String) {
+        manage("POST", "/api/v1/manage/google/key", buildJsonObject { put("clientId", clientId.trim()); put("clientSecret", clientSecret.trim()) }.toString())
+    }
+
+    /** Google's sign-in address; [forPerson] (admins only) is whose files the Drive goes into. */
+    suspend fun connectGoogle(forPerson: String = ""): String =
+        json.parseToJsonElement(manage("POST", "/api/v1/me/google/connect", buildJsonObject { put("for", forPerson) }.toString()))
+            .jsonObject["url"]?.jsonPrimitive?.content.orEmpty()
+
+    /** Finishes the sign-in with the address the browser ended on (pasted by the person). */
+    suspend fun finishGoogle(pastedUrl: String): GoogleAccount =
+        parse(manage("POST", "/api/v1/me/google/finish", buildJsonObject { put("url", pastedUrl.trim()) }.toString()))
+
+    suspend fun syncGoogle(id: String) { manage("POST", "/api/v1/me/google/accounts/$id/sync") }
+    suspend fun removeGoogle(id: String) { manage("DELETE", "/api/v1/me/google/accounts/$id") }
+    suspend fun importNow() { manage("POST", "/api/v1/me/google/import") }
 
     /** A new pairing code for a member's (new) phone. */
     suspend fun pairCode(name: String): PairCode = parse(manage("POST", "/api/v1/manage/users/$name/pair"))
