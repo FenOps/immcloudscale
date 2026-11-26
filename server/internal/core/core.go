@@ -24,7 +24,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.3.2"
+const Version = "0.3.3"
 
 const ncAdmin = "ics-admin"
 
