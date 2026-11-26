@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -203,6 +204,10 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
 
             SectionHeader("Phone storage")
             FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
+            Toggle(
+                Icons.Outlined.PhotoLibrary, "Keep thumbnails on this phone",
+                "Photos show at once, also away from home. Downloaded on Wi-Fi while charging; up to 2 GB.", s.keepThumbnails,
+            ) { v -> update { it.copy(keepThumbnails = v) } }
 
             SectionHeader("When to back up")
             Toggle(Icons.Outlined.Wifi, "Only on Wi-Fi", "Don't use mobile data", s.backupWifiOnly) { v -> update { it.copy(backupWifiOnly = v) } }

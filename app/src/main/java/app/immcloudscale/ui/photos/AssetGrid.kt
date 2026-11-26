@@ -29,6 +29,8 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayCircle
@@ -89,6 +91,16 @@ fun AssetGrid(
         }
     }
     LaunchedEffect(nearEnd, sections.sumOf { it.assets.size }) { if (nearEnd) onLoadMore() }
+    // Fetch the thumbnails of the next screens ahead of the scroll, into the disk cache.
+    val ctx = LocalContext.current
+    val all = remember(sections) { sections.flatMap { it.assets } }
+    val ahead by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key } }
+    LaunchedEffect(ahead, all) {
+        val key = ahead ?: return@LaunchedEffect
+        val at = all.indexOfFirst { it.id == key }
+        if (at < 0) return@LaunchedEffect
+        prefetch(ctx, all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) })
+    }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -188,7 +200,8 @@ fun AssetTile(
     small: Boolean = false,
 ) {
     val inset by animateDpAsState(if (selected) 14.dp else 0.dp, label = "inset")
-    val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() + (if (selected) ", selected" else "")
+    val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() +
+        (if (asset.isLocal) ", not backed up yet" else "") + (if (selected) ", selected" else "")
     Box(
         modifier.aspectRatio(1f).background(
             if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
@@ -197,6 +210,12 @@ fun AssetTile(
         RemoteImage(
             url, asset.id,
             Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) 12.dp else 0.dp)),
+            thumbhash = asset.thumbhash,
+        )
+        if (asset.isLocal && !small) Icon(
+            Icons.Outlined.CloudUpload, null, tint = Color.White,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).size(18.dp)
+                .background(Color.Black.copy(alpha = 0.35f), CircleShape).padding(2.dp),
         )
         if (asset.isVideo && !small) {
             Row(Modifier.align(Alignment.TopEnd).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -218,5 +237,20 @@ fun AssetTile(
                 else Box(Modifier.size(22.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).background(Color(0x33000000)))
             }
         }
+    }
+}
+
+private const val PREFETCH = 90
+
+/** Recently asked-for thumbnails, so scrolling back and forth doesn't ask again. */
+private val prefetched = java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>() {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
+})
+
+private fun prefetch(ctx: android.content.Context, urls: List<String>) {
+    val loader = coil3.SingletonImageLoader.get(ctx)
+    urls.filter { it.startsWith("http") && prefetched.add(it) }.forEach { url ->
+        // Disk only: the memory cache keeps what's on screen.
+        loader.enqueue(coil3.request.ImageRequest.Builder(ctx).data(url).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build())
     }
 }

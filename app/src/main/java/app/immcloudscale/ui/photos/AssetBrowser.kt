@@ -109,14 +109,24 @@ fun AssetBrowser(
                     sections = sections,
                     columns = settings.photoColumns,
                     selected = st.selected,
-                    thumbUrl = { g.immich.thumbnailUrl(it.id) },
+                    thumbUrl = { it.localUri ?: g.immich.thumbnailUrl(it.id) },
                     onOpen = { a: AssetDto ->
-                        ViewerSession.open(st.assets, a, vm.query) { upd, removed -> vm.applyEdit(upd, removed) }
-                        onOpenViewer()
+                        if (a.isLocal) {
+                            // Only on this phone so far: the phone's own viewer shows it.
+                            runCatching {
+                                ctx.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(a.localUri))
+                                        .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                )
+                            }
+                        } else {
+                            ViewerSession.open(st.assets.filter { !it.isLocal }, a, vm.query) { upd, removed -> vm.applyEdit(upd, removed) }
+                            onOpenViewer()
+                        }
                     },
                     onToggle = { vm.toggle(it.id) },
                     onSelectDay = { day ->
-                        val ids = day.assets.map { it.id }
+                        val ids = day.assets.filter { !it.isLocal }.map { it.id }
                         if (ids.all { it in st.selected }) ids.forEach(vm::toggle) else vm.selectAll(ids)
                     },
                     onColumnsChange = { c -> scope.launch { g.settings.update { it.copy(photoColumns = c) } } },

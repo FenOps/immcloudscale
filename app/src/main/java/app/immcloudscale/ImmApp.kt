@@ -12,9 +12,11 @@ import app.immcloudscale.data.HomeRoute
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.NetworkMonitor
 import app.immcloudscale.data.SettingsStore
+import app.immcloudscale.data.ThumbnailWorker
 import app.immcloudscale.data.backup.BackupWorker
 import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
+import app.immcloudscale.data.immich.TimelineCache
 import app.immcloudscale.data.nextcloud.NextcloudClient
 import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.PairLink
@@ -73,6 +75,7 @@ class AppGraph(val context: Context) {
         tailscale.state.map { it.status }.distinctUntilChanged().onEach { http.connectionPool.evictAll() }.launchIn(scope)
     }
     val offline = OfflineStore(context)
+    val timelineCache = TimelineCache(context.noBackupFilesDir)
     val members = MembersClient(http) { settingsState.value }
 
     /** Pairs with an ImmCloudScale server, which answers with Immich, Nextcloud and remote access settings for this phone. */
@@ -164,6 +167,12 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
             // At start-up there's nothing to cancel when backup is off, so WorkManager isn't touched then.
             .onEach { (i, s) -> if (i > 0 || s.backupEnabled) BackupWorker.schedule(this, s) }
             .launchIn(graph.scope)
+        // Thumbnails downloaded ahead on Wi-Fi while charging, while wanted (see ThumbnailWorker).
+        graph.settingsState
+            .distinctUntilChanged { a, b -> a.keepThumbnails == b.keepThumbnails && a.immichConfigured == b.immichConfigured }
+            .withIndex()
+            .onEach { (i, s) -> if (i > 0 || (s.keepThumbnails && s.immichConfigured)) ThumbnailWorker.update(this, s) }
+            .launchIn(graph.scope)
         // The reminder to switch off Google Photos backup, while it applies (see GoogleReminderWorker).
         graph.settingsState
             .distinctUntilChanged { a, b -> GoogleReminderWorker.due(a) == GoogleReminderWorker.due(b) }
@@ -182,7 +191,11 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
             add(VideoFrameDecoder.Factory())
         }
         .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.25).build() }
-        .diskCache { DiskCache.Builder().directory(context.cacheDir.resolve("thumbs")).maxSizeBytes(512L * 1024 * 1024).build() }
+        // Room for the whole library's thumbnails on most phones, without crowding a nearly full one.
+        .diskCache {
+            DiskCache.Builder().directory(context.cacheDir.resolve("thumbs"))
+                .maxSizePercent(0.2).minimumMaxSizeBytes(256L shl 20).maximumMaxSizeBytes(2L shl 30).build()
+        }
         .crossfade(true)
         .build()
 }

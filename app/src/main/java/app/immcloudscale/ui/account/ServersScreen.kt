@@ -139,7 +139,12 @@ private fun ImmichCard() {
         if (s.immichConfigured) "Signed in as ${s.immichEmail.ifBlank { s.immichUserName }} on ${s.immichUrl}" else "Photo & video library with backup, people, places and smart search",
     ) {
         if (s.immichConfigured) {
-            OutlinedButton(onClick = { scope.launch { g.settings.update { it.copy(immichToken = "", immichUserName = "", immichEmail = "", backupEnabled = false) } } }) {
+            OutlinedButton(onClick = {
+                scope.launch {
+                    g.settings.update { it.copy(immichToken = "", immichUserName = "", immichEmail = "", backupEnabled = false) }
+                    g.timelineCache.clear() // signed out: the saved timeline goes too
+                }
+            }) {
                 Text("Sign out")
             }
             return@ServerCard

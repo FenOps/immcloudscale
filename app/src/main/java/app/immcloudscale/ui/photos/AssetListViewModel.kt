@@ -14,6 +14,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.Instant
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import app.immcloudscale.data.backup.PhoneCopies
+import app.immcloudscale.data.backup.LocalMediaSource
 
 data class AssetListState(
     val assets: List<AssetDto> = emptyList(),
@@ -35,6 +40,9 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     private var page = 1
     private var job: Job? = null
     private var loadedAt = 0L
+    // The timeline is kept on the phone (see TimelineCache) and checked in full now and then.
+    private val timeline = query == AssetQuery.Timeline
+    private var fullSyncAt = 0L
 
     init {
         // Reload whenever the server connection changes (pairing, signing in, switching servers), not just once:
@@ -53,6 +61,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         job?.cancel()
         page = 1
         loadedAt = System.currentTimeMillis()
+        if (timeline) return refreshTimeline()
         _state.update { it.copy(refreshing = it.assets.isNotEmpty(), endReached = false, error = null) }
         if (query == AssetQuery.Timeline) viewModelScope.launch {
             runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
@@ -61,6 +70,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     }
 
     fun loadMore(reset: Boolean = false) {
+        if (timeline && !reset) return // the whole timeline is loaded at once
         val s = _state.value
         if (!reset && (s.loading || s.endReached)) return
         if (!graph.settingsState.value.immichConfigured) {
@@ -83,8 +93,91 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         }
     }
 
-    fun toggle(id: String) = _state.update { s -> s.copy(selected = if (id in s.selected) s.selected - id else s.selected + id) }
-    fun selectAll(ids: Collection<String>) = _state.update { s -> s.copy(selected = s.selected + ids) }
+    private fun cacheKey(): Pair<String, String> = graph.settingsState.value.let { it.immichUrl to it.immichEmail.ifBlank { it.immichUserName } }
+
+    /**
+     * Shows the saved timeline straight away, then brings it up to date: the newest photos every time, the whole
+     * library at most every half hour (that's also when deletions made elsewhere disappear).
+     */
+    private fun refreshTimeline() {
+        val s = graph.settingsState.value
+        if (!s.immichConfigured) {
+            _state.update { it.copy(assets = emptyList(), memories = emptyList(), loading = false, refreshing = false, endReached = true) }
+            return
+        }
+        viewModelScope.launch {
+            runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
+        }
+        val (server, account) = cacheKey()
+        job = viewModelScope.launch {
+            var known = _state.value.assets.filter { !it.isLocal }
+            if (known.isEmpty()) graph.timelineCache.load(server, account)?.let { saved ->
+                known = saved.assets
+                fullSyncAt = saved.synced
+                show(known, cached = true)
+            }
+            _state.update { it.copy(refreshing = it.assets.isNotEmpty(), loading = it.assets.isEmpty(), endReached = true, error = null) }
+            try {
+                val head = graph.immich.assets(query, 1, HEAD).items
+                known = mergeNewest(known, head)
+                show(known)
+                if (System.currentTimeMillis() - fullSyncAt > FULL_EVERY || known.size <= head.size) {
+                    val all = mutableListOf<AssetDto>()
+                    var p = 1
+                    while (true) {
+                        val pg = graph.immich.assets(query, p, PAGE)
+                        all += pg.items
+                        if (pg.nextPage == null || pg.items.isEmpty()) break
+                        p++
+                    }
+                    fullSyncAt = System.currentTimeMillis()
+                    known = all
+                    show(known)
+                }
+                graph.timelineCache.save(server, account, known, fullSyncAt)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // With a saved timeline there's still something to show: only say so when there's nothing.
+                _state.update { it.copy(loading = false, refreshing = false, error = if (it.assets.isEmpty()) e.message ?: "Couldn't load photos" else null) }
+            }
+        }
+    }
+
+    /** Shows [server] with this phone's photos that are still waiting for backup, newest first. */
+    private suspend fun show(server: List<AssetDto>, cached: Boolean = false) {
+        val local = runCatching { pendingOnPhone(server) }.getOrDefault(emptyList())
+        val merged = if (local.isEmpty()) server else (server + local).sortedByDescending { it.takenAt() }
+        _state.update { it.copy(assets = merged, loading = false, refreshing = if (cached) it.refreshing else false) }
+    }
+
+    private suspend fun pendingOnPhone(server: List<AssetDto>): List<AssetDto> = withContext(Dispatchers.IO) {
+        val s = graph.settingsState.value
+        if (!s.backupEnabled) return@withContext emptyList()
+        val mine = PhoneCopies.deviceId(graph.context)
+        val done = server.asSequence().filter { it.deviceId == mine }.map { it.deviceAssetId }.toHashSet()
+        LocalMediaSource.query(graph.context, s.backupSince, s.backupVideos, s.backupFolders)
+            .filter { m -> "${m.id}-${m.size}" !in done }
+            .map { m ->
+                AssetDto(
+                    id = "local:${m.id}", type = if (m.mime.startsWith("video")) "VIDEO" else "IMAGE", originalFileName = m.name,
+                    fileCreatedAt = Instant.ofEpochMilli(if (m.dateTaken > 0) m.dateTaken else m.dateAdded * 1000).toString(),
+                    localUri = m.uri.toString(),
+                )
+            }
+    }
+
+    private fun persist() {
+        if (!timeline) return
+        val (server, account) = cacheKey()
+        val assets = _state.value.assets
+        viewModelScope.launch { runCatching { graph.timelineCache.save(server, account, assets, fullSyncAt) } }
+    }
+
+    // Photos only on the phone can't be selected: the actions all work on the server.
+    fun toggle(id: String) = _state.update { s ->
+        if (id.startsWith(LOCAL)) s else s.copy(selected = if (id in s.selected) s.selected - id else s.selected + id)
+    }
+    fun selectAll(ids: Collection<String>) = _state.update { s -> s.copy(selected = s.selected + ids.filterNot { it.startsWith(LOCAL) }) }
     fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
@@ -102,6 +195,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                         message = "$label ${ids.size} item${if (ids.size == 1) "" else "s"}",
                     )
                 }
+                persist()
             } catch (e: Exception) {
                 _state.update { it.copy(message = e.message ?: "Something went wrong") }
             }
@@ -136,13 +230,34 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     }
 
     /** Keeps the list in sync after the viewer changed or removed an asset. */
-    fun applyEdit(updated: AssetDto?, removedId: String?) = _state.update { s ->
-        s.copy(assets = s.assets.mapNotNull { a ->
-            when {
-                a.id == removedId -> null
-                updated != null && a.id == updated.id -> updated
-                else -> a
-            }
-        })
+    fun applyEdit(updated: AssetDto?, removedId: String?) {
+        _state.update { s ->
+            s.copy(assets = s.assets.mapNotNull { a ->
+                when {
+                    a.id == removedId -> null
+                    updated != null && a.id == updated.id -> updated
+                    else -> a
+                }
+            })
+        }
+        persist()
     }
+}
+
+private const val LOCAL = "local:"
+private const val HEAD = 200 // newest photos checked on every open
+private const val PAGE = 1000
+private const val FULL_EVERY = 30 * 60_000L
+
+private fun AssetDto.takenAt(): Instant = runCatching { Instant.parse(fileCreatedAt) }.getOrDefault(Instant.EPOCH)
+
+/**
+ * The saved timeline updated with the server's newest photos: those replace what was saved down to the oldest
+ * of them (so photos deleted among them go too); older saved photos stay until the next full check.
+ */
+internal fun mergeNewest(saved: List<AssetDto>, newest: List<AssetDto>): List<AssetDto> {
+    if (newest.isEmpty()) return saved
+    val cutoff = newest.minOf { it.takenAt() }
+    val ids = newest.mapTo(HashSet()) { it.id }
+    return newest + saved.filter { it.id !in ids && it.takenAt() < cutoff }
 }

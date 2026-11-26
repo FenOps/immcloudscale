@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +34,8 @@ fun RemoteImage(
     background: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     /** An Immich session to load it with (the locked folder), instead of the app's API key. */
     session: String? = null,
+    /** Immich's ThumbHash: a blurry version shown until the image arrives. */
+    thumbhash: String? = null,
 ) {
     if (LocalInspectionMode.current || url == null) {
         Box(modifier.background(placeholderBrush(key)))
@@ -45,7 +48,9 @@ fun RemoteImage(
             // Never cached: locked photos mustn't stay on the phone once the folder locks again.
             .memoryCachePolicy(CachePolicy.DISABLED).diskCachePolicy(CachePolicy.DISABLED).build()
     }
+    val blur = remember(thumbhash) { ThumbHash.bitmap(thumbhash) }
     Box(modifier.background(background)) {
+        if (blur != null) Image(blur, null, contentScale = contentScale, modifier = Modifier.fillMaxSize())
         AsyncImage(model = model, contentDescription = contentDescription, contentScale = contentScale, modifier = Modifier.fillMaxSize())
     }
 }
