@@ -63,7 +63,9 @@ type Tools struct {
 	Root    string
 }
 
-func NewTools(dir, cache string) *Tools { return &Tools{Dir: dir, Cache: cache, Run: run, Backend: "drive"} }
+func NewTools(dir, cache string) *Tools {
+	return &Tools{Dir: dir, Cache: cache, Run: run, Backend: "drive"}
+}
 
 func (t *Tools) path(name string) string { return filepath.Join(t.Dir, name) }
 
