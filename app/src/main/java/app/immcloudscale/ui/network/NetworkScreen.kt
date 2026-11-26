@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -115,7 +116,8 @@ fun NetworkContent(
 @Composable
 private fun ReachBadge(svc: ServiceCheck) {
     val (text, color) = when (svc.reach) {
-        Reach.Up -> "${svc.latencyMs} ms" to Color(0xFF137333) // darker than the dot, for readable small text
+        // Darker (light theme) or lighter (dark theme) than the dot, for readable small text.
+        Reach.Up -> "${svc.latencyMs} ms" to if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color(0xFF81C995) else Color(0xFF137333)
         Reach.Down -> "Unreachable" to MaterialTheme.colorScheme.error
         Reach.Checking -> "Checking…" to MaterialTheme.colorScheme.onSurfaceVariant
         Reach.NotSetUp -> "—" to MaterialTheme.colorScheme.onSurfaceVariant

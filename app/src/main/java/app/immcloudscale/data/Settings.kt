@@ -95,7 +95,7 @@ data class AppSettings(
     val nextcloudConfigured get() = ncUrl.isNotBlank() && ncUser.isNotBlank() && ncAppPassword.isNotBlank()
 }
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
+internal val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
 
 class SettingsStore(private val context: Context) {
     private object K {
@@ -217,10 +217,11 @@ class SettingsStore(private val context: Context) {
      */
     suspend fun dropRetired() = writeLock.withLock {
         if (context.dataStore.data.first().asMap().keys.none { it in K.retired }) return@withLock
-        context.dataStore.edit { p ->
+        val p = context.dataStore.edit { p ->
             K.retired.forEach { p.remove(it) }
             p[K.backupWifi] = false
         }
+        state.value = read(p) // what the app reads, and what reschedules backup
     }
 
     private suspend fun save(block: (AppSettings) -> AppSettings) {
