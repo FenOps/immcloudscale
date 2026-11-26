@@ -71,7 +71,7 @@ ensure_go() {
   go_ok && return
   apt-get install -y -qq golang-go >/dev/null 2>&1 || true
   go_ok && return
-  say "Installing Go $GO_VERSION (needed once to build ics-server)"
+  say "Installing Go $GO_VERSION (to build ics-server and the Google import tools)"
   # dl.google.com is where go.dev/dl downloads are served from; it publishes a SHA-256 next to each file.
   local tmp url; tmp=$(mktemp -d); url="https://dl.google.com/go/go${GO_VERSION}.linux-${ARCH}.tar.gz"
   curl -fsSL "$url" -o "$tmp/go.tgz" && curl -fsSL "$url.sha256" -o "$tmp/go.sha256" || die "couldn't download Go"
@@ -123,6 +123,11 @@ say "Installing $(basename "$DEB")"
 # --reinstall: a rebuilt package with the same version number must still replace the installed one.
 apt-get install -y -qq --reinstall "$(readlink -f "$DEB")" >/dev/null
 ics-server version >/dev/null
+
+# Go, for the Google import tools the server builds the first time someone uses Import from Google.
+# Any Go from 1.21 fetches the exact toolchain those tools ask for, checked like every module download.
+if [ -z "$SRC" ]; then GO_NEEDED=1.21; fi
+ensure_go
 
 if [ "${ICS_SKIP_SETUP:-}" = 1 ]; then
   say "Installed. Run: sudo ics-server setup"
