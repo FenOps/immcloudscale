@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.photos
 
+import android.content.Context
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -32,11 +33,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -47,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +60,11 @@ import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.DaySection
 import app.immcloudscale.data.immich.localDate
 import app.immcloudscale.ui.components.RemoteImage
+import coil3.SingletonImageLoader
+import coil3.request.CachePolicy
+import coil3.request.Disposable
+import coil3.request.ImageRequest
+import java.util.Collections
 
 /**
  * The Google Photos grid: day headers, square tiles with 2 dp gutters, long-press to select,
@@ -89,6 +98,21 @@ fun AssetGrid(
         }
     }
     LaunchedEffect(nearEnd, sections.sumOf { it.assets.size }) { if (nearEnd) onLoadMore() }
+    // Fetch the thumbnails of the next screens ahead of the scroll, into the disk cache; a new position cancels
+    // what's still queued for the old one, so a fast fling doesn't hold up the tiles on screen.
+    val ctx = LocalContext.current
+    val all = remember(sections) { sections.flatMap { it.assets } }
+    val indexOf = remember(all) { HashMap<String, Int>(all.size * 2).also { m -> all.forEachIndexed { i, a -> m[a.id] = i } } }
+    val ahead by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key } }
+    val running = remember { HashMap<String, Disposable>() }
+    LaunchedEffect(ahead, all) {
+        val at = (ahead as? String)?.let { indexOf[it] } ?: return@LaunchedEffect
+        val window = all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) }.toSet()
+        // Downloads still ahead keep going; those scrolled past are cancelled.
+        running.keys.filter { it !in window }.forEach { running.remove(it)?.dispose() }
+        prefetch(ctx, window.filter { it !in running }).forEach { (url, d) -> running[url] = d }
+    }
+    DisposableEffect(Unit) { onDispose { running.values.forEach { it.dispose() }; running.clear() } }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -116,7 +140,7 @@ fun AssetGrid(
         header?.invoke(this)
         sections.forEach { section ->
             item(key = "h-${section.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
-                DayHeader(section, selecting, section.assets.all { it.id in selected }) { onSelectDay(section) }
+                DayHeader(section, selecting, section.assets.filter { !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
             }
             items(section.assets, key = { it.id }, contentType = { "tile" }) { a ->
                 AssetTile(
@@ -188,7 +212,8 @@ fun AssetTile(
     small: Boolean = false,
 ) {
     val inset by animateDpAsState(if (selected) 14.dp else 0.dp, label = "inset")
-    val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() + (if (selected) ", selected" else "")
+    val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() +
+        (if (asset.isLocal) ", not backed up yet" else "") + (if (selected) ", selected" else "")
     Box(
         modifier.aspectRatio(1f).background(
             if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
@@ -197,7 +222,16 @@ fun AssetTile(
         RemoteImage(
             url, asset.id,
             Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) 12.dp else 0.dp)),
+            thumbhash = asset.thumbhash,
         )
+        if (asset.isLocal) {
+            if (selecting) Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.5f))) // can't be selected
+            Icon(
+                Icons.Outlined.CloudOff, null, tint = Color.White,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(if (small) 3.dp else 6.dp).size(if (small) 14.dp else 20.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape).padding(if (small) 2.dp else 3.dp),
+            )
+        }
         if (asset.isVideo && !small) {
             Row(Modifier.align(Alignment.TopEnd).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 asset.shortDuration?.let {
@@ -212,11 +246,34 @@ fun AssetTile(
                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp + inset).size(16.dp),
             )
         }
-        if (selecting) {
+        if (selecting && !asset.isLocal) {
             Box(Modifier.align(Alignment.TopStart).padding(6.dp)) {
                 if (selected) SelectCircle(true, Modifier.size(22.dp))
                 else Box(Modifier.size(22.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).background(Color(0x33000000)))
             }
         }
+    }
+}
+
+private const val PREFETCH = 40
+
+/** Thumbnails already fetched ahead this session, so scrolling back and forth doesn't ask again. */
+private val prefetched = Collections.synchronizedSet(
+    Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
+    }),
+) // also cleared from a background thread (forgetPrefetched)
+
+/** Forgets what was fetched ahead (the image cache was cleared). */
+internal fun forgetPrefetched() = prefetched.clear()
+
+private fun prefetch(ctx: Context, urls: List<String>): List<Pair<String, Disposable>> {
+    val loader = SingletonImageLoader.get(ctx)
+    return urls.filter { it.startsWith("http") && it !in prefetched }.map { url ->
+        // Disk only: the memory cache keeps what's on screen. Remembered once it arrived (a failure is tried again).
+        loader.enqueue(
+            ImageRequest.Builder(ctx).data(url).memoryCachePolicy(CachePolicy.DISABLED)
+                .listener(onSuccess = { _, _ -> prefetched.add(url) }).build(),
+        ).let { url to it }
     }
 }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
@@ -202,6 +203,10 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
             BackupScheduleSection(s) { block -> update(block) }
 
             SectionHeader("Phone storage")
+            Toggle(
+                Icons.Outlined.PhotoLibrary, "Save thumbnails for offline viewing",
+                "Browse all your photos quickly, even away from home. Uses up to 2 GB; downloads on Wi-Fi while charging.", s.keepThumbnails,
+            ) { v -> update { it.copy(keepThumbnails = v) } }
             FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
 
             SectionHeader("When to back up")

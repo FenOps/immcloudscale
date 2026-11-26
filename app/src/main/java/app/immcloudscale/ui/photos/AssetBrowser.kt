@@ -1,5 +1,7 @@
 package app.immcloudscale.ui.photos
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -29,7 +32,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
-import app.immcloudscale.data.immich.groupByDay
 import app.immcloudscale.graph
 import app.immcloudscale.ui.components.CenteredLoading
 import app.immcloudscale.ui.components.EmptyState
@@ -58,6 +60,7 @@ fun AssetBrowser(
     val st by vm.state.collectAsStateWithLifecycle()
     val settings by g.settingsState.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
+    var explainedLocal by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
     LifecycleResumeEffect(vm) {
@@ -69,7 +72,8 @@ fun AssetBrowser(
     var collage by remember { mutableStateOf(false) }
     var confirmLock by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
-    val sections = remember(st.assets) { groupByDay(st.assets) }
+    // Grouping a large library into days takes a moment: done off the main thread.
+    val sections by vm.sections.collectAsStateWithLifecycle()
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
     BackHandler(st.selecting) { vm.clearSelection() }
@@ -102,6 +106,7 @@ fun AssetBrowser(
         PullToRefreshBox(st.refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
             when {
                 st.assets.isEmpty() && st.loading -> CenteredLoading()
+                st.assets.isNotEmpty() && sections.isEmpty() -> CenteredLoading() // days not grouped yet (a moment)
                 st.assets.isEmpty() && st.error != null -> Pullable { ErrorState(st.error!!, vm::refresh) }
                 st.assets.isEmpty() && header == null ->
                     Pullable { EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody) }
@@ -109,14 +114,30 @@ fun AssetBrowser(
                     sections = sections,
                     columns = settings.photoColumns,
                     selected = st.selected,
-                    thumbUrl = { g.immich.thumbnailUrl(it.id) },
+                    thumbUrl = { it.localUri ?: g.immich.thumbnailUrl(it.id) },
                     onOpen = { a: AssetDto ->
-                        ViewerSession.open(st.assets, a, vm.query) { upd, removed -> vm.applyEdit(upd, removed) }
-                        onOpenViewer()
+                        if (a.isLocal) {
+                            // Only on this phone so far: the phone's own viewer shows it.
+                            if (!explainedLocal) {
+                                explainedLocal = true
+                                scope.launch { snack.showSnackbar("Not backed up yet, so it opens in your phone's gallery") }
+                            }
+                            runCatching {
+                                ctx.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(a.localUri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                )
+                            }.onFailure { scope.launch { snack.showSnackbar("Couldn't open this photo") } }
+                        } else {
+                            ViewerSession.open(st.assets.filter { !it.isLocal }, a, vm.query) { upd, removed -> vm.applyEdit(upd, removed) }
+                            onOpenViewer()
+                        }
                     },
-                    onToggle = { vm.toggle(it.id) },
+                    onToggle = { a ->
+                        if (a.isLocal) scope.launch { snack.showSnackbar("This photo is only on your phone. You can select it once it's backed up.") }
+                        else vm.toggle(a.id)
+                    },
                     onSelectDay = { day ->
-                        val ids = day.assets.map { it.id }
+                        val ids = day.assets.filter { !it.isLocal }.map { it.id }
                         if (ids.all { it in st.selected }) ids.forEach(vm::toggle) else vm.selectAll(ids)
                     },
                     onColumnsChange = { c -> scope.launch { g.settings.update { it.copy(photoColumns = c) } } },

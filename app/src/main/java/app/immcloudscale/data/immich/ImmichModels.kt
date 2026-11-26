@@ -69,8 +69,11 @@ data class AssetDto(
     /** Which phone uploaded it, and that phone's ID for the file (see PhoneCopies). */
     val deviceId: String = "",
     val deviceAssetId: String = "",
+    /** Set for a photo still only on this phone (waiting for backup): its content:// address. Never from the server. */
+    @kotlinx.serialization.Transient val localUri: String? = null,
 ) {
     val isVideo get() = type == "VIDEO"
+    val isLocal get() = localUri != null
     /** "0:00:12.345000" → "0:12" for the tile badge. */
     val shortDuration: String?
         get() {

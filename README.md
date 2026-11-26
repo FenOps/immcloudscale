@@ -66,6 +66,12 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
   behind CGNAT. It connects by itself when you leave the home Wi-Fi and stops when you're back
 * Live health checks of your Immich and Nextcloud servers with latency
 
+### Fast photos
+* The timeline is kept on the phone: the Photos page draws at once (also offline), then catches up in the background
+* Blurry previews (Immich's ThumbHash) fill every square while thumbnails load; the next screens load ahead
+* Thumbnails of the whole library are downloaded on Wi-Fi while charging (Backup settings, up to 2 GB)
+* Photos still waiting for backup show in the timeline with a "not backed up yet" mark
+
 ### Import from Google
 * Copies each connected Google account's Drive into Files and keeps it in sync (rclone, read-only access)
 * Imports Google Photos from Takeout exports, delivered to Drive or dropped in a folder (immich-go): dates, places and
