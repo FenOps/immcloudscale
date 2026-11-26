@@ -549,7 +549,7 @@ func openFirewall(s *core.Server) {
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
 }
 
-// tailscaleCmd shows remote access through Tailscale and stores the key phones join with.
+// googleKeyCmd stores the Google API key Import from Google uses.
 func googleKeyCmd(s *core.Server, args []string) {
 	fs := flag.NewFlagSet("google-key", flag.ExitOnError)
 	id := fs.String("client-id", "", "the Google client ID (….apps.googleusercontent.com)")
@@ -568,6 +568,7 @@ func googleKeyCmd(s *core.Server, args []string) {
 	fmt.Println("Saved. In the app: Account, Import from Google, Connect a Google account.")
 }
 
+// tailscaleCmd shows remote access through Tailscale and stores the key phones join with.
 func tailscaleCmd(s *core.Server, args []string) {
 	fs := flag.NewFlagSet("tailscale", flag.ExitOnError)
 	key := fs.String("auth-key", "", "a reusable Tailscale auth key (tskey-auth-...) that paired phones join with")
