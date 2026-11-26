@@ -30,6 +30,10 @@ import app.immcloudscale.data.nextcloud.Quota
 import app.immcloudscale.data.tailscale.TsState
 import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.ui.account.AccountCard
+import app.immcloudscale.data.pairing.TakeoutImport
+import app.immcloudscale.data.pairing.GoogleAccount
+import app.immcloudscale.data.pairing.GoogleStatus
+import app.immcloudscale.ui.account.GoogleImportContent
 import app.immcloudscale.ui.account.BackupWhereStatus
 import app.immcloudscale.ui.collections.CollectionsContent
 import app.immcloudscale.ui.collections.CollectionsState
@@ -189,6 +193,28 @@ class ScreenshotTest {
                 BackupWhereStatus(settings, atHome = false, TsState(TsStatus.Starting), true, {}, compact = true)
                 BackupWhereStatus(settings.copy(tsEnabled = false), atHome = false, TsState(TsStatus.Off), true, {}, compact = true)
             }
+        }
+    }
+
+    @Test fun googleImportFirstTime() = paparazzi.snapshot {
+        ImmTheme(dark = false, dynamic = false) {
+            GoogleImportContent(GoogleStatus(), null, settings.copy(isAdmin = true))
+        }
+    }
+
+    @Test fun googleImportMoving() = paparazzi.snapshot {
+        ImmTheme(dark = false, dynamic = false) {
+            GoogleImportContent(
+                GoogleStatus(
+                    keySet = true, toolsReady = true,
+                    accounts = listOf(
+                        GoogleAccount("g1", "camille.martin@gmail.com", "camille", "Google Drive (camille.martin@gmail.com)", "2026-11-26T08:00:00Z", files = 1240, bytes = 8_400_000_000),
+                        GoogleAccount("g2", "camille.work@gmail.com", "camille", "Google Drive (camille.work@gmail.com)", syncing = true),
+                    ),
+                    imports = listOf(TakeoutImport("takeout-20251126t101500z", "camille.martin@gmail.com", "2026-11-26T09:30:00Z", 12_300, 2_140)),
+                ),
+                null, settings.copy(googleDone = setOf("started", "drive-desktop")),
+            )
         }
     }
 
