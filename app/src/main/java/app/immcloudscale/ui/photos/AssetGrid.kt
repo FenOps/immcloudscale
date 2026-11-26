@@ -252,9 +252,11 @@ fun AssetTile(
 private const val PREFETCH = 40
 
 /** Thumbnails already fetched ahead this session, so scrolling back and forth doesn't ask again. */
-private val prefetched = java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>() {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
-})
+private val prefetched = java.util.Collections.synchronizedSet(
+    java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
+    }),
+) // also cleared from a background thread (forgetPrefetched)
 
 /** Forgets what was fetched ahead (the image cache was cleared). */
 internal fun forgetPrefetched() = prefetched.clear()

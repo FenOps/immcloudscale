@@ -71,7 +71,8 @@ fun AssetBrowser(
     var confirmLock by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
     // Grouping a large library into days takes a moment: done off the main thread.
-    val sections by vm.sections.collectAsStateWithLifecycle()
+    val grouped by vm.sections.collectAsStateWithLifecycle()
+    val sections = grouped.second
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
     BackHandler(st.selecting) { vm.clearSelection() }
@@ -104,6 +105,7 @@ fun AssetBrowser(
         PullToRefreshBox(st.refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
             when {
                 st.assets.isEmpty() && st.loading -> CenteredLoading()
+                st.assets.isNotEmpty() && sections.isEmpty() -> CenteredLoading() // days not grouped yet (a moment)
                 st.assets.isEmpty() && st.error != null -> Pullable { ErrorState(st.error!!, vm::refresh) }
                 st.assets.isEmpty() && header == null ->
                     Pullable { EmptyState(Icons.Outlined.PhotoLibrary, emptyTitle, emptyBody) }

@@ -179,7 +179,7 @@ class ImmApp : Application(), SingletonImageLoader.Factory, Configuration.Provid
             .launchIn(graph.scope)
         // Another account or server (or signing out): the saved timeline and the thumbnails of the old one go.
         graph.settingsState
-            .distinctUntilChanged { a, b -> a.immichUrl == b.immichUrl && a.immichEmail == b.immichEmail }
+            .distinctUntilChanged { a, b -> a.immichUrl == b.immichUrl && a.immichEmail == b.immichEmail && a.immichUserName == b.immichUserName }
             .withIndex()
             .onEach { (i, _) -> if (i > 0) graph.forgetLibrary() }
             .launchIn(graph.scope)

@@ -42,11 +42,15 @@ data class AssetListState(
 class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : ViewModel() {
     private val _state = MutableStateFlow(AssetListState())
     val state: StateFlow<AssetListState> = _state.asStateFlow()
-    /** The assets grouped into days, worked out off the main thread whenever they change (ready on return to the screen). */
+    /**
+     * The assets grouped into days, worked out off the main thread whenever they change (ready on return to the
+     * screen), with the list they were made from, so the screen knows when they've caught up.
+     */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val sections: StateFlow<List<DaySection>> = _state.map { it.assets }.distinctUntilChanged()
-        .mapLatest { withContext(Dispatchers.Default) { groupByDay(it) } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val sections: StateFlow<Pair<List<AssetDto>, List<DaySection>>> = _state.map { it.assets }.distinctUntilChanged()
+        .mapLatest { a -> a to withContext(Dispatchers.Default) { groupByDay(a) } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<AssetDto>() to emptyList())
+    private var memoriesJob: Job? = null
     private var page = 1
     private var job: Job? = null
     private var loadedAt = 0L
@@ -122,7 +126,8 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
             _state.update { it.copy(assets = emptyList(), memories = emptyList(), loading = false, refreshing = false, endReached = true) }
             return
         }
-        viewModelScope.launch {
+        memoriesJob?.cancel() // a slow answer for the previous account mustn't arrive after this one
+        memoriesJob = viewModelScope.launch {
             runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
         }
         val key = cacheKey()
@@ -191,7 +196,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         val mine = PhoneCopies.deviceId(graph.context)
         val done = server.asSequence().filter { it.deviceId == mine }.map { it.deviceAssetId }.toHashSet()
         // Already on the server under the same name and day (from another app, or skipped by backup as a duplicate).
-        val named = server.asSequence().map { it.originalFileName.lowercase() + "|" + it.fileCreatedAt.take(10) }.toHashSet()
+        val named = server.asSequence().flatMap { nameDayKeys(it) }.toHashSet()
         LocalMediaSource.query(graph.context, s.backupSince, s.backupVideos, s.backupFolders)
             .filter { m -> "${m.id}-${m.size}" !in done }
             .map { m ->
@@ -201,7 +206,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                     localUri = m.uri.toString(),
                 )
             }
-            .filter { a -> a.originalFileName.lowercase() + "|" + a.fileCreatedAt.take(10) !in named }
+            .filter { a -> nameDayKey(a) !in named }
             .sortedByDescending { it.takenAt() }
     }
 
@@ -317,4 +322,14 @@ internal fun mergeByDate(a: List<AssetDto>, b: List<AssetDto>): List<AssetDto> {
         if (j >= b.size || (i < a.size && ta[i] >= tb[j])) out += a[i++] else out += b[j++]
     }
     return out
+}
+
+/** A photo's name and day, to find phone photos already on the server under the same name. */
+internal fun nameDayKey(a: AssetDto): String = a.originalFileName.lowercase() + "|" + a.takenAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+
+/** The keys a server photo matches: its day and the days either side (its time zone may differ from the phone's). */
+internal fun nameDayKeys(a: AssetDto): Sequence<String> {
+    val day = a.takenAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+    val name = a.originalFileName.lowercase()
+    return sequenceOf(day.minusDays(1), day, day.plusDays(1)).map { "$name|$it" }
 }

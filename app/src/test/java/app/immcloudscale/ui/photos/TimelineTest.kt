@@ -63,4 +63,13 @@ class TimelineTest {
         cache.clear()
         assertNull(cache.load("http://nas:2283", "camille@x"))
     }
+
+    @Test fun aPhoneCopyMatchesTheServersAcrossATimeZone() {
+        val server = AssetDto("s", originalFileName = "IMG_1234.JPG", fileCreatedAt = "2026-11-20T23:30:00Z")
+        val phone = AssetDto("local:1", originalFileName = "img_1234.jpg", fileCreatedAt = "2026-11-21T01:30:00Z")
+        val elsewhere = AssetDto("local:2", originalFileName = "img_1234.jpg", fileCreatedAt = "2024-05-01T10:00:00Z")
+        val keys = nameDayKeys(server).toSet()
+        assertTrue(nameDayKey(phone) in keys)
+        assertTrue(nameDayKey(elsewhere) !in keys) // same name, another photo: still shown as not backed up
+    }
 }
