@@ -3,27 +3,30 @@ package app.immcloudscale.ui.photos
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.immcloudscale.AppGraph
+import app.immcloudscale.data.backup.LocalMediaSource
+import app.immcloudscale.data.backup.PhoneCopies
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.AssetQuery
+import app.immcloudscale.data.immich.DaySection
 import app.immcloudscale.data.immich.MemoryDto
+import app.immcloudscale.data.immich.groupByDay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.SharingStarted
-import app.immcloudscale.data.immich.groupByDay
-import app.immcloudscale.data.immich.DaySection
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.time.Instant
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import app.immcloudscale.data.backup.PhoneCopies
-import app.immcloudscale.data.backup.LocalMediaSource
+import java.time.Instant
+import java.time.ZoneOffset
 
 data class AssetListState(
     val assets: List<AssetDto> = emptyList(),
@@ -42,14 +45,11 @@ data class AssetListState(
 class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : ViewModel() {
     private val _state = MutableStateFlow(AssetListState())
     val state: StateFlow<AssetListState> = _state.asStateFlow()
-    /**
-     * The assets grouped into days, worked out off the main thread whenever they change (ready on return to the
-     * screen), with the list they were made from, so the screen knows when they've caught up.
-     */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val sections: StateFlow<Pair<List<AssetDto>, List<DaySection>>> = _state.map { it.assets }.distinctUntilChanged()
-        .mapLatest { a -> a to withContext(Dispatchers.Default) { groupByDay(a) } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<AssetDto>() to emptyList())
+    /** The assets grouped into days, worked out off the main thread whenever they change (ready on return to the screen). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val sections: StateFlow<List<DaySection>> = _state.map { it.assets }.distinctUntilChanged()
+        .mapLatest { a -> withContext(Dispatchers.Default) { groupByDay(a) } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private var memoriesJob: Job? = null
     private var page = 1
     private var job: Job? = null
@@ -83,9 +83,6 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
         loadedAt = System.currentTimeMillis()
         if (timeline) return refreshTimeline()
         _state.update { it.copy(refreshing = it.assets.isNotEmpty(), endReached = false, error = null) }
-        if (query == AssetQuery.Timeline) viewModelScope.launch {
-            runCatching { graph.immich.memories() }.onSuccess { m -> _state.update { it.copy(memories = m.filter { x -> x.assets.isNotEmpty() }) } }
-        }
         loadMore(reset = true)
     }
 
@@ -107,7 +104,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                     it.copy(assets = merged, loading = false, refreshing = false, endReached = p.nextPage == null || p.items.isEmpty(), error = null)
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 _state.update { it.copy(loading = false, refreshing = false, error = e.message ?: "Couldn't load photos") }
             }
         }
@@ -174,7 +171,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
                 }
                 if (keyed && cacheKey() == key) graph.timelineCache.save(key.first, key.second, _state.value.assets, fullSyncAt)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 // With a saved timeline there's still something to show: only say so when there's nothing.
                 _state.update { it.copy(loading = false, refreshing = false, error = if (it.assets.isEmpty()) e.message ?: "Couldn't load photos" else null) }
             }
@@ -201,7 +198,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
             .filter { m -> "${m.id}-${m.size}" !in done }
             .map { m ->
                 AssetDto(
-                    id = "local:${m.id}", type = if (m.mime.startsWith("video")) "VIDEO" else "IMAGE", originalFileName = m.name,
+                    id = "$LOCAL${m.id}", type = if (m.mime.startsWith("video")) "VIDEO" else "IMAGE", originalFileName = m.name,
                     fileCreatedAt = Instant.ofEpochMilli(if (m.dateTaken > 0) m.dateTaken else m.dateAdded * 1000).toString(),
                     localUri = m.uri.toString(),
                 )
@@ -325,11 +322,11 @@ internal fun mergeByDate(a: List<AssetDto>, b: List<AssetDto>): List<AssetDto> {
 }
 
 /** A photo's name and day, to find phone photos already on the server under the same name. */
-internal fun nameDayKey(a: AssetDto): String = a.originalFileName.lowercase() + "|" + a.takenAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+internal fun nameDayKey(a: AssetDto): String = a.originalFileName.lowercase() + "|" + a.takenAt().atZone(ZoneOffset.UTC).toLocalDate()
 
 /** The keys a server photo matches: its day and the days either side (its time zone may differ from the phone's). */
 internal fun nameDayKeys(a: AssetDto): Sequence<String> {
-    val day = a.takenAt().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+    val day = a.takenAt().atZone(ZoneOffset.UTC).toLocalDate()
     val name = a.originalFileName.lowercase()
     return sequenceOf(day.minusDays(1), day, day.plusDays(1)).map { "$name|$it" }
 }

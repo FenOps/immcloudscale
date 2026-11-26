@@ -1,5 +1,6 @@
 package app.immcloudscale.ui.photos
 
+import android.content.Context
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -29,11 +30,10 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +60,11 @@ import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.DaySection
 import app.immcloudscale.data.immich.localDate
 import app.immcloudscale.ui.components.RemoteImage
+import coil3.SingletonImageLoader
+import coil3.request.CachePolicy
+import coil3.request.Disposable
+import coil3.request.ImageRequest
+import java.util.Collections
 
 /**
  * The Google Photos grid: day headers, square tiles with 2 dp gutters, long-press to select,
@@ -98,7 +104,7 @@ fun AssetGrid(
     val all = remember(sections) { sections.flatMap { it.assets } }
     val indexOf = remember(all) { HashMap<String, Int>(all.size * 2).also { m -> all.forEachIndexed { i, a -> m[a.id] = i } } }
     val ahead by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key } }
-    val running = remember { HashMap<String, coil3.request.Disposable>() }
+    val running = remember { HashMap<String, Disposable>() }
     LaunchedEffect(ahead, all) {
         val at = (ahead as? String)?.let { indexOf[it] } ?: return@LaunchedEffect
         val window = all.subList(at + 1, minOf(all.size, at + 1 + PREFETCH)).mapNotNull { thumbUrl(it) }.toSet()
@@ -252,8 +258,8 @@ fun AssetTile(
 private const val PREFETCH = 40
 
 /** Thumbnails already fetched ahead this session, so scrolling back and forth doesn't ask again. */
-private val prefetched = java.util.Collections.synchronizedSet(
-    java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>() {
+private val prefetched = Collections.synchronizedSet(
+    Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 3000
     }),
 ) // also cleared from a background thread (forgetPrefetched)
@@ -261,12 +267,12 @@ private val prefetched = java.util.Collections.synchronizedSet(
 /** Forgets what was fetched ahead (the image cache was cleared). */
 internal fun forgetPrefetched() = prefetched.clear()
 
-private fun prefetch(ctx: android.content.Context, urls: List<String>): List<Pair<String, coil3.request.Disposable>> {
-    val loader = coil3.SingletonImageLoader.get(ctx)
+private fun prefetch(ctx: Context, urls: List<String>): List<Pair<String, Disposable>> {
+    val loader = SingletonImageLoader.get(ctx)
     return urls.filter { it.startsWith("http") && it !in prefetched }.map { url ->
         // Disk only: the memory cache keeps what's on screen. Remembered once it arrived (a failure is tried again).
         loader.enqueue(
-            coil3.request.ImageRequest.Builder(ctx).data(url).memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
+            ImageRequest.Builder(ctx).data(url).memoryCachePolicy(CachePolicy.DISABLED)
                 .listener(onSuccess = { _, _ -> prefetched.add(url) }).build(),
         ).let { url to it }
     }

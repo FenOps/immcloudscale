@@ -22,6 +22,7 @@ import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
 import app.immcloudscale.data.tailscale.TailscaleManager
+import app.immcloudscale.ui.photos.forgetPrefetched
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -81,8 +82,8 @@ class AppGraph(val context: Context) {
     /** Forgets what the phone keeps of the photo library: the saved timeline and the cached thumbnails. */
     suspend fun forgetLibrary() {
         timelineCache.clear()
-        app.immcloudscale.ui.photos.forgetPrefetched()
-        val loader = coil3.SingletonImageLoader.get(context)
+        forgetPrefetched()
+        val loader = SingletonImageLoader.get(context)
         loader.memoryCache?.clear()
         withContext(Dispatchers.IO) { loader.diskCache?.clear() }
     }

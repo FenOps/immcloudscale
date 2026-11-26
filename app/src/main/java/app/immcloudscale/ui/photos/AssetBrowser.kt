@@ -1,5 +1,7 @@
 package app.immcloudscale.ui.photos
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,8 +73,7 @@ fun AssetBrowser(
     var confirmLock by remember { mutableStateOf(false) }
     val phoneTrash = rememberPhoneTrash()
     // Grouping a large library into days takes a moment: done off the main thread.
-    val grouped by vm.sections.collectAsStateWithLifecycle()
-    val sections = grouped.second
+    val sections by vm.sections.collectAsStateWithLifecycle()
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
     BackHandler(st.selecting) { vm.clearSelection() }
@@ -123,8 +124,7 @@ fun AssetBrowser(
                             }
                             runCatching {
                                 ctx.startActivity(
-                                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(a.localUri))
-                                        .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(a.localUri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
                                 )
                             }.onFailure { scope.launch { snack.showSnackbar("Couldn't open this photo") } }
                         } else {
