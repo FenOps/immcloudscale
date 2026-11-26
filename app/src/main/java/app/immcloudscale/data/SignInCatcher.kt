@@ -5,7 +5,9 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 
@@ -87,8 +89,8 @@ class SignInCatcher(private val port: Int = 53682) {
         const val PAGE_WAIT = "<!doctype html>$STYLE<p>Waiting for Google's sign-in…</p>"
 
         /** Reads up to the end of the request's first line (a browser sends more, then waits for the answer). */
-        fun firstLine(input: java.io.InputStream): String {
-            val b = java.io.ByteArrayOutputStream()
+        fun firstLine(input: InputStream): String {
+            val b = ByteArrayOutputStream()
             while (b.size() < MAX_REQUEST) {
                 val c = input.read()
                 if (c == -1 || c == '\n'.code) break
