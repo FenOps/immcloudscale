@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -58,6 +59,7 @@ fun AssetBrowser(
     val st by vm.state.collectAsStateWithLifecycle()
     val settings by g.settingsState.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
+    var explainedLocal by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
     LifecycleResumeEffect(vm) {
@@ -113,18 +115,25 @@ fun AssetBrowser(
                     onOpen = { a: AssetDto ->
                         if (a.isLocal) {
                             // Only on this phone so far: the phone's own viewer shows it.
+                            if (!explainedLocal) {
+                                explainedLocal = true
+                                scope.launch { snack.showSnackbar("Not backed up yet, so it opens in your phone's gallery") }
+                            }
                             runCatching {
                                 ctx.startActivity(
                                     android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(a.localUri))
                                         .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
                                 )
-                            }
+                            }.onFailure { scope.launch { snack.showSnackbar("Couldn't open this photo") } }
                         } else {
                             ViewerSession.open(st.assets.filter { !it.isLocal }, a, vm.query) { upd, removed -> vm.applyEdit(upd, removed) }
                             onOpenViewer()
                         }
                     },
-                    onToggle = { vm.toggle(it.id) },
+                    onToggle = { a ->
+                        if (a.isLocal) scope.launch { snack.showSnackbar("This photo is only on your phone. You can select it once it's backed up.") }
+                        else vm.toggle(a.id)
+                    },
                     onSelectDay = { day ->
                         val ids = day.assets.filter { !it.isLocal }.map { it.id }
                         if (ids.all { it in st.selected }) ids.forEach(vm::toggle) else vm.selectAll(ids)

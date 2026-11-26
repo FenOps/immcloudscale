@@ -30,7 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayCircle
@@ -128,7 +128,7 @@ fun AssetGrid(
         header?.invoke(this)
         sections.forEach { section ->
             item(key = "h-${section.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
-                DayHeader(section, selecting, section.assets.all { it.id in selected }) { onSelectDay(section) }
+                DayHeader(section, selecting, section.assets.filter { !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
             }
             items(section.assets, key = { it.id }, contentType = { "tile" }) { a ->
                 AssetTile(
@@ -212,11 +212,14 @@ fun AssetTile(
             Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) 12.dp else 0.dp)),
             thumbhash = asset.thumbhash,
         )
-        if (asset.isLocal && !small) Icon(
-            Icons.Outlined.CloudUpload, null, tint = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).size(18.dp)
-                .background(Color.Black.copy(alpha = 0.35f), CircleShape).padding(2.dp),
-        )
+        if (asset.isLocal) {
+            if (selecting) Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.5f))) // can't be selected
+            Icon(
+                Icons.Outlined.CloudOff, null, tint = Color.White,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(if (small) 3.dp else 6.dp).size(if (small) 14.dp else 20.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape).padding(if (small) 2.dp else 3.dp),
+            )
+        }
         if (asset.isVideo && !small) {
             Row(Modifier.align(Alignment.TopEnd).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 asset.shortDuration?.let {
@@ -231,7 +234,7 @@ fun AssetTile(
                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp + inset).size(16.dp),
             )
         }
-        if (selecting) {
+        if (selecting && !asset.isLocal) {
             Box(Modifier.align(Alignment.TopStart).padding(6.dp)) {
                 if (selected) SelectCircle(true, Modifier.size(22.dp))
                 else Box(Modifier.size(22.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).background(Color(0x33000000)))

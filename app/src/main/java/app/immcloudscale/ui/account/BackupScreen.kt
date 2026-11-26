@@ -203,11 +203,11 @@ fun BackupScreen(onBack: () -> Unit, onOpenNetwork: () -> Unit = {}) {
             BackupScheduleSection(s) { block -> update(block) }
 
             SectionHeader("Phone storage")
-            FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
             Toggle(
-                Icons.Outlined.PhotoLibrary, "Keep thumbnails on this phone",
-                "Photos show at once, also away from home. Downloaded on Wi-Fi while charging; up to 2 GB.", s.keepThumbnails,
+                Icons.Outlined.PhotoLibrary, "Save thumbnails for offline viewing",
+                "Browse all your photos quickly, even away from home. Uses up to 2 GB; downloads on Wi-Fi while charging.", s.keepThumbnails,
             ) { v -> update { it.copy(keepThumbnails = v) } }
+            FreeUpSection(s, { block -> update(block) }) { msg -> scope.launch { snack.showSnackbar(msg) } }
 
             SectionHeader("When to back up")
             Toggle(Icons.Outlined.Wifi, "Only on Wi-Fi", "Don't use mobile data", s.backupWifiOnly) { v -> update { it.copy(backupWifiOnly = v) } }
