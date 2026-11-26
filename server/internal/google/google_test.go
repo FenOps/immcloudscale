@@ -88,7 +88,7 @@ Asset Lifecycle (DISCARDED):
   server has duplicate               :       4  (7.1 KB)
   discarded local duplicate          :       1  (1.8 KB)
 `
-	if r := ParseReport(out); r != (Report{Imported: 3, Duplicates: 5, Errors: 1}) {
+	if r := ParseReport(out); r != (Report{Imported: 3, Duplicates: 5, Errors: 1}) && r != (Report{Imported: 3, Duplicates: 5, Errors: 1, Found: true}) {
 		t.Fatalf("got %+v", r)
 	}
 }

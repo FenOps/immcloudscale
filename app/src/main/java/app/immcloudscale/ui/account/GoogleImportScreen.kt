@@ -167,7 +167,10 @@ fun GoogleImportScreen(onBack: () -> Unit, onOpenBackup: () -> Unit = {}) {
         onDismiss = { connecting = false },
         onConnected = { a ->
             connecting = false
-            scope.launch { snack.showSnackbar("${a.email} connected: copying its Drive"); load() }
+            val mine = s.ncUser.ifBlank { s.immichUserName }
+            val msg = if (a.person.isNotBlank() && a.person != mine) "${a.email} connected for ${a.person}: it shows in their app"
+            else "${a.email} connected: copying its Drive"
+            scope.launch { snack.showSnackbar(msg); load() }
         },
     )
     removing?.let { a ->

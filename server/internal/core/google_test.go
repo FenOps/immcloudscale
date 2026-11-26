@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,11 +23,12 @@ const testClientID = "123456789-abcdef.apps.googleusercontent.com"
 
 // fakeTools stands in for rclone and immich-go: it records the calls and answers like them.
 type fakeTools struct {
-	mu    sync.Mutex
-	calls []string
-	envs  [][]string
-	drive map[string]string // files "in Google Drive" copied on rclone copy
-	token string            // what rclone leaves in its config (a renewed token)
+	mu     sync.Mutex
+	calls  []string
+	envs   [][]string
+	drive  map[string]string // files "in Google Drive" copied on rclone copy
+	token  string            // what rclone leaves in its config (a renewed token)
+	report string            // immich-go's output, when not the usual one
 }
 
 func (f *fakeTools) run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -78,7 +80,10 @@ func (f *fakeTools) run(_ context.Context, env []string, name string, args ...st
 		})
 		return []byte(`{"count":` + itoa(n) + `,"bytes":` + itoa(size) + `,"sizeless":0}`), nil
 	case filepath.Base(name) == "immich-go":
-		return []byte("Asset Tracking Report:\n  Errors:              0  (0 B)\n  uploaded successfully              :       7  (1 KB)\n  server has duplicate               :       2  (1 KB)\n"), nil
+		if f.report != "" {
+			return []byte(f.report), nil
+		}
+		return []byte("Asset Tracking Report:\nTotal Assets:          9  (2 KB)\n  Errors:              0  (0 B)\n  uploaded successfully              :       7  (1 KB)\n  server has duplicate               :       2  (1 KB)\n"), nil
 	}
 	return nil, nil
 }
@@ -91,6 +96,7 @@ func withGoogle(t *testing.T, s *Server) *fakeTools {
 	for _, n := range []string{"rclone", "immich-go"} {
 		os.WriteFile(filepath.Join(dir, n), []byte("#!/bin/sh\n"), 0o755)
 	}
+	os.WriteFile(filepath.Join(dir, "VERSION"), []byte(google.PinnedVersions+"\n"), 0o644)
 	f := &fakeTools{drive: map[string]string{}}
 	s.Google = &google.Tools{Dir: dir, Run: f.run, Backend: "drive"}
 	return f
@@ -235,58 +241,157 @@ func TestDriveIsCopiedIntoThePersonsFiles(t *testing.T) {
 	}
 }
 
-func touchOld(t *testing.T, p string, age time.Duration) {
+func put(t *testing.T, p string) {
 	os.MkdirAll(filepath.Dir(p), 0o755)
 	os.WriteFile(p, []byte("zip"), 0o644)
-	old := time.Now().Add(-age)
-	os.Chtimes(p, old, old)
 }
 
-func TestTakeoutExportsAreImportedWhenComplete(t *testing.T) {
+// clock lets a test move the server's time on.
+type clock struct{ now time.Time }
+
+func (c *clock) tick(d time.Duration) { c.now = c.now.Add(d) }
+
+func withClock(s *Server) *clock {
+	c := &clock{time.Now()}
+	s.Now = func() time.Time { return c.now }
+	return c
+}
+
+func TestTakeoutExportsAreImportedOnceTheyStopChanging(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	f := withGoogle(t, s)
+	c := withClock(s)
 	root := filesRoot(s.Store.Read().Config, "camille")
 	tk := filepath.Join(root, TakeoutFolder)
-	touchOld(t, filepath.Join(tk, "takeout-20251126T101500Z-001.zip"), time.Hour)
-	touchOld(t, filepath.Join(tk, "takeout-20251126T101500Z-002.zip"), 5*time.Minute) // still arriving
-	touchOld(t, filepath.Join(tk, "work account", "takeout-20251120T080000Z-001.zip"), time.Hour)
-	touchOld(t, filepath.Join(tk, "holiday.zip"), time.Hour) // not a Takeout archive
+	put(t, filepath.Join(tk, "takeout-20251126T101500Z-001.zip"))
+	put(t, filepath.Join(tk, "work account", "takeout-20251120T080000Z-3-001.zip")) // newer exports' naming
+	put(t, filepath.Join(tk, "holiday.zip"))                                        // not from Takeout
 
 	s.googleRound(context.Background())
+	if len(s.Store.Read().Imports) != 0 {
+		t.Fatal("imported before the archives had settled")
+	}
+	c.tick(20 * time.Minute)
+	put(t, filepath.Join(tk, "takeout-20251126T101500Z-002.zip")) // another part arrives (with an old date, as copies keep)
+	os.Chtimes(filepath.Join(tk, "takeout-20251126T101500Z-002.zip"), time.Now().Add(-48*time.Hour), time.Now().Add(-48*time.Hour))
+	c.tick(15 * time.Minute)
+	s.googleRound(context.Background())
 	imports := s.Store.Read().Imports
-	if len(imports) != 1 || imports[0].Export != "takeout-20251120t080000z" || imports[0].Source != "work account" || imports[0].Imported != 7 || imports[0].Duplicates != 2 {
-		t.Fatalf("%+v", imports)
+	if len(imports) != 1 || imports[0].Source != "work account" || imports[0].Imported != 7 || imports[0].Duplicates != 2 {
+		t.Fatalf("only the settled export should be imported: %+v", imports)
 	}
 	if !strings.Contains(f.calls[len(f.calls)-1], "--tag=From Google/work account") {
 		t.Fatalf("call %s", f.calls[len(f.calls)-1])
 	}
+	hasKey := false
 	for _, e := range f.envs[len(f.envs)-1] {
-		if strings.HasPrefix(e, "IMMICH_GO_UPLOAD_API_KEY=") && len(e) > len("IMMICH_GO_UPLOAD_API_KEY=") {
-			goto keyOK
-		}
+		hasKey = hasKey || (strings.HasPrefix(e, "IMMICH_GO_UPLOAD_API_KEY=") && len(e) > len("IMMICH_GO_UPLOAD_API_KEY="))
 	}
-	t.Fatal("no API key given")
-keyOK:
-	if _, err := os.Stat(filepath.Join(tk, "work account", "takeout-20251120T080000Z-001.zip")); err == nil {
-		t.Fatal("an imported archive was kept")
+	if !hasKey {
+		t.Fatal("no API key given")
 	}
 	if _, err := os.Stat(filepath.Join(tk, "holiday.zip")); err != nil {
 		t.Fatal("a zip that isn't from Takeout was touched")
 	}
 
-	// Once every part has settled, the whole export is imported in one go.
-	touchOld(t, filepath.Join(tk, "takeout-20251126T101500Z-002.zip"), time.Hour)
+	// 30 minutes after the last part arrived, the whole export goes in one go.
+	c.tick(30 * time.Minute)
 	s.googleRound(context.Background())
 	last := f.calls[len(f.calls)-1]
 	if !strings.Contains(last, "-001.zip") || !strings.Contains(last, "-002.zip") {
 		t.Fatalf("parts imported separately: %s", last)
 	}
-	if n := len(s.Store.Read().Imports); n != 2 {
-		t.Fatalf("%d imports", n)
-	}
+	// A part arriving after the import is imported on its own later, not ignored.
+	put(t, filepath.Join(tk, "takeout-20251126T101500Z-003.zip"))
+	c.tick(time.Minute)
 	s.googleRound(context.Background())
-	if n := len(s.Store.Read().Imports); n != 2 {
-		t.Fatal("imported twice")
+	c.tick(31 * time.Minute)
+	s.googleRound(context.Background())
+	if n := len(s.Store.Read().Imports); n != 3 || !strings.Contains(f.calls[len(f.calls)-1], "-003.zip") {
+		t.Fatalf("a late part wasn't imported: %d imports, %s", n, f.calls[len(f.calls)-1])
+	}
+}
+
+func TestNothingIsDeletedWithoutAReport(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	f := withGoogle(t, s)
+	c := withClock(s)
+	f.report = "something went wrong before the summary\n"
+	p := filepath.Join(filesRoot(s.Store.Read().Config, "camille"), TakeoutFolder, "takeout-20251126T101500Z-001.zip")
+	put(t, p)
+	s.googleRound(context.Background())
+	c.tick(31 * time.Minute)
+	s.googleRound(context.Background())
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("the archive was deleted though nothing reported an import")
+	}
+	im := s.Store.Read().Imports
+	if len(im) != 1 || im[0].Error == "" {
+		t.Fatalf("%+v", im)
+	}
+	// Tried again a day later, and not more than a few times in all.
+	for i := 0; i < 5; i++ {
+		c.tick(25 * time.Hour)
+		s.googleRound(context.Background())
+	}
+	if n := len(s.Store.Read().Imports); n != maxAttempts {
+		t.Fatalf("%d attempts", n)
+	}
+}
+
+func TestAFailedToolBuildWaitsBeforeTryingAgain(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	c := withClock(s)
+	builds := 0
+	s.Google = &google.Tools{Dir: t.TempDir(), Cache: t.TempDir(), Backend: "drive", Run: func(context.Context, []string, string, ...string) ([]byte, error) {
+		builds++
+		return nil, errors.New("signal: killed")
+	}}
+	put(t, filepath.Join(filesRoot(s.Store.Read().Config, "camille"), TakeoutFolder, "takeout-20251126T101500Z-001.zip"))
+	t.Setenv("PATH", t.TempDir()) // no go here...
+	gobin := filepath.Join(t.TempDir(), "go")
+	os.WriteFile(gobin, []byte("#!/bin/sh\n"), 0o755)
+	t.Setenv("PATH", filepath.Dir(gobin)) // ...but a stand-in, so the build is attempted
+	s.googleRound(context.Background())
+	c.tick(31 * time.Minute)
+	s.googleRound(context.Background())
+	c.tick(time.Hour)
+	s.googleRound(context.Background())
+	if builds != 1 {
+		t.Fatalf("%d builds", builds)
+	}
+	if st := s.GoogleStatus("camille"); !strings.Contains(st.ToolsError, "killed") {
+		t.Fatalf("%+v", st)
+	}
+	c.tick(buildBackoff)
+	s.googleRound(context.Background())
+	if builds != 2 {
+		t.Fatalf("%d builds after the wait", builds)
+	}
+}
+
+func TestANeverCopiedDriveHasNoCopyDate(t *testing.T) {
+	b, _ := json.Marshal(GoogleAccountInfo{ID: "g"})
+	if strings.Contains(string(b), "synced") {
+		t.Fatalf("%s", b)
+	}
+}
+
+func TestRemovingAPersonDisconnectsTheirGoogleAccounts(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	s.SetGoogleKey(testClientID, "GOCSPX-abcdefghijk")
+	s.GoogleTokenURL = fakeGoogleToken(t, "nina@gmail.com")
+	s.AddUser(context.Background(), "nina", "", false)
+	signIn(t, s, "nina", "nina")
+	s.Store.Update(func(st *state.State) error {
+		st.Imports = append(st.Imports, state.TakeoutImport{Person: "nina", Export: "takeout-x"})
+		return nil
+	})
+	if err := s.RemoveUser(context.Background(), "nina"); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Store.Read(); len(st.Google) != 0 || len(st.Imports) != 0 {
+		t.Fatalf("%+v %+v", st.Google, st.Imports)
 	}
 }
 
@@ -296,12 +401,12 @@ func TestTakeoutDeliveredToDriveIsImportedAndNotFetchedAgain(t *testing.T) {
 	s.SetGoogleKey(testClientID, "GOCSPX-abcdefghijk")
 	s.GoogleTokenURL = fakeGoogleToken(t, "camille@gmail.com")
 	signIn(t, s, "camille", "camille")
+	c := withClock(s)
 	f.drive["Takeout/takeout-20251126T101500Z-001.zip"] = "zip"
-	s.googleRound(context.Background()) // copies it; too fresh to import yet
+	s.googleRound(context.Background()) // copies it; just seen, so not imported yet
 
 	p := filepath.Join(filesRoot(s.Store.Read().Config, "camille"), "Google Drive (camille@gmail.com)/Takeout/takeout-20251126T101500Z-001.zip")
-	old := time.Now().Add(-time.Hour)
-	os.Chtimes(p, old, old)
+	c.tick(31 * time.Minute)
 	s.googleRound(context.Background())
 	st := s.Store.Read()
 	if len(st.Imports) != 1 || st.Imports[0].Source != "camille@gmail.com" {

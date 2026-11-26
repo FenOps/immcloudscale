@@ -470,6 +470,21 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 			}
 		}
 		st.Pairings = pend
+		// Their Google accounts stop being copied (their token goes), and their import history goes too.
+		gs := st.Google[:0]
+		for _, a := range st.Google {
+			if a.Person != name {
+				gs = append(gs, a)
+			}
+		}
+		st.Google = gs
+		ims := st.Imports[:0]
+		for _, im := range st.Imports {
+			if im.Person != name {
+				ims = append(ims, im)
+			}
+		}
+		st.Imports = ims
 		return nil
 	})
 	if err == nil && hadVPN {

@@ -30,9 +30,16 @@ const (
 )
 
 var (
-	ErrNoGoogleKey   = errors.New("add your Google API key first (see Import from Google)")
-	clientIDRe       = regexp.MustCompile(`^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`)
-	takeoutArchiveRe = regexp.MustCompile(`(?i)^(takeout-[0-9tz]+)(-[0-9]+)?\.zip$`)
+	ErrNoGoogleKey = errors.New("add your Google API key first (see Import from Google)")
+	clientIDRe     = regexp.MustCompile(`^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`)
+	// e.g. takeout-20251126T101500Z-001.zip, or takeout-20250115T101010Z-3-001.zip in newer exports.
+	takeoutArchiveRe = regexp.MustCompile(`(?i)^(takeout-[0-9tz]+)(-[0-9]+)*\.zip$`)
+	emailRe          = regexp.MustCompile(`^[^/\\\x00-\x1f@]+@[^/\\\x00-\x1f@]+$`)
+)
+
+const (
+	buildBackoff = 6 * time.Hour // after the tools failed to build, before trying again on its own
+	maxAttempts  = 3             // tries for an export that keeps failing; then it waits for the person
 )
 
 type googleLogin struct {
@@ -46,8 +53,17 @@ type googleLogin struct {
 type googleWork struct {
 	building  bool
 	buildErr  string
+	buildAt   time.Time       // when building last failed
 	syncing   map[string]bool // account IDs
 	importing map[string]bool // people
+	// The archives seen per export, and since when unchanged: an export is imported only once its archives have
+	// stopped changing here (their own dates can be old: copies keep Google's).
+	seen map[string]seenSet
+}
+
+type seenSet struct {
+	sig   string
+	since time.Time
 }
 
 // GoogleAccountInfo is a connected account as the app shows it (never its token).
@@ -56,7 +72,7 @@ type GoogleAccountInfo struct {
 	Email   string    `json:"email"`
 	Person  string    `json:"person"`
 	Folder  string    `json:"folder"`
-	Synced  time.Time `json:"synced,omitempty"`
+	Synced  time.Time `json:"synced,omitzero"`
 	Error   string    `json:"error,omitempty"`
 	Files   int       `json:"files"`
 	Bytes   int64     `json:"bytes"`
@@ -168,6 +184,9 @@ func (s *Server) FinishGoogleLogin(ctx context.Context, person, pasted string) (
 	tok, email, err := google.Exchange(ctx, s.googleTokenURL(), c.GoogleClientID, c.GoogleClientSecret, code, l.verifier)
 	if err != nil {
 		return GoogleAccountInfo{}, err
+	}
+	if !emailRe.MatchString(email) || strings.Contains(email, "..") {
+		return GoogleAccountInfo{}, fmt.Errorf("Google gave an unusable account address %q", email) // it goes into folder names
 	}
 	var acct state.GoogleAccount
 	err = s.Store.Update(func(st *state.State) error {
@@ -293,8 +312,8 @@ func (s *Server) googleRound(ctx context.Context) {
 	for _, a := range due {
 		s.syncDrive(ctx, a)
 	}
-	// Archives the Drive copy just brought in are imported on a later round, once they've settled.
-	for _, e := range exports {
+	// Looked for again: the Drive copies may have brought archives (imported once they've settled).
+	for _, e := range s.pendingExports(s.Store.Read()) {
 		s.importExport(ctx, e)
 	}
 }
@@ -304,6 +323,10 @@ func (s *Server) ensureTools(ctx context.Context) bool {
 		return true
 	}
 	s.googleMu.Lock()
+	if !s.work.buildAt.IsZero() && s.Now().Sub(s.work.buildAt) < buildBackoff {
+		s.googleMu.Unlock()
+		return false // failed recently (often memory on a small NAS): not again straight away
+	}
 	s.work.building, s.work.buildErr = true, ""
 	s.googleMu.Unlock()
 	s.Log.Printf("Getting the Google import tools ready (a few minutes, once)")
@@ -311,7 +334,7 @@ func (s *Server) ensureTools(ctx context.Context) bool {
 	s.googleMu.Lock()
 	s.work.building = false
 	if err != nil {
-		s.work.buildErr = "Couldn't get the import tools ready: " + err.Error()
+		s.work.buildErr, s.work.buildAt = "Couldn't get the import tools ready (tried again in a few hours): "+google.Short(err), s.Now()
 	}
 	s.googleMu.Unlock()
 	if err != nil {
@@ -340,9 +363,15 @@ func (s *Server) syncDrive(ctx context.Context, a state.GoogleAccount) {
 	c := s.Store.Read().Config
 	folder := driveFolder(a.Email)
 	dest := filepath.Join(filesRoot(c, a.Person), folder)
-	tok, files, size, err := s.Google.SyncDrive(ctx, google.DriveAuth{ClientID: c.GoogleClientID, Secret: c.GoogleClientSecret, Token: a.Token}, dest, a.SkipTakeout)
+	tok, files, size := a.Token, a.Files, a.Bytes
+	err := makeNextcloudDirs(filesRoot(c, a.Person), folder)
 	if err == nil {
+		tok, files, size, err = s.Google.SyncDrive(ctx, google.DriveAuth{ClientID: c.GoogleClientID, Secret: c.GoogleClientSecret, Token: a.Token}, dest, a.SkipTakeout)
+		// What did arrive is shown even when some files failed (a Doc too big to export, say).
 		s.handToNextcloud(c, a.Person, folder)
+	}
+	if ctx.Err() != nil {
+		return // shutting down: not a failure, and it carries on next time
 	}
 	_ = s.Store.Update(func(st *state.State) error {
 		for i := range st.Google {
@@ -350,10 +379,17 @@ func (s *Server) syncDrive(ctx context.Context, a state.GoogleAccount) {
 			if g.ID != a.ID {
 				continue
 			}
-			g.Token, g.Synced, g.Error = tok, s.Now(), ""
+			if g.Token == a.Token {
+				g.Token = tok // unless it was connected again meanwhile, with a newer token
+			}
+			if g.Synced.Equal(a.Synced) {
+				g.Synced = s.Now() // unless "Copy now" was asked for meanwhile
+			}
+			g.Error = ""
 			if err != nil {
-				g.Error = err.Error()
-			} else {
+				g.Error = google.Short(err)
+			}
+			if files > 0 || err == nil {
 				g.Files, g.Bytes = files, size
 			}
 		}
@@ -366,9 +402,28 @@ func (s *Server) syncDrive(ctx context.Context, a state.GoogleAccount) {
 	}
 }
 
+// makeNextcloudDirs creates root/folder (and root, for someone who never opened Files) owned by Nextcloud.
+func makeNextcloudDirs(root, folder string) error {
+	p := root
+	for _, part := range []string{"", folder} {
+		if part != "" {
+			p = filepath.Join(p, part)
+		}
+		if err := os.MkdirAll(p, 0o750); err != nil {
+			return err
+		}
+		_ = os.Lchown(p, 33, 33)
+		_ = os.Lchown(filepath.Dir(p), 33, 33)
+	}
+	return nil
+}
+
 // handToNextcloud makes files written on disk belong to Nextcloud and shows them in the person's Files.
 func (s *Server) handToNextcloud(c state.Config, person, folder string) {
 	dir := filepath.Join(filesRoot(c, person), folder)
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
 	_ = filepath.Walk(dir, func(p string, _ os.FileInfo, err error) error {
 		if err == nil {
 			_ = os.Lchown(p, 33, 33) // www-data, as in the Nextcloud image
@@ -388,19 +443,27 @@ type export struct {
 	driveFolder               string
 }
 
-// pendingExports finds Takeout exports that are complete (unchanged for a while) and not imported yet.
+// pendingExports finds Takeout exports whose archives have stopped changing for a while. Imported archives are
+// deleted, so whatever is there is new, apart from exports that failed recently or too often.
 func (s *Server) pendingExports(st state.State) []export {
-	// Imported, or tried in the last day (a failed import is tried again daily, not every round).
-	done := map[string]bool{}
+	failed := map[string]int{}
+	recent := map[string]bool{}
 	for _, im := range st.Imports {
-		if (im.Error == "" && im.Errors == 0) || s.Now().Sub(im.At) < 24*time.Hour {
-			done[im.Person+"/"+im.Export] = true
+		k := im.Person + "\x00" + im.Source + "\x00" + im.Export
+		if im.Error != "" || im.Errors > 0 {
+			failed[k]++
+			if s.Now().Sub(im.At) < 24*time.Hour {
+				recent[k] = true
+			}
+		} else {
+			delete(failed, k) // a later success (late parts, say) starts over
 		}
 	}
 	var out []export
+	seen := map[string]bool{}
 	scan := func(person, dir, source, accountID, folder string) {
 		groups := map[string][]string{}
-		newest := map[string]time.Time{}
+		sizes := map[string][]string{}
 		_ = filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 			if err != nil || fi.IsDir() {
 				return nil
@@ -414,31 +477,58 @@ func (s *Server) pendingExports(st state.State) []export {
 			if rel, _ := filepath.Rel(dir, filepath.Dir(p)); accountID == "" && rel != "." {
 				src = strings.SplitN(rel, string(filepath.Separator), 2)[0]
 			}
-			key := src + "\x00" + strings.ToLower(m[1])
+			key := person + "\x00" + src + "\x00" + strings.ToLower(m[1])
 			groups[key] = append(groups[key], p)
-			if fi.ModTime().After(newest[key]) {
-				newest[key] = fi.ModTime()
-			}
+			sizes[key] = append(sizes[key], fmt.Sprintf("%s:%d", fi.Name(), fi.Size()))
 			return nil
 		})
 		for key, archives := range groups {
-			src, name, _ := strings.Cut(key, "\x00")
-			if done[person+"/"+name] || s.Now().Sub(newest[key]) < takeoutSettle {
+			seen[key] = true
+			sort.Strings(sizes[key])
+			sig := strings.Join(sizes[key], ",")
+			s.googleMu.Lock()
+			if s.work.seen == nil {
+				s.work.seen = map[string]seenSet{}
+			}
+			cur, ok := s.work.seen[key]
+			if !ok || cur.sig != sig {
+				cur = seenSet{sig, s.Now()}
+				s.work.seen[key] = cur
+			}
+			s.googleMu.Unlock()
+			if s.Now().Sub(cur.since) < takeoutSettle || recent[key] || failed[key] >= maxAttempts {
 				continue
 			}
+			parts := strings.SplitN(key, "\x00", 3)
 			sort.Strings(archives)
-			out = append(out, export{person, name, src, "From Google/" + src, archives, accountID, folder})
+			out = append(out, export{person, parts[2], parts[1], "From Google/" + parts[1], archives, accountID, folder})
 		}
 	}
 	for _, u := range st.Users {
 		scan(u.Name, filepath.Join(filesRoot(st.Config, u.Name), TakeoutFolder), "Takeout", "", "")
 	}
 	for _, a := range st.Google {
+		if s.isBusy(s.work.syncing, a.ID) {
+			continue // still copying: its archives may be incomplete
+		}
 		folder := driveFolder(a.Email)
 		scan(a.Person, filepath.Join(filesRoot(st.Config, a.Person), folder, "Takeout"), a.Email, a.ID, folder)
 	}
+	s.googleMu.Lock()
+	for k := range s.work.seen {
+		if !seen[k] {
+			delete(s.work.seen, k)
+		}
+	}
+	s.googleMu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].person+out[i].name < out[j].person+out[j].name })
 	return out
+}
+
+func (s *Server) isBusy(m map[string]bool, key string) bool {
+	s.googleMu.Lock()
+	defer s.googleMu.Unlock()
+	return m[key]
 }
 
 func (s *Server) importExport(ctx context.Context, e export) {
@@ -446,9 +536,12 @@ func (s *Server) importExport(ctx context.Context, e export) {
 	defer s.setBusy(&s.work.importing, e.person, false)
 	rec := state.TakeoutImport{Person: e.person, Export: e.name, Source: e.source, At: s.Now()}
 	r, err := s.importWithKey(ctx, e)
+	if ctx.Err() != nil {
+		return // shutting down: tried again after the restart, not counted as a failure
+	}
 	rec.Imported, rec.Duplicates, rec.Errors = r.Imported, r.Duplicates, r.Errors
 	if err != nil {
-		rec.Error = err.Error()
+		rec.Error = google.Short(err)
 		s.Log.Printf("Importing %s for %s: %v", e.name, e.person, err)
 	} else {
 		s.Log.Printf("Imported %s for %s: %d photos, %d already there", e.name, e.person, r.Imported, r.Duplicates)
@@ -504,6 +597,9 @@ func (s *Server) importWithKey(ctx context.Context, e export) (google.Report, er
 	if err != nil {
 		return google.Report{}, fmt.Errorf("creating a Photos key: %w", err)
 	}
-	defer func() { _ = im.DeleteAPIKey(context.Background(), tok, key.ID) }()
+	defer func() {
+		_ = im.DeleteAPIKey(context.Background(), tok, key.ID)
+		_ = im.Logout(context.Background(), tok)
+	}()
 	return s.Google.ImportTakeout(ctx, s.ImmichURL(st.Config), key.Secret, e.tag, e.archives)
 }

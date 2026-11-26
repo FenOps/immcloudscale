@@ -69,14 +69,18 @@ func NewTools(dir, cache string) *Tools {
 
 func (t *Tools) path(name string) string { return filepath.Join(t.Dir, name) }
 
-// Ready reports whether both tools are there.
+// PinnedVersions is what Ready compares with the stamp left by Ensure, so raising a pinned version rebuilds the tools.
+const PinnedVersions = rcloneModule + " " + immichGoModule
+
+// Ready reports whether both tools are there, at the pinned versions.
 func (t *Tools) Ready() bool {
 	for _, n := range []string{"rclone", "immich-go"} {
 		if fi, err := os.Stat(t.path(n)); err != nil || fi.Mode()&0o111 == 0 {
 			return false
 		}
 	}
-	return true
+	stamp, err := os.ReadFile(t.path("VERSION"))
+	return err == nil && strings.TrimSpace(string(stamp)) == PinnedVersions
 }
 
 // Ensure builds whichever tool is missing. It takes a few minutes the first time (longer on a small NAS).
@@ -91,18 +95,21 @@ func (t *Tools) Ensure(ctx context.Context) error {
 	if err := os.MkdirAll(t.Dir, 0o755); err != nil {
 		return err
 	}
+	// Gently: one package at a time and a memory ceiling, so a small NAS keeps serving photos meanwhile.
 	env := []string{
-		"GOBIN=" + t.Dir, "GOTOOLCHAIN=auto", "CGO_ENABLED=0", "GOFLAGS=-trimpath",
+		"GOBIN=" + t.Dir, "GOTOOLCHAIN=auto", "CGO_ENABLED=0", "GOFLAGS=-trimpath -p=1", "GOMAXPROCS=1", "GOMEMLIMIT=1GiB",
 		"GOPATH=" + filepath.Join(t.Cache, "go"), "GOCACHE=" + filepath.Join(t.Cache, "build"), "HOME=" + t.Cache,
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Hour)
+	defer cancel()
+	// The caches (modules, the build, a downloaded Go) are large and not needed once the tools exist.
+	defer func() { _ = os.RemoveAll(t.Cache) }()
 	for _, m := range []string{rcloneModule, immichGoModule} {
 		if _, err := t.Run(ctx, env, gobin, "install", "-ldflags=-s -w", m); err != nil {
 			return fmt.Errorf("building %s: %w", strings.SplitN(m, "@", 2)[0], err)
 		}
 	}
-	// The build cache is large and not needed once the tools exist.
-	_ = os.RemoveAll(filepath.Join(t.Cache, "build"))
-	return nil
+	return os.WriteFile(t.path("VERSION"), []byte(PinnedVersions+"\n"), 0o644)
 }
 
 func goBinary() (string, error) {
@@ -246,9 +253,6 @@ type DriveAuth struct{ ClientID, Secret, Token string }
 // Drive) not to fetch, e.g. Takeout archives already imported. It returns the token as rclone left it (Google
 // may have renewed it) with what's now in dest.
 func (t *Tools) SyncDrive(ctx context.Context, a DriveAuth, dest string, skip []string) (token string, files int, size int64, err error) {
-	if err := os.MkdirAll(dest, 0o750); err != nil {
-		return a.Token, 0, 0, err
-	}
 	work, err := os.MkdirTemp("", "ics-drive-*")
 	if err != nil {
 		return a.Token, 0, 0, err
@@ -269,6 +273,8 @@ func (t *Tools) SyncDrive(ctx context.Context, a DriveAuth, dest string, skip []
 		return a.Token, 0, 0, err
 	}
 	env := []string{"RCLONE_CONFIG=" + conf}
+	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour) // a first copy of a big Drive takes long, but not forever
+	defer cancel()
 	if _, err := t.Run(ctx, env, t.path("rclone"), "copy", "src:"+t.Root, dest, "--exclude-from", excl,
 		"--transfers", "4", "--checkers", "8", "--retries", "3", "--stats", "0"); err != nil {
 		return renewedToken(conf, a.Token), 0, 0, driveError(err)
@@ -328,10 +334,14 @@ func lastJSON(out []byte) []byte {
 
 // Report is what an import did.
 type Report struct {
-	Imported   int `json:"imported"`
-	Duplicates int `json:"duplicates"` // already on the server, or twice in the archives
-	Errors     int `json:"errors"`
+	Imported   int  `json:"imported"`
+	Duplicates int  `json:"duplicates"` // already on the server, or twice in the archives
+	Errors     int  `json:"errors"`
+	Found      bool `json:"-"` // the importer's report was there at all
 }
+
+// ErrNoReport means the importer ended without saying what it did: nothing may be deleted then.
+var ErrNoReport = errors.New("the importer ended without a report of what it imported")
 
 // ImportTakeout imports Google Takeout archives into Immich with the person's API key, tagging every photo
 // with [tag] and recreating Google's albums.
@@ -349,12 +359,14 @@ func (t *Tools) ImportTakeout(ctx context.Context, server, apiKey, tag string, z
 		"--include-unmatched",
 	}
 	// The key goes in the environment, where other users on the machine can't read it from the process list.
+	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
+	defer cancel()
 	out, err := t.Run(ctx, []string{"IMMICH_GO_UPLOAD_API_KEY=" + apiKey}, t.path("immich-go"), append(args, zips...)...)
 	r := ParseReport(string(out))
-	if err != nil {
-		return r, err
+	if err == nil && (!r.Found || r.Imported+r.Duplicates == 0) {
+		err = ErrNoReport
 	}
-	return r, nil
+	return r, err
 }
 
 // ParseReport reads immich-go's end-of-run report.
@@ -371,6 +383,7 @@ func ParseReport(out string) Report {
 		Imported:   count("uploaded successfully"),
 		Duplicates: count("server has duplicate") + count("discarded local duplicate"),
 		Errors:     count("Errors"),
+		Found:      regexp.MustCompile(`(?m)^\s*Total Assets\s*:`).MatchString(out),
 	}
 }
 
@@ -379,4 +392,18 @@ func tail(b []byte, n int) []byte {
 		return b[len(b)-n:]
 	}
 	return b
+}
+
+// Short is the last line of an error, for the app (the whole of it goes to the log).
+func Short(err error) string {
+	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			if len(l) > 300 {
+				l = l[:300] + "…"
+			}
+			return l
+		}
+	}
+	return err.Error()
 }
