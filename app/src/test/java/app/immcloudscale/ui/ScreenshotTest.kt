@@ -1,15 +1,19 @@
 package app.immcloudscale.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import app.immcloudscale.data.AppSettings
@@ -26,10 +30,6 @@ import app.immcloudscale.data.nextcloud.Quota
 import app.immcloudscale.data.tailscale.TsState
 import app.immcloudscale.data.tailscale.TsStatus
 import app.immcloudscale.ui.account.AccountCard
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import app.immcloudscale.ui.account.BackupWhereStatus
 import app.immcloudscale.ui.collections.CollectionsContent
 import app.immcloudscale.ui.collections.CollectionsState
@@ -38,10 +38,10 @@ import app.immcloudscale.ui.files.FilesContent
 import app.immcloudscale.ui.files.FilesState
 import app.immcloudscale.ui.network.NetworkActions
 import app.immcloudscale.ui.network.NetworkContent
-import app.immcloudscale.ui.network.RemoteAccessActions
-import app.immcloudscale.ui.network.RemoteAccessCard
 import app.immcloudscale.ui.network.NetworkUi
 import app.immcloudscale.ui.network.Reach
+import app.immcloudscale.ui.network.RemoteAccessActions
+import app.immcloudscale.ui.network.RemoteAccessCard
 import app.immcloudscale.ui.network.ServiceCheck
 import app.immcloudscale.ui.photos.AssetGrid
 import app.immcloudscale.ui.photos.BackupIndicator
