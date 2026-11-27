@@ -32,7 +32,10 @@ data class FilesState(
     val offlinePaths: Set<String> = emptySet(),
     val transfer: Transfer? = null,
     val message: String? = null,
+    val selected: Set<String> = emptySet(), // paths picked with a long press
 ) {
+    val selectedFiles: List<CloudFile> get() = items.filter { it.path in selected }
+
     val sorted: List<CloudFile>
         get() {
             val cmp: Comparator<CloudFile> = when (sort) {
@@ -92,7 +95,8 @@ class FilesViewModel(private val g: AppGraph) : ViewModel() {
                         CloudFile(p, f.name, false, f.length(), f.lastModified(), null, null, false, false, false)
                     }
                 }
-                _state.update { it.copy(items = items, loading = false) }
+                val paths = items.mapTo(HashSet()) { it.path }
+                _state.update { st -> st.copy(items = items, loading = false, selected = st.selected.filterTo(HashSet()) { it in paths }) }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _state.update { it.copy(loading = false, error = e.message ?: "Couldn't load files") }
@@ -100,9 +104,81 @@ class FilesViewModel(private val g: AppGraph) : ViewModel() {
         }
     }
 
-    fun selectTab(t: FilesTab) { _state.update { it.copy(tab = t, path = "/", search = null, items = emptyList()) }; load() }
-    fun open(folder: String) { _state.update { it.copy(tab = FilesTab.MyFiles, path = folder, search = null, items = emptyList()) }; load() }
-    fun search(q: String?) { _state.update { it.copy(search = q?.takeIf { s -> s.isNotBlank() }) }; load() }
+    fun selectTab(t: FilesTab) { _state.update { it.copy(tab = t, path = "/", search = null, items = emptyList(), selected = emptySet()) }; load() }
+    fun open(folder: String) { _state.update { it.copy(tab = FilesTab.MyFiles, path = folder, search = null, items = emptyList(), selected = emptySet()) }; load() }
+    fun search(q: String?) { _state.update { it.copy(search = q?.takeIf { s -> s.isNotBlank() }, selected = emptySet()) }; load() }
+
+    fun toggleSelect(f: CloudFile) = _state.update { it.copy(selected = if (f.path in it.selected) it.selected - f.path else it.selected + f.path) }
+    fun selectAll() = _state.update { it.copy(selected = it.items.mapTo(HashSet()) { f -> f.path }) }
+    fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
+
+    /** Runs [op] on each picked file in turn; one that fails doesn't stop the rest. */
+    private fun forSelected(done: (Int) -> String, reload: Boolean = true, op: suspend (CloudFile, String) -> Unit) = viewModelScope.launch {
+        val chosen = _state.value.selectedFiles
+        if (chosen.isEmpty()) return@launch // all gone in a reload meanwhile
+        _state.update { it.copy(selected = emptySet()) }
+        var failed = 0
+        var lastError: String? = null
+        chosen.forEachIndexed { i, f ->
+            val title = if (chosen.size > 1) "${i + 1} of ${chosen.size}: ${f.name}" else f.name
+            _state.update { it.copy(transfer = Transfer(title, null)) }
+            try {
+                op(f, title)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                failed++
+                lastError = e.message
+            }
+        }
+        val ok = chosen.size - failed
+        val msg = when {
+            failed == 0 -> done(ok)
+            ok == 0 -> "Failed: ${lastError ?: "unknown error"}"
+            else -> "$ok done, $failed failed: ${lastError ?: "unknown error"}"
+        }
+        _state.update { it.copy(transfer = null, message = msg) }
+        if (reload) load()
+    }
+
+    fun moveSelected(folder: String, copy: Boolean) {
+        val where = folder.substringAfterLast('/').ifEmpty { "My Files" }
+        forSelected({ n -> if (copy) "${items(n)} copied to $where" else "${items(n)} moved to $where" }) { f, _ ->
+            g.nextcloud.move(f.path, folder.trimEnd('/') + "/" + f.name, copy = copy)
+        }
+    }
+    fun deleteSelected() = forSelected({ n -> "${items(n)} moved to the Nextcloud trash bin" }) { f, _ ->
+        g.nextcloud.delete(f.path); g.offline.remove(f.path)
+        _state.update { it.copy(offlinePaths = it.offlinePaths - f.path) }
+    }
+    /** Stars them all, or takes the stars off when every one already has one. */
+    fun starSelected() {
+        val on = !_state.value.selectedFiles.all { it.favorite }
+        forSelected({ n -> if (on) "${items(n)} added to Starred" else "${items(n)} removed from Starred" }, reload = _state.value.tab == FilesTab.Starred) { f, _ ->
+            g.nextcloud.setFavorite(f.path, on)
+            _state.update { s -> s.copy(items = s.items.map { if (it.path == f.path) it.copy(favorite = on) else it }) }
+        }
+    }
+    /** Keeps the picked files (not folders) on the phone, or removes the copies when they're all kept already. */
+    fun offlineSelected() {
+        val s = _state.value
+        val files = s.selectedFiles.filter { !it.isFolder }
+        if (files.isEmpty()) { _state.update { it.copy(selected = emptySet(), message = "Folders can't be kept offline; pick files") }; return }
+        if (files.all { it.path in s.offlinePaths }) {
+            files.forEach { g.offline.remove(it.path) }
+            _state.update { st -> st.copy(selected = emptySet(), offlinePaths = st.offlinePaths - files.map { it.path }.toSet(), message = "Removed ${items(files.size)} from offline") }
+            if (s.tab == FilesTab.Offline) load()
+            return
+        }
+        val skipped = s.selectedFiles.size - files.size
+        _state.update { it.copy(selected = files.mapTo(HashSet()) { f -> f.path }) }
+        forSelected({ n -> "${items(n)} available offline" + if (skipped > 0) " (folders can't be kept offline)" else "" }, reload = false) { f, title ->
+            if (f.path !in _state.value.offlinePaths) {
+                g.nextcloud.download(f.path, g.offline.fileFor(f.path)) { p -> _state.update { it.copy(transfer = Transfer(title, p)) } }
+                _state.update { it.copy(offlinePaths = it.offlinePaths + f.path) }
+            }
+        }
+    }
+    private fun items(n: Int) = if (n == 1) "1 item" else "$n items"
     fun up(): Boolean {
         val s = _state.value
         if (s.search != null) { search(null); return true }

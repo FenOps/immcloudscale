@@ -4,8 +4,10 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +36,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ChevronRight
@@ -44,10 +47,13 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Deselect
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -85,6 +91,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,6 +112,7 @@ import app.immcloudscale.ui.components.RemoteImage
 import app.immcloudscale.ui.components.formatBytes
 import app.immcloudscale.ui.components.formatDate
 import app.immcloudscale.ui.components.graphViewModel
+import app.immcloudscale.ui.photos.SelectCircle
 import app.immcloudscale.ui.photos.shareText
 import kotlinx.coroutines.launch
 import java.io.File
@@ -119,6 +130,14 @@ class FilesActions(
     val onNew: () -> Unit = {},
     val onAccount: () -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onSelect: (CloudFile) -> Unit = {},
+    val onSelectAll: () -> Unit = {},
+    val onClearSelection: () -> Unit = {},
+    val onMoveSelected: () -> Unit = {},
+    val onCopySelected: () -> Unit = {},
+    val onStarSelected: () -> Unit = {},
+    val onOfflineSelected: () -> Unit = {},
+    val onDeleteSelected: () -> Unit = {},
 )
 
 fun openLocalFile(ctx: android.content.Context, file: File, mime: String?) {
@@ -156,11 +175,14 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
     var movePicker by remember { mutableStateOf<Pair<CloudFile, Boolean>?>(null) }
     var details by remember { mutableStateOf<CloudFile?>(null) }
     var confirmRemove by remember { mutableStateOf<CloudFile?>(null) }
+    var moveSelected by remember { mutableStateOf<Boolean?>(null) } // true: copy the picked items
+    var confirmRemoveSelected by remember { mutableStateOf(false) }
     val snack = remember { SnackbarHostState() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris -> if (uris.isNotEmpty()) vm.upload(uris) }
 
     LaunchedEffect(st.message) { st.message?.let { snack.showSnackbar(it); vm.consumeMessage() } }
-    BackHandler(st.search != null || (st.tab == FilesTab.MyFiles && st.path != "/")) { vm.up() }
+    BackHandler(st.selected.isNotEmpty()) { vm.clearSelection() }
+    BackHandler(st.selected.isEmpty() && (st.search != null || (st.tab == FilesTab.MyFiles && st.path != "/"))) { vm.up() }
 
     val actions = FilesActions(
         onTab = vm::selectTab, onOpenFolder = vm::open,
@@ -168,6 +190,9 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
         onMore = { sheetFor = it }, onSort = vm::sort,
         onToggleGrid = { scope.launch { g.settings.update { it.copy(filesGrid = !it.filesGrid) } } },
         onSearch = vm::search, onUp = { vm.up() }, onNew = { newSheet = true }, onAccount = onAccount, onRefresh = vm::load,
+        onSelect = vm::toggleSelect, onSelectAll = vm::selectAll, onClearSelection = vm::clearSelection,
+        onMoveSelected = { moveSelected = false }, onCopySelected = { moveSelected = true },
+        onStarSelected = vm::starSelected, onOfflineSelected = vm::offlineSelected, onDeleteSelected = { confirmRemoveSelected = true },
     )
     FilesContent(
         st, settings.filesGrid, settings.immichUserName.ifBlank { settings.ncUser.ifBlank { "Me" } }, actions,
@@ -215,16 +240,35 @@ fun FilesScreen(onPreview: (CloudFile) -> Unit, onAccount: () -> Unit, onSetup: 
         FolderPickerDialog(
             title = if (copy) "Copy \"${f.name}\" to" else "Move \"${f.name}\" to",
             start = f.parent,
-            exclude = if (f.isFolder) f.path else null,
+            exclude = if (f.isFolder) setOf(f.path) else emptySet(),
             onDismiss = { movePicker = null },
         ) { dest -> movePicker = null; if (copy) vm.copyTo(f, dest) else vm.moveTo(f, dest) }
+    }
+    moveSelected?.let { copy ->
+        val n = st.selectedFiles.size
+        FolderPickerDialog(
+            title = "${if (copy) "Copy" else "Move"} $n item${if (n == 1) "" else "s"} to",
+            start = st.selectedFiles.firstOrNull()?.parent ?: st.path,
+            exclude = st.selectedFiles.filter { it.isFolder }.mapTo(HashSet()) { it.path }, // not into themselves
+            onDismiss = { moveSelected = null },
+        ) { dest -> moveSelected = null; vm.moveSelected(dest, copy) }
+    }
+    if (confirmRemoveSelected) {
+        val n = st.selectedFiles.size
+        AlertDialog(
+            onDismissRequest = { confirmRemoveSelected = false },
+            title = { Text(if (n == 1) "Remove 1 item?" else "Remove $n items?") },
+            text = { Text("They move to the Nextcloud trash bin, where you can restore them from the web.") },
+            confirmButton = { TextButton(onClick = { confirmRemoveSelected = false; vm.deleteSelected() }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirmRemoveSelected = false }) { Text("Cancel") } },
+        )
     }
     confirmRemove?.let { f ->
         AlertDialog(
             onDismissRequest = { confirmRemove = null },
             title = { Text("Remove \"${f.name}\"?") },
             text = { Text("It moves to the Nextcloud trash bin, where you can restore it from the web.") },
-            confirmButton = { TextButton(onClick = { confirmRemove = null; vm.delete(f) }) { Text("Remove") } },
+            confirmButton = { TextButton(onClick = { confirmRemove = null; vm.delete(f) }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } },
         )
     }
@@ -270,7 +314,7 @@ fun FilesContent(
 ) {
     Scaffold(
         floatingActionButton = {
-            if (st.tab == FilesTab.MyFiles && st.search == null) ExtendedFloatingActionButton(
+            if (st.tab == FilesTab.MyFiles && st.search == null && st.selected.isEmpty()) ExtendedFloatingActionButton(
                 onClick = a.onNew,
                 icon = { Icon(Icons.Outlined.Add, null) },
                 text = { Text("New") },
@@ -283,7 +327,7 @@ fun FilesContent(
         snackbarHost = { SnackbarHost(snack, Modifier.padding(bottom = bottomPadding.calculateBottomPadding())) },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
-            SearchPill(st.search, accountName, a.onSearch, a.onAccount)
+            if (st.selected.isNotEmpty()) SelectionBar(st, a) else SearchPill(st.search, accountName, a.onSearch, a.onAccount)
             if (st.search == null) {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
@@ -320,10 +364,10 @@ fun FilesContent(
                         GridCells.Adaptive(160.dp), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = listPad.calculateBottomPadding()),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(items, key = { it.path }) { f -> FileCard(f, f.path in st.offlinePaths, previewUrl(f), a) }
+                        items(items, key = { it.path }) { f -> FileCard(f, f.path in st.offlinePaths, previewUrl(f), a, st.selected.isNotEmpty(), f.path in st.selected) }
                     }
                     else -> LazyColumn(contentPadding = listPad) {
-                        items(items, key = { it.path }) { f -> FileRow(f, f.path in st.offlinePaths, previewUrl(f), st.tab, a) }
+                        items(items, key = { it.path }) { f -> FileRow(f, f.path in st.offlinePaths, previewUrl(f), st.tab, a, st.selected.isNotEmpty(), f.path in st.selected) }
                     }
                 }
             }
@@ -430,13 +474,62 @@ private fun subtitle(f: CloudFile, tab: FilesTab): String = when {
     else -> "${formatBytes(f.size)} · Modified ${formatDate(f.modified)}"
 }
 
+/** Tap opens; a long press starts picking several, and then taps add or remove. */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.fileClicks(f: CloudFile, a: FilesActions, selecting: Boolean) = combinedClickable(
+    onClick = { if (selecting) a.onSelect(f) else if (f.isFolder) a.onOpenFolder(f.path) else a.onOpenFile(f) },
+    onLongClick = { a.onSelect(f) },
+    onLongClickLabel = "Select",
+)
+
+/** Shown instead of the search pill while items are picked: how many, and what can be done with them all. */
 @Composable
-fun FileRow(f: CloudFile, offline: Boolean, preview: String?, tab: FilesTab, a: FilesActions) {
+private fun SelectionBar(st: FilesState, a: FilesActions) {
+    val chosen = st.selectedFiles
+    var more by remember { mutableStateOf(false) }
+    // Same place and height as the search pill, so nothing moves under the finger.
+    Row(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 8.dp).height(56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = a.onClearSelection) { Icon(Icons.Filled.Close, "Clear selection") }
+        Text(
+            "${chosen.size} selected", style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+        )
+        val all = chosen.size == st.items.size
+        IconButton(onClick = if (all) a.onClearSelection else a.onSelectAll) {
+            Icon(if (all) Icons.Outlined.Deselect else Icons.Outlined.SelectAll, if (all) "Deselect all" else "Select all")
+        }
+        IconButton(onClick = a.onMoveSelected) { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, "Move") }
+        IconButton(onClick = a.onDeleteSelected) { Icon(Icons.Outlined.Delete, "Remove") }
+        Box {
+            IconButton(onClick = { more = true }) { Icon(Icons.Filled.MoreVert, "More actions") }
+            DropdownMenu(more, { more = false }) {
+                DropdownMenuItem(text = { Text("Copy to…") }, onClick = { more = false; a.onCopySelected() })
+                DropdownMenuItem(
+                    text = { Text(if (chosen.isNotEmpty() && chosen.all { it.favorite }) "Remove from Starred" else "Add to Starred") },
+                    onClick = { more = false; a.onStarSelected() },
+                )
+                val files = chosen.filter { !it.isFolder }
+                if (files.isNotEmpty()) DropdownMenuItem(
+                    text = { Text(if (files.all { it.path in st.offlinePaths }) "Remove offline copies" else "Make available offline") },
+                    onClick = { more = false; a.onOfflineSelected() },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun FileRow(f: CloudFile, offline: Boolean, preview: String?, tab: FilesTab, a: FilesActions, selecting: Boolean = false, selected: Boolean = false) {
     ListItem(
-        modifier = Modifier.clickable { if (f.isFolder) a.onOpenFolder(f.path) else a.onOpenFile(f) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fileClicks(f, a, selecting).semantics { this.selected = selected },
+        colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
         leadingContent = {
-            if (preview != null && f.kind() == FileKind.Image) {
+            if (selected) {
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { SelectCircle(true, Modifier.size(24.dp)) }
+            } else if (preview != null && f.kind() == FileKind.Image) {
                 RemoteImage(preview, f.path, Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)))
             } else Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { FileIcon(f) }
         },
@@ -449,22 +542,22 @@ fun FileRow(f: CloudFile, offline: Boolean, preview: String?, tab: FilesTab, a: 
                 Text(subtitle(f, tab), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
-        trailingContent = { IconButton(onClick = { a.onMore(f) }) { Icon(Icons.Filled.MoreVert, "More actions") } },
+        trailingContent = { if (!selecting) IconButton(onClick = { a.onMore(f) }) { Icon(Icons.Filled.MoreVert, "More actions") } },
     )
 }
 
 @Composable
-fun FileCard(f: CloudFile, offline: Boolean, preview: String?, a: FilesActions) {
+fun FileCard(f: CloudFile, offline: Boolean, preview: String?, a: FilesActions, selecting: Boolean = false, selected: Boolean = false) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.clickable { if (f.isFolder) a.onOpenFolder(f.path) else a.onOpenFile(f) },
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fileClicks(f, a, selecting).semantics { this.selected = selected },
     ) {
         Column {
             Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                FileIcon(f, 20.dp)
+                if (selected) SelectCircle(true, Modifier.size(20.dp)) else FileIcon(f, 20.dp)
                 Text(f.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                IconButton(onClick = { a.onMore(f) }) { Icon(Icons.Filled.MoreVert, "More actions") }
+                if (selecting) Spacer(Modifier.size(48.dp)) else IconButton(onClick = { a.onMore(f) }) { Icon(Icons.Filled.MoreVert, "More actions") }
             }
             if (!f.isFolder) {
                 Box(

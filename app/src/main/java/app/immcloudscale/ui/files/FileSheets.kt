@@ -120,13 +120,13 @@ private fun SheetRow(icon: ImageVector, label: String, onClick: () -> Unit, tint
 
 /** Browse folders to pick a destination for move / copy. */
 @Composable
-fun FolderPickerDialog(title: String, start: String, exclude: String?, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+fun FolderPickerDialog(title: String, start: String, exclude: Set<String>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     val g = LocalContext.current.graph
     var path by remember { mutableStateOf(start) }
     var folders by remember { mutableStateOf<List<CloudFile>?>(null) }
     LaunchedEffect(path) {
         folders = null
-        folders = runCatching { g.nextcloud.list(path).filter { it.isFolder && it.path != exclude } }.getOrDefault(emptyList())
+        folders = runCatching { g.nextcloud.list(path).filter { it.isFolder && exclude.none { x -> it.path == x || it.path.startsWith("$x/") } } }.getOrDefault(emptyList())
             .sortedBy { it.name.lowercase() }
     }
     AlertDialog(

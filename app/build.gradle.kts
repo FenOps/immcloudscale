@@ -16,8 +16,8 @@ android {
         applicationId = "app.immcloudscale"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.4.2"
+        versionCode = 10
+        versionName = "0.4.3"
     }
 
     // Release signing: storeFile / storePassword / keyAlias / keyPassword in keystore.properties

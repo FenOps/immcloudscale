@@ -59,11 +59,13 @@ import androidx.compose.ui.unit.sp
 import app.immcloudscale.data.immich.AssetDto
 import app.immcloudscale.data.immich.DaySection
 import app.immcloudscale.data.immich.localDate
+import app.immcloudscale.ui.components.FastScroller
 import app.immcloudscale.ui.components.RemoteImage
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.Disposable
 import coil3.request.ImageRequest
+import java.time.format.DateTimeFormatter
 import java.util.Collections
 
 /**
@@ -113,54 +115,71 @@ fun AssetGrid(
         prefetch(ctx, window.filter { it !in running }).forEach { (url, d) -> running[url] = d }
     }
     DisposableEffect(Unit) { onDispose { running.values.forEach { it.dispose() }; running.clear() } }
+    // The month an item belongs to, for the scroll handle's label: found from where each day starts in [all].
+    val dayStarts = remember(sections) { sections.runningFold(0) { at, s -> at + s.assets.size }.dropLast(1).toIntArray() }
+    val monthFmt = remember { DateTimeFormatter.ofPattern("MMMM yyyy") }
+    fun monthOf(key: Any?): String? {
+        val date = (key as? String)?.let { k ->
+            if (k.startsWith("h-")) sections.firstOrNull { "h-${it.date}" == k }?.date
+            else indexOf[k]?.let { i -> dayStarts.binarySearch(i).let { b -> sections.getOrNull(if (b >= 0) b else -b - 2)?.date } }
+        }
+        return date?.format(monthFmt)
+    }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(columns),
-        state = state,
-        contentPadding = contentPadding,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = modifier.fillMaxSize().pointerInput(Unit) {
-            // Pinch with two fingers to zoom the grid in or out; single-finger scroll is untouched.
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                var zoom = 1f
-                do {
-                    val event = awaitPointerEvent()
-                    if (event.changes.count { it.pressed } >= 2) {
-                        zoom *= event.calculateZoom()
-                        if (zoom > 1.35f && currentColumns > 2) { onColumnsChange(currentColumns - 1); zoom = 1f }
-                        if (zoom < 0.74f && currentColumns < 7) { onColumnsChange(currentColumns + 1); zoom = 1f }
-                        event.changes.forEach { it.consume() }
-                    }
-                } while (event.changes.any { it.pressed })
+    Box(modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = state,
+            contentPadding = contentPadding,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                // Pinch with two fingers to zoom the grid in or out; single-finger scroll is untouched.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var zoom = 1f
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.count { it.pressed } >= 2) {
+                            zoom *= event.calculateZoom()
+                            if (zoom > 1.35f && currentColumns > 2) { onColumnsChange(currentColumns - 1); zoom = 1f }
+                            if (zoom < 0.74f && currentColumns < 7) { onColumnsChange(currentColumns + 1); zoom = 1f }
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            },
+        ) {
+            header?.invoke(this)
+            sections.forEach { section ->
+                item(key = "h-${section.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
+                    DayHeader(section, selecting, section.assets.filter { !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
+                }
+                items(section.assets, key = { it.id }, contentType = { "tile" }) { a ->
+                    AssetTile(
+                        asset = a,
+                        url = thumbUrl(a),
+                        selecting = selecting,
+                        selected = a.id in selected,
+                        small = columns >= 6,
+                        modifier = Modifier.animateItem().combinedClickable(
+                            onClick = { if (selecting) onToggle(a) else onOpen(a) },
+                            onLongClick = { onToggle(a) },
+                        ),
+                    )
+                }
             }
-        },
-    ) {
-        header?.invoke(this)
-        sections.forEach { section ->
-            item(key = "h-${section.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
-                DayHeader(section, selecting, section.assets.filter { !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
-            }
-            items(section.assets, key = { it.id }, contentType = { "tile" }) { a ->
-                AssetTile(
-                    asset = a,
-                    url = thumbUrl(a),
-                    selecting = selecting,
-                    selected = a.id in selected,
-                    small = columns >= 6,
-                    modifier = Modifier.animateItem().combinedClickable(
-                        onClick = { if (selecting) onToggle(a) else onOpen(a) },
-                        onLongClick = { onToggle(a) },
-                    ),
-                )
+            if (loadingMore) item(span = { GridItemSpan(maxLineSpan) }, key = "more") {
+                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                }
             }
         }
-        if (loadingMore) item(span = { GridItemSpan(maxLineSpan) }, key = "more") {
-            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-            }
-        }
+        FastScroller(
+            state, label = ::monthOf,
+            modifier = Modifier.align(Alignment.TopEnd)
+                .padding(top = contentPadding.calculateTopPadding() + 8.dp, bottom = contentPadding.calculateBottomPadding() + 8.dp),
+        )
     }
 }
 

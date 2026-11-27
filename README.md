@@ -46,6 +46,7 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 
 ### Photos (Immich)
 * Google Photos-style timeline: day headers with place names, square tiles, video durations, favourite hearts, infinite scroll, pull to refresh
+* A scroll handle for dragging through the library, showing the month passed
 * Pinch the grid to change the number of columns (2–7)
 * **Memories** ("1 year ago…") carousel at the top
 * Long-press to select, tap a date to select the whole day; then share, create a public link, add to an album (or a new one), favourite, archive or move to trash
@@ -56,6 +57,7 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 
 ### Files (Nextcloud)
 * Google Drive-style browser: "Search in Files" pill, **My Files / Recent / Starred / Shared / Offline** chips, breadcrumbs, sort by name / date / size, list or grid view with thumbnails
+* Long-press to pick several files: move, copy, star, keep offline or remove them together
 * **New** button: create a folder, upload files from the phone
 * Item sheet: copy share link, star, **available offline**, open with another app, send a copy, rename, move, make a copy, details, remove
 * In-app preview of images (zoomable), video and audio (streamed), PDFs (rendered on the phone) and text/code

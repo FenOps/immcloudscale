@@ -256,6 +256,18 @@ class AppGuiTest {
             compose.onNodeWithContentDescription("Clear selection").performClick()
             settle(800)
 
+            tab("Files")
+            settle(1500)
+            compose.onNodeWithText("Budget 2026.xlsx").performTouchInput { longClick() }
+            compose.onNodeWithText("Kitchen renovation.jpg").performClick()
+            compose.onNodeWithText("2 selected").assertExists()
+            shot("33-files-selected")
+            compose.onNodeWithContentDescription("Remove").performClick()
+            compose.onNodeWithText("Remove 2 items?").assertExists()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithContentDescription("Clear selection").performClick()
+            settle(800)
+
             tab("Collections")
             compose.onNodeWithText("Duplicates").performClick()
             shot("23-duplicates")
