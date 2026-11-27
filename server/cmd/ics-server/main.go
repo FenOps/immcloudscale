@@ -560,7 +560,11 @@ func iphoneCmd(ctx context.Context, s *core.Server, name string) {
 	st, err := s.IPhoneSetup(ctx, name)
 	check(err)
 	fmt.Printf("\nSet up %s's iPhone or iPad\n\n", st.Person)
-	fmt.Println("1. Install from the App Store: Immich (photos and backup), Nextcloud (files), and Tailscale (away from home).")
+	if st.PhotosAway != "" {
+		fmt.Println("1. Install from the App Store: Immich (photos and backup), Nextcloud (files), and Tailscale (away from home).")
+	} else {
+		fmt.Println("1. Install from the App Store: Immich (photos and backup) and Nextcloud (files).")
+	}
 	fmt.Println()
 	fmt.Println("2. Photos: open Immich and enter")
 	if st.PhotosAway != "" {
