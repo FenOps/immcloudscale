@@ -70,6 +70,9 @@ func (s *Server) DeviceSession(ctx context.Context, deviceID string) (string, er
 	if u == nil {
 		return "", ErrUserGone
 	}
+	if u.OwnImmichPassword {
+		return "", fmt.Errorf("%s chose their own Photos password; sign in to Immich with it to open the locked folder", u.Name)
+	}
 	im := s.immich(st.Config)
 	tok, err := im.Login(ctx, u.Email, u.Password)
 	if err != nil {

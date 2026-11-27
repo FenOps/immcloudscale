@@ -78,6 +78,11 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
   albums kept, duplicates skipped
 * A "Move to your own NAS" checklist, with reminders until Google Photos backup is off
 
+### iPhone and iPad
+* Admins send an invite from Members: the Immich app, the server address and a temporary password that works for
+  15 minutes; Immich then asks for a permanent one
+* The admin console and `ics-server iphone <person>` also set up Files (Nextcloud) with a QR code
+
 ### Across the app
 * Google-style account card: who you are on each server, backup status, photo and file storage bars, remote access
 * "Share to ImmCloudScale" from any app: photos and videos go to Immich, other files to Nextcloud

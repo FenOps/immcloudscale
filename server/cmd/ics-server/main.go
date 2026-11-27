@@ -46,6 +46,7 @@ Usage: ics-server <command> [options]
   config                change settings                             [--endpoint --lan-ip]
   tailscale             remote access through Tailscale: show it, or store a key so the app
                         joins without signing in            [--auth-key --control-url --remove-key]
+  iphone <person>       how to set up an iPhone or iPad (the Immich, Nextcloud and Tailscale apps)
   google-key            store the Google API key that Import from Google uses
                                                             [--client-id --client-secret]
   admin-password        print the admin console password
@@ -112,7 +113,11 @@ func main() {
 			w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tWEB SIGN-IN\tPASSWORD\tPHONES")
 			for _, u := range s.Status(ctx).Users {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", u.Name, u.Email, u.Password, u.Devices)
+				pass := u.Password
+				if u.OwnPhotosPassword {
+					pass += " (Files only; Photos: their own)"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", u.Name, u.Email, pass, u.Devices)
 			}
 			w.Flush()
 		case "remove":
@@ -164,6 +169,11 @@ func main() {
 		tailscaleCmd(s, args[1:])
 	case "google-key":
 		googleKeyCmd(s, args[1:])
+	case "iphone":
+		if len(args) < 2 {
+			fail("usage: ics-server iphone <person>")
+		}
+		iphoneCmd(ctx, s, args[1])
 	case "requests":
 		fs := flag.NewFlagSet("requests", flag.ExitOnError)
 		approve := fs.String("approve", "", "approve the request with this ID")
@@ -473,6 +483,7 @@ func serve(ctx context.Context, s *core.Server, args []string) {
 	}
 	srv := &http.Server{Addr: *addr, Handler: web.New(s).Routes(), ReadHeaderTimeout: 10 * time.Second}
 	go s.GoogleWorker(ctx)
+	go s.IPhoneInviteWorker(ctx)
 	go func() {
 		<-ctx.Done()
 		sctx, c := context.WithTimeout(context.Background(), 5*time.Second)
@@ -547,6 +558,43 @@ func openFirewall(s *core.Server) {
 		_ = exec.Command("ufw", r...).Run()
 	}
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
+}
+
+// iphoneCmd prints what someone needs to use the server from an iPhone: the official apps and their sign-in.
+func iphoneCmd(ctx context.Context, s *core.Server, name string) {
+	st, err := s.IPhoneSetup(ctx, name)
+	check(err)
+	fmt.Printf("\nSet up %s's iPhone or iPad\n\n", st.Person)
+	if st.PhotosAway != "" {
+		fmt.Println("1. Install from the App Store: Immich (photos and backup), Nextcloud (files), and Tailscale (away from home).")
+	} else {
+		fmt.Println("1. Install from the App Store: Immich (photos and backup) and Nextcloud (files).")
+	}
+	fmt.Println()
+	fmt.Println("2. Photos: open Immich and enter")
+	if st.PhotosAway != "" {
+		fmt.Printf("     Server:   %s   (works anywhere while Tailscale is on)\n", st.PhotosAway)
+		fmt.Printf("     At home:  %s   (optional, Immich settings → Networking → local Wi-Fi address)\n", st.PhotosHome)
+	} else {
+		fmt.Printf("     Server:   %s   (at home)\n", st.PhotosHome)
+	}
+	if st.OwnPhotosPassword {
+		fmt.Printf("     Email:    %s\n     Password: the one they chose in Immich (not stored here)\n", st.Email)
+	} else {
+		fmt.Printf("     Email:    %s\n     Password: %s\n", st.Email, st.Password)
+	}
+	fmt.Println("   Then turn on Backup in Immich.")
+	fmt.Println()
+	fmt.Println("3. Files: open Nextcloud, tap Log in with QR code, and scan this (it replaces any earlier iPhone code):")
+	q, err := qrcode.New(st.FilesLink, qrcode.Low)
+	check(err)
+	fmt.Print(q.ToSmallString(false))
+	if st.PhotosAway != "" {
+		fmt.Println("4. Away from home: open Tailscale, sign in to the same Tailscale account as this server, and leave it on (Files uses it at home too).")
+	} else {
+		fmt.Println("4. Away from home: set up Tailscale on this server first (sudo ics-server tailscale), then run this again.")
+	}
+	fmt.Println()
 }
 
 // googleKeyCmd stores the Google API key Import from Google uses.

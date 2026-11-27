@@ -328,3 +328,48 @@ func TestGoogleRoutesKeepToTheirPeople(t *testing.T) {
 		t.Fatalf("tom removed camille's account: %d", w.Code)
 	}
 }
+
+func TestIPhoneSetupNeedsTheAdminLogin(t *testing.T) {
+	_, h := newServerAndHandler(t)
+	r := httptest.NewRequest("POST", "/api/admin/users/camille/iphone", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 401 {
+		t.Fatalf("without the admin login: %d", w.Code)
+	}
+	r = httptest.NewRequest("POST", "/api/admin/users/camille/iphone", nil)
+	r.SetBasicAuth("admin", "pw")
+	r.Header.Set("X-ICS-Request", "1")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	// No Nextcloud in this test: the route answers with the reason rather than a sign-in link.
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "Files password") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+func TestIPhoneInvitesComeFromAnAdminPhone(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.Store.Update(func(st *state.State) error {
+		st.Users = []state.User{{Name: "camille"}, {Name: "tom", ImmichID: "u-tom"}}
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	invite := func(name string) int {
+		r := httptest.NewRequest("POST", "/api/v1/manage/users/"+name+"/iphone-invite", nil)
+		r.Header.Set("Authorization", "Device dev_a:secret")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := invite("tom"); c != 403 {
+		t.Fatalf("not an admin: %d", c)
+	}
+	s.SetAdmin("camille", true)
+	if c := invite("nobody"); c != 404 {
+		t.Fatalf("unknown person: %d", c)
+	}
+	if c := invite("tom"); c != 502 { // Photos isn't running in this test
+		t.Fatalf("Photos down: %d", c)
+	}
+}

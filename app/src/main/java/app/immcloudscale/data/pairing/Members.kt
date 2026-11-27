@@ -30,6 +30,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Serializable data class Member(val name: String, val email: String = "", val isAdmin: Boolean = false, val devices: Int = 0)
 @Serializable data class Features(val machineLearning: Boolean = false, val memoryGB: Double = 0.0, val applying: Boolean = false)
 @Serializable data class PairCode(val code: String, val server: String = "", val link: String = "", val expires: String = "", val name: String = "")
+@Serializable data class IPhoneInvite(
+    val person: String,
+    val email: String,
+    val tempPassword: String,
+    val expires: String,
+    val photosHome: String,
+    val photosAway: String = "",
+)
 @Serializable data class InviteInfo(val name: String, val code: String, val expires: String, val createdBy: String = "")
 @Serializable data class GoogleAccount(
     val id: String,
@@ -136,6 +144,9 @@ class MembersClient(private val http: OkHttpClient, private val settings: () -> 
 
     /** A new pairing code for a member's (new) phone. */
     suspend fun pairCode(name: String): PairCode = parse(manage("POST", "/api/v1/manage/users/$name/pair"))
+
+    /** A temporary Photos password (good for 15 minutes) and the addresses for setting up [name]'s iPhone or iPad. */
+    suspend fun iphoneInvite(name: String): IPhoneInvite = parse(manage("POST", "/api/v1/manage/users/$name/iphone-invite"))
 
     private suspend fun manage(method: String, path: String, body: String? = null): String {
         val s = settings()

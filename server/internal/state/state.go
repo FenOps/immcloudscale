@@ -21,6 +21,14 @@ type User struct {
 	ImmichID string    `json:"immichId"`
 	IsAdmin  bool      `json:"isAdmin"`
 	Created  time.Time `json:"created"`
+	// The Nextcloud app password made for their iPhone (see core.IPhoneSetup); replaced when it's set up again.
+	IPhoneNCPassword string `json:"iphoneNcPassword,omitempty"`
+	// Set once they were invited to an iPhone: they choose their own Immich password, and the server uses its own
+	// Immich key for them instead (ImmichKey), never resetting their password.
+	OwnImmichPassword bool      `json:"ownImmichPassword,omitempty"`
+	ImmichKey         string    `json:"immichKey,omitempty"`
+	ImmichKeyID       string    `json:"immichKeyId,omitempty"`
+	IPhoneInviteUntil time.Time `json:"iphoneInviteUntil,omitzero"`
 }
 
 type Device struct {
@@ -91,6 +99,9 @@ type Config struct {
 	// Handed to phones at pairing so the app joins the tailnet without a sign-in (optional).
 	TailscaleAuthKey    string `json:"tailscaleAuthKey,omitempty"`
 	TailscaleControlURL string `json:"tailscaleControlUrl,omitempty"`
+
+	// The Tailscale address Nextcloud was last told to answer at (iPhones away from home use it).
+	NCTrustedTailscale string `json:"ncTrustedTailscale,omitempty"`
 
 	// The person's own Google API key (a "Desktop app" OAuth client), needed to read Google Drive.
 	GoogleClientID     string `json:"googleClientId,omitempty"`

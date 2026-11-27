@@ -44,7 +44,9 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if token != "" {
+	if key, ok := strings.CutPrefix(token, APIKeyPrefix); ok {
+		req.Header.Set("x-api-key", key)
+	} else if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := c.HTTP.Do(req)
@@ -109,10 +111,27 @@ func (c *Client) SetPassword(ctx context.Context, adminToken, id, password strin
 	return c.do(ctx, http.MethodPut, "/admin/users/"+id, adminToken, map[string]any{"password": password, "shouldChangePassword": false}, nil)
 }
 
+// TemporaryPassword sets a password the person must replace at their next sign-in (Immich asks for a new one).
+func (c *Client) TemporaryPassword(ctx context.Context, adminToken, id, password string) error {
+	return c.do(ctx, http.MethodPut, "/admin/users/"+id, adminToken, map[string]any{"password": password, "shouldChangePassword": true}, nil)
+}
+
+// MustChangePassword reports whether the person still has to replace a temporary password.
+func (c *Client) MustChangePassword(ctx context.Context, adminToken, id string) (bool, error) {
+	var u struct {
+		ShouldChangePassword bool `json:"shouldChangePassword"`
+	}
+	err := c.do(ctx, http.MethodGet, "/admin/users/"+id, adminToken, nil, &u)
+	return u.ShouldChangePassword, err
+}
+
 func (c *Client) DeleteUser(ctx context.Context, adminToken, id string) error {
 	// force: delete now (with their photos), not a soft delete that keeps the email taken for weeks.
 	return c.do(ctx, http.MethodDelete, "/admin/users/"+id, adminToken, map[string]any{"force": true}, nil)
 }
+
+// APIKeyPrefix marks a token that is an API key (sent as x-api-key) rather than a session.
+const APIKeyPrefix = "apikey:"
 
 type APIKey struct {
 	ID     string

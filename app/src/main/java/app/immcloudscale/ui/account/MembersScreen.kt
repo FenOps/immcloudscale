@@ -1,12 +1,14 @@
 package app.immcloudscale.ui.account
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,10 +19,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.PhoneIphone
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.pairing.Features
+import app.immcloudscale.data.pairing.IPhoneInvite
 import app.immcloudscale.data.pairing.InviteInfo
 import app.immcloudscale.data.pairing.JoinRequestInfo
 import app.immcloudscale.data.pairing.Member
@@ -79,6 +84,7 @@ class MembersActions(
     val onDecline: (JoinRequestInfo) -> Unit = {},
     val onAdmin: (Member, Boolean) -> Unit = { _, _ -> },
     val onPairPhone: (Member) -> Unit = {},
+    val onIPhone: (Member) -> Unit = {},
     val onMachineLearning: (Boolean) -> Unit = {},
     val onInvite: () -> Unit = {},
     val onCancelInvite: (InviteInfo) -> Unit = {},
@@ -98,6 +104,9 @@ fun MembersScreen(onBack: () -> Unit) {
     var makingAdmin by remember { mutableStateOf<Member?>(null) }
     var inviting by remember { mutableStateOf(false) }
     var cancelling by remember { mutableStateOf<InviteInfo?>(null) }
+    var forIPhone by remember { mutableStateOf<Member?>(null) }
+    var iphone by remember { mutableStateOf<IPhoneInvite?>(null) } // held only while the dialog is open
+    var makingIPhone by remember { mutableStateOf<String?>(null) } // whose invite is on its way
     val ctx = LocalContext.current
 
     suspend fun load() {
@@ -121,11 +130,13 @@ fun MembersScreen(onBack: () -> Unit) {
             onDecline = { declining = it },
             onAdmin = { m, on -> if (on) makingAdmin = m else act { g.members.setAdmin(m.name, false) } },
             onPairPhone = { m -> act { shown = m.name to g.members.pairCode(m.name) } },
+            onIPhone = { forIPhone = it },
             onInvite = { inviting = true },
             onCancelInvite = { cancelling = it },
             onMachineLearning = { on -> act { g.members.setMachineLearning(on); snack.showSnackbar(if (on) "Turning on; this takes a few minutes" else "Turning off") } },
             onBack = onBack,
         ),
+        makingIPhone,
     )
 
     shown?.let { (name, code) ->
@@ -157,6 +168,66 @@ fun MembersScreen(onBack: () -> Unit) {
                 }
             },
             dismissButton = { TextButton(onClick = { shown = null }) { Text("Done") } },
+        )
+    }
+    forIPhone?.let { m ->
+        AlertDialog(
+            onDismissRequest = { forIPhone = null },
+            title = { Text("Set up ${m.name}'s iPhone or iPad?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("${m.name} gets a message with the Immich app, the server address and a temporary password. It works for 15 minutes; Immich then asks them to choose their own.")
+                    Text(
+                        "Their current Photos password stops working as soon as you tap Create invite. After that, their locked folder opens only in Immich, not in this app.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    forIPhone = null
+                    makingIPhone = m.name
+                    act {
+                        try {
+                            iphone = runCatching { g.members.iphoneInvite(m.name) }
+                                .getOrElse { throw Exception("Couldn't make ${m.name}'s iPhone invite. Check the server is running and try again.", it) }
+                        } finally {
+                            makingIPhone = null
+                        }
+                    }
+                }) { Text("Create invite") }
+            },
+            dismissButton = { TextButton(onClick = { forIPhone = null }) { Text("Cancel") } },
+        )
+    }
+    iphone?.let { inv ->
+        val deadline = inviteTime(inv.expires)
+        var sent by remember(inv) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { iphone = null },
+            properties = DialogProperties(dismissOnClickOutside = false), // an unsent invite isn't lost to a stray tap
+            title = { Text("iPhone or iPad invite for ${inv.person}") },
+            text = {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Send this to ${inv.person}. It has the app to install, the server address and a temporary password. It isn't kept on this phone.")
+                    Text(
+                        inv.tempPassword, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                            .semantics { contentDescription = "Temporary password " + inv.tempPassword.toCharArray().joinToString(" ") },
+                    )
+                    Text(
+                        if (deadline.isNotEmpty()) "Expires in 15 minutes (at $deadline). They should then choose a permanent password." else "Expires in 15 minutes. They should then choose a permanent password.",
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (!sent) Text("If you close this without sending it, create a new invite later.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { sent = true; shareIPhoneInvite(ctx, me.pairedServerName, inv) }) {
+                    Icon(Icons.Outlined.Share, null); Spacer(Modifier.width(8.dp)); Text("Send invite")
+                }
+            },
+            dismissButton = { TextButton(onClick = { iphone = null }) { Text(if (sent) "Done" else "Close without sending") } },
         )
     }
     if (inviting) InviteDialog(onDismiss = { inviting = false }) { name, email ->
@@ -194,7 +265,7 @@ fun MembersScreen(onBack: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: MembersActions) {
+fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: MembersActions, makingIPhone: String? = null) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -254,7 +325,16 @@ fun MembersContent(ui: MembersUi, myName: String, snack: SnackbarHostState, a: M
                     supportingContent = { Text("${if (m.isAdmin) "Admin · " else ""}${m.devices} phone${if (m.devices == 1) "" else "s"}") },
                     trailingContent = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { a.onPairPhone(m) }) { Icon(Icons.Outlined.QrCode2, "Pair a phone for ${m.name}") }
+                            IconButton(onClick = { a.onPairPhone(m) }) { Icon(Icons.Outlined.QrCode2, "Pair an Android phone for ${m.name}") }
+                            if (makingIPhone == m.name) {
+                                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "Making ${m.name}'s iPhone invite" }, strokeWidth = 2.dp)
+                                }
+                            } else {
+                                IconButton(onClick = { a.onIPhone(m) }, enabled = makingIPhone == null) {
+                                    Icon(Icons.Outlined.PhoneIphone, "Set up an iPhone or iPad for ${m.name}")
+                                }
+                            }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text("Admin", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 // You can't remove your own admin rights here (another admin can).

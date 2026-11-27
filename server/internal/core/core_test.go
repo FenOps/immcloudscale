@@ -22,13 +22,15 @@ import (
 
 // fakeServices mimics the Immich and Nextcloud endpoints the server uses.
 type fakeServices struct {
-	mu      sync.Mutex
-	admin   *struct{ email, pass string }
-	users   map[string]string // immich email -> password
-	keys    map[string]string // key id -> owner email
-	ncUsers map[string]string // nextcloud user -> password
-	appPass map[string]string // app password -> user
-	nextID  int
+	mu         sync.Mutex
+	admin      *struct{ email, pass string }
+	users      map[string]string // immich email -> password
+	keys       map[string]string // key id -> owner email
+	ncUsers    map[string]string // nextcloud user -> password
+	appPass    map[string]string // app password -> user
+	labels     map[string]string // app password -> its name (the User-Agent it was asked for with)
+	mustChange map[string]bool   // Immich users who must replace a temporary password
+	nextID     int
 	// failKeys makes creating API keys fail; keyGate (when set) holds that request until it's closed.
 	failKeys bool
 	keyGate  chan struct{}
@@ -64,7 +66,13 @@ func (f *fakeServices) immich() http.Handler {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"accessToken": "tok:" + b["email"]})
 	})
-	who := func(r *http.Request) string { return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer tok:") }
+	// Who's asking: a session token, or an API key (callers hold f.mu).
+	who := func(r *http.Request) string {
+		if k := r.Header.Get("x-api-key"); k != "" {
+			return f.keys[strings.TrimPrefix(k, "secret-")]
+		}
+		return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer tok:")
+	}
 	mux.HandleFunc("POST /api/admin/users", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -92,7 +100,17 @@ func (f *fakeServices) immich() http.Handler {
 				f.users[e] = b["password"].(string)
 			}
 		}
+		if f.mustChange == nil {
+			f.mustChange = map[string]bool{}
+		}
+		f.mustChange[name], _ = b["shouldChangePassword"].(bool)
 		io.WriteString(w, `{}`)
+	})
+	mux.HandleFunc("GET /api/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		name := strings.TrimPrefix(r.PathValue("id"), "u-")
+		json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "shouldChangePassword": f.mustChange[name]})
 	})
 	mux.HandleFunc("DELETE /api/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -186,6 +204,10 @@ func (f *fakeServices) nextcloud() http.Handler {
 			return
 		}
 		ap := "app-" + f.id()
+		if f.labels == nil {
+			f.labels = map[string]string{}
+		}
+		f.labels[ap] = r.UserAgent()
 		f.appPass[ap] = u
 		json.NewEncoder(w).Encode(map[string]any{"ocs": map[string]any{"meta": map[string]any{"statuscode": 200}, "data": map[string]string{"apppassword": ap}}})
 	})

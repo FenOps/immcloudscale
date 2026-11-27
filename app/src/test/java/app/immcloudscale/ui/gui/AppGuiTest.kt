@@ -272,7 +272,7 @@ class AppGuiTest {
             shot("26-dark-theme")
             compose.onNodeWithText("Members").performClick()
             shot("27-members-dark")
-            compose.onNodeWithContentDescription("Pair a phone for tom").performClick()
+            compose.onNodeWithContentDescription("Pair an Android phone for tom").performClick()
             shot("32-invite-to-send")
             compose.onNodeWithText("Done").performClick()
             settle(800)

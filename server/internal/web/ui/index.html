@@ -48,6 +48,7 @@ form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 dialog { border: 0; border-radius: 28px; padding: 24px; background: var(--surface); color: var(--on); max-width: 420px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(0,0,0,.4); }
 dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
+dialog a { color: var(--primary); font-weight: 500; }
 .qr { display: block; margin: 16px auto; width: 240px; height: 240px; border-radius: 16px; background: #fff; padding: 8px; }
 .code { text-align: center; font-size: 28px; letter-spacing: 3px; font-weight: 500; }
 .steps { padding-left: 18px; color: var(--on-var); }
@@ -131,6 +132,23 @@ dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
   <div class="actions"><button class="text" onclick="pairDlg.close()">Done</button></div>
 </dialog>
 
+<dialog id="iphoneDlg">
+  <h3>Set up an iPhone or iPad</h3>
+  <p class="muted" id="iphoneFor"></p>
+  <ol class="steps">
+    <li>Install from the App Store:
+      <a href="https://apps.apple.com/app/immich/id1613945652" target="_blank" rel="noopener">Immich</a> (photos and backup),
+      <a href="https://apps.apple.com/app/nextcloud/id1125420102" target="_blank" rel="noopener">Nextcloud</a> (files)<span id="iphoneTs"> and
+      <a href="https://apps.apple.com/app/tailscale/id1470499037" target="_blank" rel="noopener">Tailscale</a> (away from home)</span>.</li>
+    <li><b>Photos:</b> open Immich and enter the server address, email and password below. Then turn on Backup in Immich.
+      <div class="mono" id="iphonePhotos" style="margin-top:6px;font-size:15px;letter-spacing:.06em;word-break:break-all"></div></li>
+    <li><b>Files:</b> open Nextcloud, tap <b>Log in with QR code</b>, and scan this. (Showing this again replaces the code: an earlier one stops working.)</li>
+  </ol>
+  <img class="qr" id="iphoneQr" alt="Nextcloud sign-in QR code">
+  <ol class="steps" start="4"><li id="iphoneAway"></li></ol>
+  <div class="actions"><button class="text" onclick="iphoneDlg.close()">Done</button></div>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -171,9 +189,10 @@ async function refresh() {
   $("users").innerHTML = (s.users || []).map((u) => `<tr>
     <td><b>${esc(u.name)}</b>${u.isAdmin ? ' <span class="pill">admin</span>' : ""}
       <br><button class="text" data-admin="${esc(u.name)}" data-on="${u.isAdmin ? "" : "1"}">${u.isAdmin ? "Remove admin" : "Make admin"}</button></td>
-    <td><span class="mono">${esc(u.email)}</span><br><button class="text" data-reveal="${esc(u.password)}">Show password</button></td>
+    <td><span class="mono">${esc(u.email)}</span><br><button class="text" data-reveal="${esc(u.password)}"${u.ownPhotosPassword ? ' title="Their Photos password is the one they chose in Immich"' : ""}>${u.ownPhotosPassword ? "Show Files password" : "Show password"}</button></td>
     <td>${u.devices} ${u.devices === 1 ? "phone" : "phones"}</td>
     <td style="text-align:right"><button class="tonal" data-pair="${esc(u.name)}">Pair a phone</button>
+      <button class="text" data-iphone="${esc(u.name)}">Set up iPhone or iPad</button>
       ${u.isAdmin ? "" : `<button class="danger" data-deluser="${esc(u.name)}">Remove</button>`}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">No people yet.</td></tr>`;
 
@@ -203,6 +222,9 @@ async function refresh() {
   $("portHint").textContent = `To use the apps away from home, forward UDP port ${c.wgPort} on your router to ${c.lanAddress}. If your home IP changes, set a dynamic DNS name and run: ics-server config --endpoint your.name.example`;
 }
 
+// The password and sign-in code don't stay in the page once the dialog is closed.
+$("iphoneDlg").addEventListener("close", () => { $("iphonePhotos").innerHTML = ""; $("iphoneQr").removeAttribute("src"); });
+
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button"); if (!t) return;
   try {
@@ -217,6 +239,20 @@ document.addEventListener("click", async (e) => {
       $("serverUrl").textContent = "Server: " + p.server;
       $("expires").textContent = "Valid for 15 minutes, one phone";
       $("pairDlg").showModal();
+    } else if (t.dataset.iphone) {
+      const r = await api("POST", "/api/admin/users/" + encodeURIComponent(t.dataset.iphone) + "/iphone");
+      const st = r.setup;
+      $("iphoneFor").textContent = "For " + st.person;
+      const line = (k, v) => `<div>${esc(k)}: <b>${esc(v)}</b></div>`;
+      $("iphonePhotos").innerHTML = (st.photosAway
+          ? line("Server", st.photosAway) + `<div class="muted">At home, optionally (Immich settings, Networking, local Wi-Fi address): ${esc(st.photosHome)}</div>`
+          : line("Server", st.photosHome)) + line("Email", st.email) + line("Password", st.ownPhotosPassword ? "the one they chose in Immich (not stored here)" : st.password);
+      $("iphoneQr").src = r.filesQr;
+      $("iphoneAway").innerHTML = st.photosAway
+        ? "<b>Away from home:</b> open Tailscale, sign in to the same Tailscale account as this server, and leave it on (Files uses it at home too)."
+        : '<span class="muted">Away from home: not available yet. The admin needs to run <span class="mono">sudo ics-server tailscale</span> on the server. Until then the apps work on the home Wi-Fi.</span>';
+      $("iphoneTs").hidden = !st.photosAway;
+      $("iphoneDlg").showModal();
     } else if (t.dataset.approve) {
       const a = await api("POST", "/api/admin/requests/" + encodeURIComponent(t.dataset.approve) + "/approve");
       $("qr").src = "/api/admin/qr?code=" + encodeURIComponent(a.request.code);

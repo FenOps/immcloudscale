@@ -367,6 +367,15 @@ or on the server `sudo ics-server user admin <name>`.
 
 ---
 
+## iPhone and iPad
+
+ImmCloudScale's own app is for Android. On an iPhone or iPad, family members use the free official apps with the
+same server: **Immich** (photos and backup), **Nextcloud** (files) and **Tailscale** (away from home).
+
+In the admin console, tap **Set up an iPhone** next to the person (or on the server run `sudo ics-server iphone <name>`).
+It shows the App Store links, the address, email and password to enter in Immich, and a QR code that signs the
+Nextcloud app in (with a password of its own, which you can revoke in Nextcloud's security settings).
+
 ## Move from Google (optional)
 
 Bring your Google Drive and Google Photos to your server, from as many Google accounts as you like. In the app:

@@ -16,6 +16,8 @@ import (
 type Client struct {
 	Base string // e.g. http://127.0.0.1:8080
 	HTTP *http.Client
+	// UserAgent, when set, is sent with requests; Nextcloud names app passwords after it.
+	UserAgent string
 }
 
 func New(base string) *Client {
@@ -52,6 +54,9 @@ func (c *Client) ocs(ctx context.Context, method, path, user, pass string, form 
 		return err
 	}
 	req.SetBasicAuth(user, pass)
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 	req.Header.Set("OCS-APIRequest", "true")
 	req.Header.Set("Accept", "application/json")
 	if form != nil {
@@ -120,12 +125,15 @@ func (c *Client) DeleteUser(ctx context.Context, admin, adminPass, user string) 
 	return c.ocs(ctx, http.MethodDelete, "/ocs/v1.php/cloud/users/"+url.PathEscape(user), admin, adminPass, nil, nil)
 }
 
-// AppPassword exchanges the user's password for a revocable app password (one per phone).
-func (c *Client) AppPassword(ctx context.Context, user, pass string) (string, error) {
+// AppPassword exchanges the user's password for a revocable app password (one per phone), listed under [label]
+// in the person's Nextcloud security settings.
+func (c *Client) AppPassword(ctx context.Context, user, pass, label string) (string, error) {
 	var d struct {
 		AppPassword string `json:"apppassword"`
 	}
-	err := c.ocs(ctx, http.MethodGet, "/ocs/v2.php/core/getapppassword", user, pass, nil, &d)
+	named := *c
+	named.UserAgent = label
+	err := named.ocs(ctx, http.MethodGet, "/ocs/v2.php/core/getapppassword", user, pass, nil, &d)
 	return d.AppPassword, err
 }
 

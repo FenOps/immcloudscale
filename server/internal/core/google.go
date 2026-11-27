@@ -630,6 +630,9 @@ func (s *Server) importWithKey(ctx context.Context, e export) (google.Report, er
 		return google.Report{}, ErrUserGone
 	}
 	im := s.immich(st.Config)
+	if u.ImmichKey != "" { // the server's own key (they chose their own password): no sign-in needed
+		return s.Google.ImportTakeout(ctx, s.ImmichURL(st.Config), u.ImmichKey, e.tag, e.archives)
+	}
 	tok, err := im.Login(ctx, u.Email, u.Password)
 	if err != nil {
 		return google.Report{}, fmt.Errorf("signing in to Photos: %w", err)

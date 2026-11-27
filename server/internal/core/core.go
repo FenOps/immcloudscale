@@ -25,11 +25,13 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.4.1"
+const Version = "0.4.2"
 
 const ncAdmin = "ics-admin"
 
 type Server struct {
+	iphoneMu sync.Mutex // see InviteToIPhone
+
 	Store  *state.Store
 	Docker stack.Runner
 	WG     wg.Manager
@@ -254,6 +256,10 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 			s.Log.Printf("updating Nextcloud trusted addresses: %v", err)
 			break
 		}
+	}
+
+	if ip := s.tailscaleIP(); ip != "" {
+		s.trustTailscale(c, ip) // iPhones away from home reach Files there
 	}
 
 	if s.Store.Read().Config.VPNEnabled {
@@ -664,16 +670,17 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	}
 
 	im := s.immich(c)
-	tok, err := im.Login(ctx, u.Email, u.Password)
+	tok, err := s.userToken(ctx, c, u)
 	if err != nil {
 		return res, fmt.Errorf("immich login for %s: %w", u.Name, err)
 	}
+	defer s.endSignIn(context.WithoutCancel(ctx), c, tok)
 	key, err := im.CreateAPIKey(ctx, tok, "ImmCloudScale – "+name)
 	if err != nil {
 		return res, fmt.Errorf("creating Immich API key: %w", err)
 	}
 	dev.ImmichKeyID = key.ID
-	appPass, err := s.nextcloud(c).AppPassword(ctx, u.Name, u.Password)
+	appPass, err := s.nextcloud(c).AppPassword(ctx, u.Name, u.Password, "ImmCloudScale "+name)
 	if err != nil {
 		_ = im.DeleteAPIKey(ctx, tok, key.ID)
 		return res, fmt.Errorf("creating Nextcloud app password: %w", err)
@@ -760,6 +767,13 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 // userToken signs in as a person. If their password was changed in the Immich web UI, the service admin
 // resets it to the one this server manages, so their phones' keys can still be revoked.
 func (s *Server) userToken(ctx context.Context, c state.Config, u *state.User) (string, error) {
+	if u.OwnImmichPassword {
+		// They chose their own password (iPhone invite): never reset it; the server's own key stands in.
+		if u.ImmichKey != "" {
+			return immich.APIKeyPrefix + u.ImmichKey, nil
+		}
+		return "", fmt.Errorf("signing in as %s: they chose their own Photos password", u.Name)
+	}
 	im := s.immich(c)
 	tok, err := im.Login(ctx, u.Email, u.Password)
 	if err == nil || u.ImmichID == "" {
@@ -776,6 +790,13 @@ func (s *Server) userToken(ctx context.Context, c state.Config, u *state.User) (
 	return im.Login(ctx, u.Email, u.Password)
 }
 
+// endSignIn signs out a session userToken opened; the server's own key stays.
+func (s *Server) endSignIn(ctx context.Context, c state.Config, tok string) {
+	if !strings.HasPrefix(tok, immich.APIKeyPrefix) {
+		_ = s.immich(c).Logout(ctx, tok)
+	}
+}
+
 // revokeCredentials deletes a phone's Immich API key and Nextcloud app password.
 func (s *Server) revokeCredentials(ctx context.Context, c state.Config, u *state.User, dev state.Device) error {
 	if dev.ImmichKeyID != "" || dev.ImmichSessionID != "" {
@@ -784,7 +805,7 @@ func (s *Server) revokeCredentials(ctx context.Context, c state.Config, u *state
 			return fmt.Errorf("couldn't revoke the phone's photo access: %w", err)
 		}
 		im := s.immich(c)
-		defer im.Logout(context.WithoutCancel(ctx), tok) // the sign-in used just for this
+		defer s.endSignIn(context.WithoutCancel(ctx), c, tok) // the sign-in used just for this
 		var ae *immich.APIError
 		if dev.ImmichKeyID != "" {
 			if err := im.DeleteAPIKey(ctx, tok, dev.ImmichKeyID); err != nil && !(errors.As(err, &ae) && ae.Status == 404) {
@@ -890,6 +911,8 @@ type PublicUser struct {
 	IsAdmin  bool      `json:"isAdmin"`
 	Created  time.Time `json:"created"`
 	Devices  int       `json:"devices"`
+	// They chose their own Photos password (iPhone invite), so Password is only for Files.
+	OwnPhotosPassword bool `json:"ownPhotosPassword,omitempty"`
 }
 
 func (s *Server) Status(ctx context.Context) Status {
@@ -931,7 +954,7 @@ func (s *Server) Status(ctx context.Context) Status {
 		out.Devices = append(out.Devices, ds)
 	}
 	for _, u := range st.Users {
-		out.Users = append(out.Users, PublicUser{u.Name, u.Email, u.Password, u.IsAdmin, u.Created, count[u.Name]})
+		out.Users = append(out.Users, PublicUser{u.Name, u.Email, u.Password, u.IsAdmin, u.Created, count[u.Name], u.OwnImmichPassword})
 	}
 	return out
 }

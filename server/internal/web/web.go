@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -222,6 +223,17 @@ func (h *Handler) Routes() http.Handler {
 		h.S.ImportNow(u.Name)
 		w.WriteHeader(202)
 	}))
+	mux.Handle("POST /api/v1/manage/users/{name}/iphone-invite", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		inv, err := h.S.InviteToIPhone(r.Context(), r.PathValue("name"))
+		switch {
+		case errors.Is(err, core.ErrNoPerson), errors.Is(err, core.ErrUserGone):
+			writeErr(w, 404, err)
+		case err != nil:
+			writeErr(w, 502, err) // Photos (Immich) didn't answer
+		default:
+			writeJSON(w, 201, inv)
+		}
+	}))
 	mux.Handle("GET /api/v1/manage/requests", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
 		writeJSON(w, 200, h.S.Requests())
 	}))
@@ -298,6 +310,23 @@ func (h *Handler) Routes() http.Handler {
 		h.decline(w, r, "admin console")
 	})
 	admin.HandleFunc("POST /api/admin/users/{name}/admin", h.setAdmin)
+	admin.HandleFunc("POST /api/admin/users/{name}/iphone", func(w http.ResponseWriter, r *http.Request) {
+		setup, err := h.S.IPhoneSetup(r.Context(), r.PathValue("name"))
+		switch {
+		case errors.Is(err, core.ErrNoPerson):
+			writeErr(w, 404, err)
+			return
+		case err != nil:
+			writeErr(w, 502, err) // Files (Nextcloud) didn't answer
+			return
+		}
+		png, err := qrcode.Encode(setup.FilesLink, qrcode.Medium, 320)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"setup": setup, "filesQr": "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)})
+	})
 	admin.HandleFunc("GET /api/admin/qr", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		var p state.Pairing
