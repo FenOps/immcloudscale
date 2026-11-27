@@ -677,7 +677,7 @@ func (s *Server) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 		return res, fmt.Errorf("creating Immich API key: %w", err)
 	}
 	dev.ImmichKeyID = key.ID
-	appPass, err := s.nextcloud(c).AppPassword(ctx, u.Name, u.Password)
+	appPass, err := s.nextcloud(c).AppPassword(ctx, u.Name, u.Password, "ImmCloudScale "+name)
 	if err != nil {
 		_ = im.DeleteAPIKey(ctx, tok, key.ID)
 		return res, fmt.Errorf("creating Nextcloud app password: %w", err)

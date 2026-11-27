@@ -301,8 +301,12 @@ func (h *Handler) Routes() http.Handler {
 	admin.HandleFunc("POST /api/admin/users/{name}/admin", h.setAdmin)
 	admin.HandleFunc("POST /api/admin/users/{name}/iphone", func(w http.ResponseWriter, r *http.Request) {
 		setup, err := h.S.IPhoneSetup(r.Context(), r.PathValue("name"))
-		if err != nil {
-			writeErr(w, 400, err)
+		switch {
+		case errors.Is(err, core.ErrNoPerson):
+			writeErr(w, 404, err)
+			return
+		case err != nil:
+			writeErr(w, 502, err) // Files (Nextcloud) didn't answer
 			return
 		}
 		png, err := qrcode.Encode(setup.FilesLink, qrcode.Medium, 320)

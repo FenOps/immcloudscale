@@ -343,7 +343,7 @@ func TestIPhoneSetupNeedsTheAdminLogin(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	// No Nextcloud in this test: the route answers with the reason rather than a sign-in link.
-	if w.Code != 400 || !strings.Contains(w.Body.String(), "Files password") {
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "Files password") {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }

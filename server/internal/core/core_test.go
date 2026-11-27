@@ -28,6 +28,7 @@ type fakeServices struct {
 	keys    map[string]string // key id -> owner email
 	ncUsers map[string]string // nextcloud user -> password
 	appPass map[string]string // app password -> user
+	labels  map[string]string // app password -> its name (the User-Agent it was asked for with)
 	nextID  int
 	// failKeys makes creating API keys fail; keyGate (when set) holds that request until it's closed.
 	failKeys bool
@@ -186,6 +187,10 @@ func (f *fakeServices) nextcloud() http.Handler {
 			return
 		}
 		ap := "app-" + f.id()
+		if f.labels == nil {
+			f.labels = map[string]string{}
+		}
+		f.labels[ap] = r.UserAgent()
 		f.appPass[ap] = u
 		json.NewEncoder(w).Encode(map[string]any{"ocs": map[string]any{"meta": map[string]any{"statuscode": 200}, "data": map[string]string{"apppassword": ap}}})
 	})

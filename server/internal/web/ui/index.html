@@ -141,7 +141,7 @@ dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
       <a href="https://apps.apple.com/app/tailscale/id1470499037" target="_blank" rel="noopener">Tailscale</a> (away from home).</li>
     <li><b>Photos:</b> open Immich and enter the server address, email and password below. Then turn on Backup in Immich.
       <div class="mono" id="iphonePhotos" style="margin-top:6px"></div></li>
-    <li><b>Files:</b> open Nextcloud, tap <b>Log in with QR code</b>, and scan this:</li>
+    <li><b>Files:</b> open Nextcloud, tap <b>Log in with QR code</b>, and scan this. (Showing this again replaces the code: an earlier one stops working.)</li>
   </ol>
   <img class="qr" id="iphoneQr" alt="Nextcloud sign-in QR code">
   <ol class="steps" start="4"><li id="iphoneAway"></li></ol>
@@ -221,6 +221,9 @@ async function refresh() {
   $("portHint").textContent = `To use the apps away from home, forward UDP port ${c.wgPort} on your router to ${c.lanAddress}. If your home IP changes, set a dynamic DNS name and run: ics-server config --endpoint your.name.example`;
 }
 
+// The password and sign-in code don't stay in the page once the dialog is closed.
+$("iphoneDlg").addEventListener("close", () => { $("iphonePhotos").innerHTML = ""; $("iphoneQr").removeAttribute("src"); });
+
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button"); if (!t) return;
   try {
@@ -245,7 +248,7 @@ document.addEventListener("click", async (e) => {
           : line("Server", st.photosHome)) + line("Email", st.email) + line("Password", st.password);
       $("iphoneQr").src = r.filesQr;
       $("iphoneAway").innerHTML = st.photosAway
-        ? "<b>Away from home:</b> open Tailscale, sign in to the same Tailscale account as this server, and leave it on."
+        ? "<b>Away from home:</b> open Tailscale, sign in to the same Tailscale account as this server, and leave it on (Files uses it at home too)."
         : "<b>Away from home:</b> set up Tailscale on this server first (<span class=\"mono\">sudo ics-server tailscale</span>); until then the apps work on the home Wi-Fi.";
       $("iphoneDlg").showModal();
     } else if (t.dataset.approve) {

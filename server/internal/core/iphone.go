@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -30,13 +31,16 @@ type IPhoneSetup struct {
 	FilesLink string `json:"filesLink"`
 }
 
-// IPhoneSetup gathers [name]'s sign-in details for the iPhone apps and makes a Nextcloud app password for this
-// iPhone (it can be revoked in Nextcloud's security settings without changing the person's password).
+// ErrNoPerson means there's no such person on the server.
+var ErrNoPerson = errors.New("no such person")
+
+// IPhoneSetup gathers [name]'s sign-in details for the iPhone apps and makes a Nextcloud app password for the
+// iPhone, named "ImmCloudScale iPhone (name)" in their security settings. Setting it up again replaces it.
 func (s *Server) IPhoneSetup(ctx context.Context, name string) (IPhoneSetup, error) {
 	st := s.Store.Read()
 	u := st.FindUser(name)
 	if u == nil {
-		return IPhoneSetup{}, fmt.Errorf("no user %q", name)
+		return IPhoneSetup{}, fmt.Errorf("%w: %q", ErrNoPerson, name)
 	}
 	c := st.Config
 	out := IPhoneSetup{
@@ -49,11 +53,27 @@ func (s *Server) IPhoneSetup(ctx context.Context, name string) (IPhoneSetup, err
 		out.PhotosAway = fmt.Sprintf("http://%s:%d", ip, c.ImmichPort)
 		out.FilesAway = fmt.Sprintf("http://%s:%d", ip, c.NextcloudPort)
 		filesServer = out.FilesAway // works at home too while Tailscale is on
-		s.trustTailscale(c, ip)
+		if c.NCTrustedTailscale != ip {
+			s.trustTailscale(c, ip)
+		}
 	}
-	appPass, err := s.nextcloud(c).AppPassword(ctx, u.Name, u.Password)
+	nc := s.nextcloud(c)
+	appPass, err := nc.AppPassword(ctx, u.Name, u.Password, "ImmCloudScale iPhone ("+u.Name+")")
 	if err != nil {
 		return IPhoneSetup{}, fmt.Errorf("creating a Files password for the iPhone: %w", err)
+	}
+	// One iPhone password per person: the one made last time (scanned or not) stops working.
+	old := ""
+	_ = s.Store.Update(func(st *state.State) error {
+		if x := st.FindUser(u.Name); x != nil {
+			old, x.IPhoneNCPassword = x.IPhoneNCPassword, appPass
+		}
+		return nil
+	})
+	if old != "" {
+		if err := nc.RevokeAppPassword(ctx, u.Name, old); err != nil {
+			s.Log.Printf("revoking %s's previous iPhone Files password: %v", u.Name, err)
+		}
 	}
 	out.FilesLink = NextcloudLoginLink(u.Name, appPass, filesServer)
 	return out, nil
@@ -64,7 +84,8 @@ func NextcloudLoginLink(user, appPassword, server string) string {
 	return "nc://login/user:" + linkEscape(user) + "&password:" + linkEscape(appPassword) + "&server:" + server
 }
 
-// linkEscape escapes a value for the login link, whose parts are separated by "&".
+// linkEscape keeps a value from breaking the login link, whose parts are separated by "&" (the apps don't decode
+// it: user names and Nextcloud's app passwords never need escaping, so in practice nothing changes).
 func linkEscape(v string) string { return strings.ReplaceAll(url.PathEscape(v), "&", "%26") }
 
 func (s *Server) tailscaleIP() string {
@@ -79,5 +100,10 @@ func (s *Server) trustTailscale(c state.Config, ip string) {
 	if _, err := s.Docker.Exec(c.StackDir, "www-data", "nextcloud",
 		"php", "occ", "config:system:set", "trusted_domains", strconv.Itoa(ncTrustedTailscale), "--value="+ip); err != nil {
 		s.Log.Printf("letting Files answer at %s: %v", ip, err)
+		return
 	}
+	_ = s.Store.Update(func(st *state.State) error {
+		st.Config.NCTrustedTailscale = ip
+		return nil
+	})
 }

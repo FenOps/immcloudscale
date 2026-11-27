@@ -572,12 +572,12 @@ func iphoneCmd(ctx context.Context, s *core.Server, name string) {
 	fmt.Printf("     Email:    %s\n     Password: %s\n", st.Email, st.Password)
 	fmt.Println("   Then turn on Backup in Immich.")
 	fmt.Println()
-	fmt.Println("3. Files: open Nextcloud, tap Log in with QR code, and scan this:")
+	fmt.Println("3. Files: open Nextcloud, tap Log in with QR code, and scan this (it replaces any earlier iPhone code):")
 	q, err := qrcode.New(st.FilesLink, qrcode.Low)
 	check(err)
 	fmt.Print(q.ToSmallString(false))
 	if st.PhotosAway != "" {
-		fmt.Println("4. Away from home: open Tailscale, sign in to the same Tailscale account as this server, and leave it on.")
+		fmt.Println("4. Away from home: open Tailscale, sign in to the same Tailscale account as this server, and leave it on (Files uses it at home too).")
 	} else {
 		fmt.Println("4. Away from home: set up Tailscale on this server first (sudo ics-server tailscale), then run this again.")
 	}
