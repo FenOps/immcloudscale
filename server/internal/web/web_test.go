@@ -328,3 +328,22 @@ func TestGoogleRoutesKeepToTheirPeople(t *testing.T) {
 		t.Fatalf("tom removed camille's account: %d", w.Code)
 	}
 }
+
+func TestIPhoneSetupNeedsTheAdminLogin(t *testing.T) {
+	_, h := newServerAndHandler(t)
+	r := httptest.NewRequest("POST", "/api/admin/users/camille/iphone", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 401 {
+		t.Fatalf("without the admin login: %d", w.Code)
+	}
+	r = httptest.NewRequest("POST", "/api/admin/users/camille/iphone", nil)
+	r.SetBasicAuth("admin", "pw")
+	r.Header.Set("X-ICS-Request", "1")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	// No Nextcloud in this test: the route answers with the reason rather than a sign-in link.
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "Files password") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}

@@ -131,6 +131,23 @@ dialog h3 { margin: 0 0 8px; font-weight: 400; font-size: 22px; }
   <div class="actions"><button class="text" onclick="pairDlg.close()">Done</button></div>
 </dialog>
 
+<dialog id="iphoneDlg">
+  <h3>Set up an iPhone or iPad</h3>
+  <p class="muted" id="iphoneFor"></p>
+  <ol class="steps">
+    <li>Install from the App Store:
+      <a href="https://apps.apple.com/app/immich/id1613945652" target="_blank" rel="noopener">Immich</a> (photos and backup),
+      <a href="https://apps.apple.com/app/nextcloud/id1125420102" target="_blank" rel="noopener">Nextcloud</a> (files) and
+      <a href="https://apps.apple.com/app/tailscale/id1470499037" target="_blank" rel="noopener">Tailscale</a> (away from home).</li>
+    <li><b>Photos:</b> open Immich and enter the server address, email and password below. Then turn on Backup in Immich.
+      <div class="mono" id="iphonePhotos" style="margin-top:6px"></div></li>
+    <li><b>Files:</b> open Nextcloud, tap <b>Log in with QR code</b>, and scan this:</li>
+  </ol>
+  <img class="qr" id="iphoneQr" alt="Nextcloud sign-in QR code">
+  <ol class="steps" start="4"><li id="iphoneAway"></li></ol>
+  <div class="actions"><button class="text" onclick="iphoneDlg.close()">Done</button></div>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -174,6 +191,7 @@ async function refresh() {
     <td><span class="mono">${esc(u.email)}</span><br><button class="text" data-reveal="${esc(u.password)}">Show password</button></td>
     <td>${u.devices} ${u.devices === 1 ? "phone" : "phones"}</td>
     <td style="text-align:right"><button class="tonal" data-pair="${esc(u.name)}">Pair a phone</button>
+      <button class="text" data-iphone="${esc(u.name)}">Set up an iPhone</button>
       ${u.isAdmin ? "" : `<button class="danger" data-deluser="${esc(u.name)}">Remove</button>`}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">No people yet.</td></tr>`;
 
@@ -217,6 +235,19 @@ document.addEventListener("click", async (e) => {
       $("serverUrl").textContent = "Server: " + p.server;
       $("expires").textContent = "Valid for 15 minutes, one phone";
       $("pairDlg").showModal();
+    } else if (t.dataset.iphone) {
+      const r = await api("POST", "/api/admin/users/" + encodeURIComponent(t.dataset.iphone) + "/iphone");
+      const st = r.setup;
+      $("iphoneFor").textContent = "For " + st.person;
+      const line = (k, v) => `<div>${esc(k)}: <b>${esc(v)}</b></div>`;
+      $("iphonePhotos").innerHTML = (st.photosAway
+          ? line("Server", st.photosAway) + `<div class="muted">At home, optionally (Immich settings, Networking, local Wi-Fi address): ${esc(st.photosHome)}</div>`
+          : line("Server", st.photosHome)) + line("Email", st.email) + line("Password", st.password);
+      $("iphoneQr").src = r.filesQr;
+      $("iphoneAway").innerHTML = st.photosAway
+        ? "<b>Away from home:</b> open Tailscale, sign in to the same Tailscale account as this server, and leave it on."
+        : "<b>Away from home:</b> set up Tailscale on this server first (<span class=\"mono\">sudo ics-server tailscale</span>); until then the apps work on the home Wi-Fi.";
+      $("iphoneDlg").showModal();
     } else if (t.dataset.approve) {
       const a = await api("POST", "/api/admin/requests/" + encodeURIComponent(t.dataset.approve) + "/approve");
       $("qr").src = "/api/admin/qr?code=" + encodeURIComponent(a.request.code);

@@ -46,6 +46,7 @@ Usage: ics-server <command> [options]
   config                change settings                             [--endpoint --lan-ip]
   tailscale             remote access through Tailscale: show it, or store a key so the app
                         joins without signing in            [--auth-key --control-url --remove-key]
+  iphone <person>       how to set up an iPhone or iPad (the Immich, Nextcloud and Tailscale apps)
   google-key            store the Google API key that Import from Google uses
                                                             [--client-id --client-secret]
   admin-password        print the admin console password
@@ -164,6 +165,11 @@ func main() {
 		tailscaleCmd(s, args[1:])
 	case "google-key":
 		googleKeyCmd(s, args[1:])
+	case "iphone":
+		if len(args) < 2 {
+			fail("usage: ics-server iphone <person>")
+		}
+		iphoneCmd(ctx, s, args[1])
 	case "requests":
 		fs := flag.NewFlagSet("requests", flag.ExitOnError)
 		approve := fs.String("approve", "", "approve the request with this ID")
@@ -547,6 +553,35 @@ func openFirewall(s *core.Server) {
 		_ = exec.Command("ufw", r...).Run()
 	}
 	fmt.Println("  Firewall (ufw) rules added for the VPN and the home network.")
+}
+
+// iphoneCmd prints what someone needs to use the server from an iPhone: the official apps and their sign-in.
+func iphoneCmd(ctx context.Context, s *core.Server, name string) {
+	st, err := s.IPhoneSetup(ctx, name)
+	check(err)
+	fmt.Printf("\nSet up %s's iPhone or iPad\n\n", st.Person)
+	fmt.Println("1. Install from the App Store: Immich (photos and backup), Nextcloud (files), and Tailscale (away from home).")
+	fmt.Println()
+	fmt.Println("2. Photos: open Immich and enter")
+	if st.PhotosAway != "" {
+		fmt.Printf("     Server:   %s   (works anywhere while Tailscale is on)\n", st.PhotosAway)
+		fmt.Printf("     At home:  %s   (optional, Immich settings → Networking → local Wi-Fi address)\n", st.PhotosHome)
+	} else {
+		fmt.Printf("     Server:   %s   (at home)\n", st.PhotosHome)
+	}
+	fmt.Printf("     Email:    %s\n     Password: %s\n", st.Email, st.Password)
+	fmt.Println("   Then turn on Backup in Immich.")
+	fmt.Println()
+	fmt.Println("3. Files: open Nextcloud, tap Log in with QR code, and scan this:")
+	q, err := qrcode.New(st.FilesLink, qrcode.Low)
+	check(err)
+	fmt.Print(q.ToSmallString(false))
+	if st.PhotosAway != "" {
+		fmt.Println("4. Away from home: open Tailscale, sign in to the same Tailscale account as this server, and leave it on.")
+	} else {
+		fmt.Println("4. Away from home: set up Tailscale on this server first (sudo ics-server tailscale), then run this again.")
+	}
+	fmt.Println()
 }
 
 // googleKeyCmd stores the Google API key Import from Google uses.

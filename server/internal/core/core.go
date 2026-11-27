@@ -25,7 +25,7 @@ import (
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.4.1"
+const Version = "0.4.2"
 
 const ncAdmin = "ics-admin"
 
@@ -254,6 +254,10 @@ func (s *Server) Setup(ctx context.Context, o SetupOptions) error {
 			s.Log.Printf("updating Nextcloud trusted addresses: %v", err)
 			break
 		}
+	}
+
+	if ip := s.tailscaleIP(); ip != "" {
+		s.trustTailscale(c, ip) // iPhones away from home reach Files there
 	}
 
 	if s.Store.Read().Config.VPNEnabled {
