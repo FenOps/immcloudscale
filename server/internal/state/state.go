@@ -94,10 +94,10 @@ type Config struct {
 	TailscaleAuthKey    string `json:"tailscaleAuthKey,omitempty"`
 	TailscaleControlURL string `json:"tailscaleControlUrl,omitempty"`
 
-	// The person's own Google API key (a "Desktop app" OAuth client), needed to read Google Drive.
 	// The Tailscale address Nextcloud was last told to answer at (iPhones away from home use it).
 	NCTrustedTailscale string `json:"ncTrustedTailscale,omitempty"`
 
+	// The person's own Google API key (a "Desktop app" OAuth client), needed to read Google Drive.
 	GoogleClientID     string `json:"googleClientId,omitempty"`
 	GoogleClientSecret string `json:"googleClientSecret,omitempty"`
 }
