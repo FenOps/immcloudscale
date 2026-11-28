@@ -73,7 +73,7 @@ fun CollectionTarget.query(): AssetQuery = when (this) {
     is CollectionTarget.Person -> AssetQuery.Person(person.id)
     is CollectionTarget.Place -> AssetQuery.Place(city)
     // Screens of their own, never shown as a plain photo list.
-    CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly -> AssetQuery.Timeline
+    CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly, CollectionTarget.PhoneTrash -> AssetQuery.Timeline
 }
 
 fun AssetQuery.key(): String = when (this) {

@@ -93,6 +93,39 @@ object LocalMediaSource {
         return out.sortedBy { it.dateAdded }
     }
 
+    /**
+     * What's in the phone's trash (Android 11+), newest first, with when Android deletes each for good (epoch
+     * seconds). Empty on older phones, which have no trash.
+     */
+    @SuppressLint("InlinedApi")
+    fun trashed(context: Context): List<Pair<LocalMedia, Long>> {
+        if (Build.VERSION.SDK_INT < 30) return emptyList()
+        val proj = arrayOf(
+            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.DATE_EXPIRES,
+        )
+        val args = android.os.Bundle().apply { putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY) }
+        val out = mutableListOf<Pair<LocalMedia, Long>>()
+        for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
+            runCatching {
+                context.contentResolver.query(base, proj, args, null)?.use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getLong(0)
+                        val added = c.getLong(4)
+                        out += LocalMedia(
+                            id = id, uri = ContentUris.withAppendedId(base, id), name = c.getString(1) ?: "$id",
+                            mime = c.getString(2) ?: "application/octet-stream", size = c.getLong(3), dateAdded = added,
+                            dateTaken = c.getLong(6).takeIf { it > 0 } ?: (added * 1000), dateModified = c.getLong(5) * 1000,
+                            bucket = c.getString(7) ?: "",
+                        ) to c.getLong(8)
+                    }
+                }
+            }
+        }
+        return out.sortedBy { it.second } // soonest gone first
+    }
+
     fun folders(context: Context): List<String> {
         val set = sortedSetOf<String>()
         for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {

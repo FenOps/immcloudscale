@@ -124,6 +124,7 @@ fun AssetBrowser(
                             val local = st.assets.filter { it.isLocal }
                             LocalViewerSession.items = local
                             LocalViewerSession.start = local.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                            LocalViewerSession.inTrash = false
                             onOpenLocal()
                         } else if (a.isLocal) {
                             // Only on this phone so far: the phone's own viewer shows it.

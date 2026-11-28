@@ -218,6 +218,7 @@ fun LocalMedia.toAsset() = AssetDto(
 object LocalViewerSession {
     var items: List<AssetDto> = emptyList()
     var start: Int = 0
+    var inTrash = false // opened from the phone's trash: nothing to delete, and they're shown although trashed
 }
 
 /** Phone-only photos moved to the phone's trash this session ("local:<id>"), for every screen showing them. */
@@ -408,6 +409,7 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                             else {
                                 LocalViewerSession.items = assets
                                 LocalViewerSession.start = assets.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                                LocalViewerSession.inTrash = false
                                 onOpen()
                             }
                         },
@@ -471,7 +473,8 @@ fun LocalViewerScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     // Without what was trashed already (also after a rotation, when this is built again).
     val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
-    val list = items.filter { it.id !in trashed }
+    val inTrash = LocalViewerSession.inTrash
+    val list = if (inTrash) items else items.filter { it.id !in trashed }
     val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, maxOf(items.lastIndex, 0))) { list.size }
     var confirm by remember { mutableStateOf<AssetDto?>(null) } // the photo whose bin was tapped
     var trashing by rememberSaveable { mutableStateOf<String?>(null) }
@@ -511,9 +514,12 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
                 Text(a.originalFileName, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Only on this phone · not backed up yet", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (inTrash) "In your phone's trash" else "Only on this phone · not backed up yet",
+                    color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall,
+                )
             }
-            if (canTrashOnPhone) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
+            if (canTrashOnPhone && !inTrash) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
                 Icon(Icons.Outlined.Delete, "Delete from phone", tint = Color.White)
             }
         }
