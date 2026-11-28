@@ -28,6 +28,7 @@ type fakeBichon struct {
 	deleted   map[uint64][]string
 	token     string
 	adminPass string
+	synced    []uint64 // mailboxes asked to sync now
 	// The mail servers: who signed in, what was deleted there, and which messages they refuse.
 	signedIn   []mailserver.Account
 	onServer   []mailserver.Message
@@ -105,6 +106,10 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	mux.HandleFunc("POST /api/v1/account", authed(func(w http.ResponseWriter, r *http.Request) {
 		var a map[string]any
 		json.NewDecoder(r.Body).Decode(&a)
+		if a["account_type"] == "IMAP" && a["download_interval_min"] == nil && a["download_schedule"] == nil {
+			http.Error(w, `{"code":10000,"message":"`+"`sync_interval_min` or `download_schedule` is required for IMAP account type"+`"}`, 400)
+			return
+		}
 		f.nextID++
 		f.accounts[f.nextID] = a
 		f.enabled[f.nextID] = true
@@ -117,6 +122,9 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 		if v, ok := a["enabled"].(bool); ok {
 			f.enabled[id] = v
 		}
+		if v, ok := a["imap"].(map[string]any); ok {
+			f.accounts[id]["imap"] = v
+		}
 		if v, ok := a["sync_folders"].([]any); ok {
 			f.folders[id] = nil
 			for _, x := range v {
@@ -128,7 +136,12 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	mux.HandleFunc("GET /api/v1/account/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
 		json.NewEncoder(w).Encode(map[string]any{"id": id, "email": f.accounts[id]["email"], "login_name": "",
-			"imap": map[string]any{"host": "mail.family.example", "port": 993, "encryption": "Ssl"}})
+			"imap": map[string]any{"host": "mail.family.example", "port": 993, "encryption": "Ssl", "use_proxy": 3,
+				"auth": map[string]any{"auth_type": "Password"}}})
+	}))
+	mux.HandleFunc("POST /api/v1/accounts/{id}/start-download", authed(func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
+		f.synced = append(f.synced, id)
 	}))
 	mux.HandleFunc("DELETE /api/v1/account/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
@@ -438,6 +451,13 @@ func TestAdminsGiveOutMailboxesAddedInBichon(t *testing.T) {
 	}
 	if err := s.SetMailPassword(ctx, "nina", 77, "right"); err != nil {
 		t.Fatal(err)
+	}
+	f.mu.Lock()
+	imap := f.accounts[77]["imap"].(map[string]any)
+	gotPass, proxy, synced := imap["auth"].(map[string]any)["password"], imap["use_proxy"], len(f.synced)
+	f.mu.Unlock()
+	if gotPass != "right" || proxy != float64(3) || synced != 1 {
+		t.Fatalf("Bichon: password %v, proxy %v, synced %d times", gotPass, proxy, synced)
 	}
 	if st := s.MailStatus(ctx, "nina", false); !st.Accounts[0].DeletesOnServer {
 		t.Fatalf("%+v", st)

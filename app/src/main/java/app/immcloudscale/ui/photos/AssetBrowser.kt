@@ -64,6 +64,9 @@ fun AssetBrowser(
     var explainedLocal by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
+    // Phone-only photos moved to the phone's trash (from any screen) leave the timeline at once.
+    val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
+    LaunchedEffect(trashed) { vm.dropLocal(trashed) }
     LifecycleResumeEffect(vm) {
         vm.refreshIfStale()
         onPauseOrDispose {}
