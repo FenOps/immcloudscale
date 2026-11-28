@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -58,7 +59,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -135,7 +135,9 @@ class PhoneOnlyViewModel(private val g: AppGraph) : ViewModel() {
                         .filter { m -> "${m.id}-${m.size}" !in done && nameDayKey(m.toAsset()) !in named }
                         .sortedByDescending { it.dateTaken.takeIf { t -> t > 0 } ?: (it.dateAdded * 1000) }
                 }
-                _state.update { it.copy(media = media, loading = false, selected = it.selected.filterTo(HashSet()) { k -> media.any { m -> m.key() == k } }) }
+                val gone = PhoneTrashed.ids.value
+                val kept = media.filter { it.key() !in gone }
+                _state.update { it.copy(media = kept, loading = false, selected = it.selected.filterTo(HashSet()) { k -> kept.any { m -> m.key() == k } }) }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _state.update { it.copy(loading = false, error = e.message ?: "Couldn't compare with your library") }
@@ -144,9 +146,7 @@ class PhoneOnlyViewModel(private val g: AppGraph) : ViewModel() {
     }
 
     fun folder(f: String?) = _state.update { it.copy(folder = f, selected = emptySet()) }
-    /** Gone from the phone (moved to its trash). */
-    fun dropped(keys: Set<String>, message: String? = null) =
-        _state.update { s -> s.copy(media = s.media.filter { it.key() !in keys }, selected = s.selected - keys, message = message ?: s.message) }
+    fun message(m: String) = _state.update { it.copy(message = m) }
     fun toggle(key: String) = _state.update { s -> s.copy(selected = if (key in s.selected) s.selected - key else s.selected + key) }
     fun selectAll(keys: Collection<String>) = _state.update { s -> s.copy(selected = s.selected + keys) }
     fun clear() = _state.update { it.copy(selected = emptySet()) }
@@ -154,6 +154,10 @@ class PhoneOnlyViewModel(private val g: AppGraph) : ViewModel() {
 
     init {
         viewModelScope.launch { BackupNow.progress.collect { p -> _state.update { it.copy(uploading = p) } } }
+        // Moved to the phone's trash, here or in the viewer: out of the list.
+        viewModelScope.launch {
+            PhoneTrashed.ids.collect { gone -> _state.update { s -> s.copy(media = s.media.filter { it.key() !in gone }, selected = s.selected - gone) } }
+        }
         viewModelScope.launch {
             BackupNow.finished.collect { f ->
                 if (f == null) return@collect
@@ -214,43 +218,54 @@ fun LocalMedia.toAsset() = AssetDto(
 object LocalViewerSession {
     var items: List<AssetDto> = emptyList()
     var start: Int = 0
-    /** Moved to the phone's trash from the viewer: the screen it came from drops them when shown again. */
-    val deleted = mutableSetOf<String>()
 }
+
+/** Phone-only photos moved to the phone's trash this session ("local:<id>"), for every screen showing them. */
+object PhoneTrashed {
+    val ids = MutableStateFlow<Set<String>>(emptySet())
+    fun add(keys: Collection<String>) = ids.update { it + keys }
+}
+
+enum class TrashResult { Trashed, Cancelled, Failed }
 
 /**
  * Moves photos that are only on this phone to the phone's trash (Android keeps them 30 days). Android asks to
  * confirm unless the app has "Media management" access. Returns a function that starts it for some photos.
  */
 @Composable
-fun rememberPhoneTrash(onDone: (trashed: Boolean) -> Unit): (List<String>) -> Unit {
+fun rememberPhoneOnlyTrash(onDone: (TrashResult) -> Unit): (List<String>) -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        onDone(r.resultCode == android.app.Activity.RESULT_OK)
+        onDone(if (r.resultCode == android.app.Activity.RESULT_OK) TrashResult.Trashed else TrashResult.Cancelled)
     }
     return { uris ->
         scope.launch {
             val sender = withContext(Dispatchers.IO) { runCatching { PhoneCopies.trashRequest(ctx, uris.map(Uri::parse)) }.getOrNull() }
-            if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build()) else onDone(false)
+            if (sender != null) launcher.launch(IntentSenderRequest.Builder(sender).build()) else onDone(TrashResult.Failed)
         }
     }
 }
 
+/** Android 11 and newer have a trash for photos; older phones can't move them there. */
+val canTrashOnPhone get() = Build.VERSION.SDK_INT >= 30
+
 /** Asks first: these aren't backed up, so the phone has the only copy. */
 @Composable
-fun ConfirmPhoneTrash(n: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+fun ConfirmPhoneTrash(n: Int, video: Boolean = false, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val one = n == 1
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (n == 1) "Delete this photo from your phone?" else "Delete $n photos and videos from your phone?") },
+        title = { Text(if (one) "Delete this ${if (video) "video" else "photo"} from your phone?" else "Delete $n items from your phone?") },
         text = {
             Text(
-                (if (n == 1) "It isn't backed up, so this is the only copy. " else "They aren't backed up, so these are the only copies. ") +
-                    "They go to your phone's trash, where Android keeps them for 30 days." +
-                    if (Build.VERSION.SDK_INT < 30) " (This needs Android 11 or newer.)" else "",
+                (if (one) "It isn't backed up, so this is the only copy. It goes" else "They aren't backed up, so these are the only copies. They go") +
+                    " to your phone's trash, where Android keeps ${if (one) "it" else "them"} for 30 days, then deletes ${if (one) "it" else "them"} for good.",
             )
         },
-        confirmButton = { TextButton(onClick = onConfirm, enabled = Build.VERSION.SDK_INT >= 30) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+        confirmButton = {
+            TextButton(onClick = onConfirm, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Move to trash") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
@@ -270,11 +285,20 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     var denied by rememberSaveable { mutableStateOf(false) } // refused for good: only Settings can change it
     var confirmAll by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf<List<LocalMedia>?>(null) }
-    var trashing by remember { mutableStateOf<List<LocalMedia>>(emptyList()) }
-    val trash = rememberPhoneTrash { ok ->
-        val keys = trashing.mapTo(HashSet()) { it.key() }
-        if (ok) vm.dropped(keys, if (keys.size == 1) "Moved to your phone's trash" else "${keys.size} moved to your phone's trash")
+    // Kept across rotation: the system's confirmation can outlive the screen.
+    var trashing by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    val trash = rememberPhoneOnlyTrash { result ->
+        val keys = trashing
         trashing = emptyList()
+        when {
+            result == TrashResult.Failed -> vm.message("Couldn't move to your phone's trash")
+            result != TrashResult.Trashed -> Unit
+            keys.isEmpty() -> vm.load() // not known which: look again
+            else -> {
+                PhoneTrashed.add(keys)
+                vm.message(if (keys.size == 1) "Moved to your phone's trash for 30 days" else "${keys.size} moved to your phone's trash for 30 days")
+            }
+        }
     }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
         allowed = r.values.any { it }
@@ -285,10 +309,6 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     // Back from Settings with access given (or taken away).
     LifecycleResumeEffect(Unit) {
         allowed = perms.any(::granted)
-        if (LocalViewerSession.deleted.isNotEmpty()) {
-            vm.dropped(LocalViewerSession.deleted.toSet())
-            LocalViewerSession.deleted.clear()
-        }
         onPauseOrDispose {}
     }
     // Android 14's "selected photos only": the app sees just those, so "everything backed up" may not be true.
@@ -318,7 +338,7 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                     else IconButton(onClick = vm::clear) { Icon(Icons.Filled.Close, "Clear selection") }
                 },
                 actions = {
-                    if (st.selected.isNotEmpty()) IconButton(onClick = { confirmTrash = st.media.filter { it.key() in st.selected } }) {
+                    if (st.selected.isNotEmpty() && canTrashOnPhone) IconButton(onClick = { confirmTrash = st.media.filter { it.key() in st.selected } }) {
                         Icon(Icons.Outlined.Delete, "Delete from phone")
                     }
                 },
@@ -406,7 +426,7 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     confirmTrash?.let { chosen ->
         ConfirmPhoneTrash(chosen.size, onDismiss = { confirmTrash = null }) {
             confirmTrash = null
-            trashing = chosen
+            trashing = chosen.map { it.key() }
             trash(chosen.map { it.uri.toString() })
         }
     }
@@ -449,19 +469,23 @@ fun LocalViewerScreen(onBack: () -> Unit) {
         return
     }
     val ctx = LocalContext.current
-    val list = remember { items.toMutableStateList() }
-    val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, items.lastIndex)) { list.size }
-    var confirm by remember { mutableStateOf(false) }
-    var trashing by remember { mutableStateOf<AssetDto?>(null) }
-    val trash = rememberPhoneTrash { ok ->
-        val a = trashing
+    // Without what was trashed already (also after a rotation, when this is built again).
+    val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
+    val list = items.filter { it.id !in trashed }
+    val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, maxOf(items.lastIndex, 0))) { list.size }
+    var confirm by remember { mutableStateOf<AssetDto?>(null) } // the photo whose bin was tapped
+    var trashing by rememberSaveable { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    val trash = rememberPhoneOnlyTrash { result ->
+        val id = trashing
         trashing = null
-        if (ok && a != null) {
-            LocalViewerSession.deleted += a.id
-            list.remove(a)
-            if (list.isEmpty()) onBack()
+        when (result) {
+            TrashResult.Trashed -> if (id != null) PhoneTrashed.add(listOf(id))
+            TrashResult.Failed -> failed = true
+            TrashResult.Cancelled -> Unit
         }
     }
+    LaunchedEffect(list.isEmpty()) { if (list.isEmpty()) onBack() }
     if (list.isEmpty()) return
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(pager, Modifier.fillMaxSize(), key = { list[it].id }) { i ->
@@ -479,7 +503,7 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             }
         }
         Row(
-            Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)))
+            Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)))
                 .statusBarsPadding().padding(start = 4.dp, end = 12.dp, bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -487,15 +511,24 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
                 Text(a.originalFileName, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Only on this phone · not backed up yet", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall)
+                Text("Only on this phone · not backed up yet", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = { confirm = true }) { Icon(Icons.Outlined.Delete, "Delete from phone", tint = Color.White) }
+            if (canTrashOnPhone) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
+                Icon(Icons.Outlined.Delete, "Delete from phone", tint = Color.White)
+            }
         }
     }
-    if (confirm) ConfirmPhoneTrash(1, onDismiss = { confirm = false }) {
-        confirm = false
-        val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
-        trashing = a
-        a.localUri?.let { trash(listOf(it)) }
+    confirm?.let { a ->
+        ConfirmPhoneTrash(1, video = a.isVideo, onDismiss = { confirm = null }) {
+            confirm = null
+            val uri = a.localUri
+            if (uri == null) failed = true else { trashing = a.id; trash(listOf(uri)) }
+        }
     }
+    if (failed) AlertDialog(
+        onDismissRequest = { failed = false },
+        title = { Text("Couldn't move to your phone's trash") },
+        text = { Text("It's still on your phone. Try again, or delete it in your phone's gallery.") },
+        confirmButton = { TextButton(onClick = { failed = false }) { Text("OK") } },
+    )
 }

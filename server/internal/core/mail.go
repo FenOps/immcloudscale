@@ -622,7 +622,9 @@ func (s *Server) SetMailPassword(ctx context.Context, person string, id uint64, 
 		if err := b.SetPassword(ctx, id, bichon.IMAP{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password, UseProxy: a.Imap.UseProxy}); err != nil {
 			return fmt.Errorf("saving the password in the archive: %w", err)
 		}
-		_ = b.SyncNow(ctx, id) // copy now rather than at the next check, so the old error goes away
+		if err := b.SyncNow(ctx, id); err != nil { // copy now rather than at the next check, so the old error goes away
+			s.Log.Printf("mail: starting a sync of %d: %v", id, err)
+		}
 	}
 	return s.Store.Update(func(st *state.State) error {
 		for i := range st.Mail {
