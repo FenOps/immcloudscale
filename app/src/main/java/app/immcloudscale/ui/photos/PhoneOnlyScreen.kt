@@ -218,12 +218,19 @@ fun LocalMedia.toAsset() = AssetDto(
 object LocalViewerSession {
     var items: List<AssetDto> = emptyList()
     var start: Int = 0
+    var inTrash = false // opened from the phone's trash: nothing to delete, and they're shown although trashed
 }
 
 /** Phone-only photos moved to the phone's trash this session ("local:<id>"), for every screen showing them. */
 object PhoneTrashed {
     val ids = MutableStateFlow<Set<String>>(emptySet())
+    /** Goes up each time photos are restored from the phone's trash, so screens showing phone photos look again. */
+    val restored = MutableStateFlow(0)
     fun add(keys: Collection<String>) = ids.update { it + keys }
+    fun restore(keys: Collection<String>) {
+        ids.update { it - keys.toSet() }
+        restored.update { it + 1 }
+    }
 }
 
 enum class TrashResult { Trashed, Cancelled, Failed }
@@ -408,6 +415,7 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                             else {
                                 LocalViewerSession.items = assets
                                 LocalViewerSession.start = assets.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                                LocalViewerSession.inTrash = false
                                 onOpen()
                             }
                         },
@@ -444,7 +452,7 @@ private fun ConfirmBackUp(n: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) 
     )
 }
 
-private fun android.content.Context.findActivity(): android.app.Activity? {
+internal fun android.content.Context.findActivity(): android.app.Activity? {
     var c = this
     while (c is android.content.ContextWrapper) {
         if (c is android.app.Activity) return c
@@ -453,7 +461,7 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
     return null
 }
 
-private fun mediaPermissions(): Array<String> = when {
+internal fun mediaPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
     Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -471,17 +479,45 @@ fun LocalViewerScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     // Without what was trashed already (also after a rotation, when this is built again).
     val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
-    val list = items.filter { it.id !in trashed }
+    val inTrash = LocalViewerSession.inTrash
+    var failed by remember { mutableStateOf<String?>(null) } // what couldn't be done
+    // From the phone's trash: those restored or deleted for good here leave the pager.
+    var done by rememberSaveable { mutableStateOf(setOf<String>()) }
+    val list = if (inTrash) items.filter { it.id !in done } else items.filter { it.id !in trashed }
+    var trashAction by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) } // "restore" | "delete", id
+    var confirmForever by remember { mutableStateOf<AssetDto?>(null) }
+    val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        val act = trashAction
+        trashAction = null
+        if (r.resultCode == android.app.Activity.RESULT_OK && act != null) {
+            done = done + act.second
+            if (act.first == "restore") PhoneTrashed.restore(listOf(act.second))
+        }
+    }
+    val scope = rememberCoroutineScope()
+    fun trashRequest(kind: String, a: AssetDto) {
+        val uri = a.localUri ?: return
+        if (trashAction != null) return
+        trashAction = kind to a.id
+        scope.launch {
+            val sender = withContext(Dispatchers.IO) {
+                runCatching { if (kind == "restore") PhoneCopies.restoreRequest(ctx, listOf(Uri.parse(uri))) else PhoneCopies.deleteRequest(ctx, listOf(Uri.parse(uri))) }.getOrNull()
+            }
+            if (sender == null) {
+                trashAction = null
+                failed = if (kind == "restore") "Couldn't restore it" else "Couldn't delete it"
+            } else trashLauncher.launch(IntentSenderRequest.Builder(sender).build())
+        }
+    }
     val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, maxOf(items.lastIndex, 0))) { list.size }
     var confirm by remember { mutableStateOf<AssetDto?>(null) } // the photo whose bin was tapped
     var trashing by rememberSaveable { mutableStateOf<String?>(null) }
-    var failed by remember { mutableStateOf(false) }
     val trash = rememberPhoneOnlyTrash { result ->
         val id = trashing
         trashing = null
         when (result) {
             TrashResult.Trashed -> if (id != null) PhoneTrashed.add(listOf(id))
-            TrashResult.Failed -> failed = true
+            TrashResult.Failed -> failed = "Couldn't move to your phone's trash"
             TrashResult.Cancelled -> Unit
         }
     }
@@ -511,9 +547,17 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
                 Text(a.originalFileName, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Only on this phone · not backed up yet", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (inTrash) "In your phone's trash" else "Only on this phone · not backed up yet",
+                    color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall,
+                )
             }
-            if (canTrashOnPhone) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
+            if (inTrash && canTrashOnPhone) {
+                val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
+                TextButton(onClick = { trashRequest("restore", a) }, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) { Text("Restore") }
+                TextButton(onClick = { confirmForever = a }, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) { Text("Delete") }
+            }
+            if (canTrashOnPhone && !inTrash) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
                 Icon(Icons.Outlined.Delete, "Delete from phone", tint = Color.White)
             }
         }
@@ -522,13 +566,21 @@ fun LocalViewerScreen(onBack: () -> Unit) {
         ConfirmPhoneTrash(1, video = a.isVideo, onDismiss = { confirm = null }) {
             confirm = null
             val uri = a.localUri
-            if (uri == null) failed = true else { trashing = a.id; trash(listOf(uri)) }
+            if (uri == null) failed = "Couldn't move to your phone's trash" else { trashing = a.id; trash(listOf(uri)) }
         }
     }
-    if (failed) AlertDialog(
-        onDismissRequest = { failed = false },
-        title = { Text("Couldn't move to your phone's trash") },
-        text = { Text("It's still on your phone. Try again, or delete it in your phone's gallery.") },
-        confirmButton = { TextButton(onClick = { failed = false }) { Text("OK") } },
-    )
+    confirmForever?.let { a ->
+        ConfirmDeleteForever(1, onDismiss = { confirmForever = null }) {
+            confirmForever = null
+            trashRequest("delete", a)
+        }
+    }
+    failed?.let { what ->
+        AlertDialog(
+            onDismissRequest = { failed = null },
+            title = { Text(what) },
+            text = { Text("Nothing was changed. Try again, or do it in your phone's gallery app.") },
+            confirmButton = { TextButton(onClick = { failed = null }) { Text("OK") } },
+        )
+    }
 }

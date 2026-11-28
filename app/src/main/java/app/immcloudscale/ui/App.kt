@@ -78,6 +78,7 @@ import app.immcloudscale.ui.photos.EditorScreen
 import app.immcloudscale.ui.photos.EditorSession
 import app.immcloudscale.ui.photos.LocalViewerScreen
 import app.immcloudscale.ui.photos.PhoneOnlyScreen
+import app.immcloudscale.ui.photos.PhoneTrashScreen
 import app.immcloudscale.ui.photos.PhotosScreen
 import app.immcloudscale.ui.photos.ViewerScreen
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +114,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
         CollectionTarget.Duplicates -> return navigate("duplicates")
         CollectionTarget.LockedFolder -> return navigate("locked")
         CollectionTarget.PhoneOnly -> return navigate("phoneonly")
+        CollectionTarget.PhoneTrash -> return navigate("phonetrash")
         else -> Unit
     }
     val (kind, id, title) = when (t) {
@@ -123,7 +125,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
         is CollectionTarget.Album -> Triple("album", t.album.id, t.album.albumName)
         is CollectionTarget.Person -> Triple("person", t.person.id, t.person.name.ifBlank { "Unnamed person" })
         is CollectionTarget.Place -> Triple("place", t.city, t.city)
-        CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly -> return
+        CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly, CollectionTarget.PhoneTrash -> return
     }
     navigate("collection/$kind?id=${Uri.encode(id)}&title=${Uri.encode(title)}")
 }
@@ -226,6 +228,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
         composable("phoneonly") { PhoneOnlyScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("localviewer") }) }
+        composable("phonetrash") { PhoneTrashScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("localviewer") }) }
         composable("localviewer") { LocalViewerScreen(onBack = { nav.popBackStack() }) }
         composable("mailmessage") { MailMessageScreen(onBack = { nav.popBackStack() }) }
         composable("mailboxes") { MailboxesScreen(onBack = { nav.popBackStack() }) }

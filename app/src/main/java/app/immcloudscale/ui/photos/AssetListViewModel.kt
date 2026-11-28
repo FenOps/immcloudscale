@@ -62,6 +62,7 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
     private val removedMeanwhile = HashSet<String>()
     private val editedMeanwhile = HashMap<String, AssetDto>()
     private var pending: List<AssetDto> = emptyList() // this phone's photos waiting for backup
+    var restoresSeen = PhoneTrashed.restored.value // restores from the phone's trash already looked at
 
     init {
         // Reload whenever the server connection changes (pairing, signing in, switching servers), not just once:

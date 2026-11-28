@@ -67,6 +67,14 @@ fun AssetBrowser(
     // Phone-only photos moved to the phone's trash (from any screen) leave the timeline at once.
     val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
     LaunchedEffect(trashed) { vm.dropLocal(trashed) }
+    // Restored from the phone's trash (here or meanwhile on another screen): back in the timeline now.
+    val restores by PhoneTrashed.restored.collectAsStateWithLifecycle()
+    LaunchedEffect(restores) {
+        if (restores != vm.restoresSeen) {
+            vm.restoresSeen = restores
+            vm.refresh()
+        }
+    }
     LifecycleResumeEffect(vm) {
         vm.refreshIfStale()
         onPauseOrDispose {}
@@ -124,6 +132,7 @@ fun AssetBrowser(
                             val local = st.assets.filter { it.isLocal }
                             LocalViewerSession.items = local
                             LocalViewerSession.start = local.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                            LocalViewerSession.inTrash = false
                             onOpenLocal()
                         } else if (a.isLocal) {
                             // Only on this phone so far: the phone's own viewer shows it.

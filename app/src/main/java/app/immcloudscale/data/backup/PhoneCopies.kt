@@ -82,6 +82,11 @@ object PhoneCopies {
         if (uris.isEmpty() || Build.VERSION.SDK_INT < 30) null
         else MediaStore.createTrashRequest(context.contentResolver, uris, true).intentSender
 
+    /** Asks Android to take [uris] back out of the phone's trash. Null when there's nothing to do or no trash. */
+    fun restoreRequest(context: Context, uris: List<Uri>): IntentSender? =
+        if (uris.isEmpty() || Build.VERSION.SDK_INT < 30) null
+        else MediaStore.createTrashRequest(context.contentResolver, uris, false).intentSender
+
     /** Asks Android to delete [uris] for good (to free space once they're safely backed up). */
     fun deleteRequest(context: Context, uris: List<Uri>): IntentSender? =
         if (uris.isEmpty() || Build.VERSION.SDK_INT < 30) null
