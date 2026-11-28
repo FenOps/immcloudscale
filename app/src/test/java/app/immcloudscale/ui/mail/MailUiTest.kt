@@ -44,7 +44,7 @@ class MailUiTest {
         compose.onNodeWithText("Add").performClick()
         assertEquals("", added?.host)
         assertEquals(MailProvider.Gmail, MailProvider.of("Camille@GMail.com"))
-        assertEquals(MailProvider.Outlook, MailProvider.of("x@hotmail.com"))
+        assertEquals(MailProvider.Other, MailProvider.of("x@hotmail.com"))
     }
 
     @Test fun deletingSaysWhereItGoes() {

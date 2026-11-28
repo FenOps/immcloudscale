@@ -2,6 +2,8 @@ package app.immcloudscale.ui.mail
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +66,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
@@ -117,7 +121,7 @@ fun MailScreen(onOpen: (MailItem) -> Unit, onMailboxes: () -> Unit, onAccount: (
                 !status.configured || !status.reachable -> NotSetUp(status)
                 status.accounts.isEmpty() -> EmptyState(
                     Icons.Outlined.Mail, "Keep your email on your NAS",
-                    "Add your Gmail, Outlook or any other mailbox. Everything is copied to your home server, where only you can search it." +
+                    "Add your Gmail, iCloud or any other mailbox with IMAP. Everything is copied to your home server, where only you can search it." +
                         if (status.unassigned.isNotEmpty()) " ${status.unassigned.size} mailbox${if (status.unassigned.size == 1) " is" else "es are"} waiting to be given to someone." else "",
                     action = "Add a mailbox", onAction = onMailboxes,
                 )
@@ -145,7 +149,10 @@ fun MailScreen(onOpen: (MailItem) -> Unit, onMailboxes: () -> Unit, onAccount: (
         MailboxPasswordDialog(box, onDismiss = vm::dismissPassword) { vm.savePasswordAndDelete(id, it) }
     }
     if (st.deleting) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        // Over everything while it runs, so nothing is tapped meanwhile.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.2f)).clickable(enabled = false) {}, contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
     }
 }
 
@@ -181,9 +188,9 @@ private fun MailSearchBar(query: String, accountName: String, enabled: Boolean, 
             singleLine = true,
             shape = RoundedCornerShape(28.dp),
             colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { onSearch(text) }),
@@ -216,16 +223,20 @@ private fun Filters(st: MailState, status: MailStatus, vm: MailViewModel) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val chip = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer)
-        if (status.accounts.size > 1) {
-            FilterChip(st.query.account == null, { vm.filterAccount(null) }, { Text("All mailboxes") }, shape = RoundedCornerShape(8.dp), colors = chip)
-            status.accounts.forEach { a ->
-                FilterChip(st.query.account == a.id, { vm.filterAccount(a.id) }, { Text(a.email) }, shape = RoundedCornerShape(8.dp), colors = chip)
-            }
-        }
         FilterChip(
             st.query.hasAttachment, { vm.filterAttachments(!st.query.hasAttachment) }, { Text("Has attachments") },
             leadingIcon = { Icon(Icons.Outlined.AttachFile, null, Modifier.size(18.dp)) }, shape = RoundedCornerShape(8.dp), colors = chip,
         )
+        if (status.accounts.size > 1) {
+            FilterChip(st.query.account == null, { vm.filterAccount(null) }, { Text("All mailboxes") }, shape = RoundedCornerShape(8.dp), colors = chip)
+            status.accounts.forEach { a ->
+                FilterChip(
+                    st.query.account == a.id, { vm.filterAccount(a.id) },
+                    { Text(a.email, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) },
+                    shape = RoundedCornerShape(8.dp), colors = chip,
+                )
+            }
+        }
     }
 }
 
@@ -235,10 +246,10 @@ private fun MailList(st: MailState, vm: MailViewModel, onOpen: (MailItem) -> Uni
     val list = rememberLazyListState()
     val nearEnd by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= list.layoutInfo.totalItemsCount - 10 } == true } }
     LaunchedEffect(nearEnd, st.items.size) { if (nearEnd) vm.loadMore() }
-    PullToRefreshBox(st.loading && st.items.isNotEmpty() && st.page <= 1, vm::refresh, Modifier.fillMaxSize()) {
+    PullToRefreshBox(st.loading && st.items.isNotEmpty() && st.page <= 1, { vm.refresh(full = true) }, Modifier.fillMaxSize()) {
         when {
             st.items.isEmpty() && st.loading -> CenteredLoading()
-            st.items.isEmpty() && st.error != null -> Pullable { ErrorState(st.error, vm::refresh) }
+            st.items.isEmpty() && st.error != null -> Pullable { ErrorState(st.error, { vm.refresh(full = true) }) }
             st.items.isEmpty() && st.query.text.isNotBlank() -> Pullable { EmptyState(Icons.Outlined.SearchOff, "No emails found", "Nothing matches \"${st.query.text}\".") }
             st.items.isEmpty() -> Pullable {
                 EmptyState(Icons.Outlined.Mail, "No emails yet", "Your mail is being copied to the NAS. A big mailbox can take a few hours the first time.")
@@ -247,7 +258,7 @@ private fun MailList(st: MailState, vm: MailViewModel, onOpen: (MailItem) -> Uni
                 items(st.items, key = { it.key() }) { m ->
                     val selected = m.key() in st.selected
                     MailRow(
-                        m, selected, selecting = st.selected.isNotEmpty(),
+                        m, selected, showMailbox = st.query.account == null && (st.status?.accounts?.size ?: 0) > 1, onToggle = { vm.toggle(m) },
                         Modifier.combinedClickable(
                             onClick = { if (st.selected.isNotEmpty()) vm.toggle(m) else onOpen(m) },
                             onLongClick = { vm.toggle(m) },
@@ -264,19 +275,24 @@ private fun MailList(st: MailState, vm: MailViewModel, onOpen: (MailItem) -> Uni
 }
 
 @Composable
-private fun MailRow(m: MailItem, selected: Boolean, selecting: Boolean, modifier: Modifier) {
+private fun MailRow(m: MailItem, selected: Boolean, showMailbox: Boolean, onToggle: () -> Unit, modifier: Modifier) {
     ListItem(
         modifier = modifier,
         colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
         leadingContent = {
-            if (selected) Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { SelectCircle(true, Modifier.size(24.dp)) }
-            else LetterAvatar(m.sender.ifBlank { "?" }, 40.dp, contentDescription = "")
+            // Tapping the picture selects, as in Gmail.
+            Box(Modifier.size(48.dp).clickable(onClickLabel = if (selected) "Deselect" else "Select", onClick = onToggle), contentAlignment = Alignment.Center) {
+                if (selected) SelectCircle(true, Modifier.size(24.dp)) else LetterAvatar(m.sender.ifBlank { "?" }, 40.dp, contentDescription = "")
+            }
         },
         headlineContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(m.sender.ifBlank { "(no sender)" }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
-                Text(mailDate(m.date), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    mailDate(m.date) + if (showMailbox) " · ${m.mailbox.substringBefore('@')}" else "",
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                )
             }
         },
         supportingContent = {
@@ -312,7 +328,7 @@ fun MailboxPasswordDialog(mailbox: String, onDismiss: () -> Unit, onSave: (Strin
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("This mailbox was added in the archive's own page, so your server doesn't have its password yet. It needs it once to delete emails on the mail server too.")
-                Text("For Gmail, Outlook, Yahoo and iCloud, use an app password.", style = MaterialTheme.typography.bodySmall)
+                Text("For Gmail, Yahoo and iCloud, use an app password.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     pass, { pass = it }, label = { Text("Password") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),

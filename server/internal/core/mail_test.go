@@ -379,7 +379,7 @@ func TestDeletingRemovesFromTheMailServerThenTheArchive(t *testing.T) {
 func TestAWrongPasswordIsCaughtWhenAdding(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	f := withBichon(t, s)
-	if _, err := s.AddMail(context.Background(), "camille", NewMailbox{Email: "camille@outlook.com", Password: "wrong"}); err == nil || !strings.Contains(err.Error(), "app password") {
+	if _, err := s.AddMail(context.Background(), "camille", NewMailbox{Email: "camille@yahoo.com", Password: "wrong"}); err == nil || !strings.Contains(err.Error(), "app password") {
 		t.Fatal(err)
 	}
 	f.mu.Lock()

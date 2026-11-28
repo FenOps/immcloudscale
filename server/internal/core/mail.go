@@ -188,8 +188,6 @@ func mailServer(email string) (host string, port int) {
 	switch domain {
 	case "gmail.com", "googlemail.com":
 		return "imap.gmail.com", 993
-	case "outlook.com", "hotmail.com", "live.com", "msn.com":
-		return "outlook.office365.com", 993
 	case "yahoo.com", "ymail.com":
 		return "imap.mail.yahoo.com", 993
 	case "icloud.com", "me.com", "mac.com":
@@ -216,6 +214,9 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 		return MailAccountStatus{}, errors.New("the password (or app password) is missing")
 	}
 	m := bichon.IMAP{Host: strings.TrimSpace(in.Host), Port: in.Port, Login: strings.TrimSpace(in.Login), Password: in.Password}
+	if _, d, _ := strings.Cut(email, "@"); slices.Contains([]string{"outlook.com", "hotmail.com", "live.com", "msn.com"}, d) {
+		return MailAccountStatus{}, errors.New("Outlook.com and Hotmail no longer let other apps sign in with a password, so they can't be archived yet")
+	}
 	if m.Host == "" {
 		if m.Host, m.Port = mailServer(email); m.Host == "" {
 			return MailAccountStatus{}, errors.New("enter the mail server (IMAP) address: your email provider's settings page lists it")
@@ -252,7 +253,7 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 	// Signing in first gives a clear answer now, rather than an archive that silently stays empty.
 	acct := mailserver.Account{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password}
 	if err := s.checkMailbox(ctx, acct); err != nil {
-		return MailAccountStatus{}, fmt.Errorf("%w (for Gmail, Outlook, Yahoo and iCloud, use an app password)", err)
+		return MailAccountStatus{}, fmt.Errorf("%w (for Gmail, Yahoo and iCloud, use an app password)", err)
 	}
 	a, err := s.bichon(st.Config).AddAccount(ctx, email, email, m)
 	if err != nil {

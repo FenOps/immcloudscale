@@ -3,6 +3,7 @@ package app.immcloudscale.ui.mail
 import android.content.Intent
 import android.graphics.Color
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.horizontalScroll
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -49,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.viewinterop.AndroidView
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.mail.MailAttachment
@@ -62,6 +66,7 @@ import app.immcloudscale.ui.components.formatBytes
 import app.immcloudscale.ui.files.openLocalFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -71,12 +76,18 @@ import java.time.format.FormatStyle
 /** The message opened from the mail list (set just before navigating). */
 object MailSession {
     var item: MailItem? = null
+    /** Deleted from the message screen: the list takes them out when it's shown again. */
+    val deleted = mutableListOf<Pair<String, String>>()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MailMessageScreen(onBack: () -> Unit) {
-    val item = MailSession.item ?: return onBack()
+    val item = MailSession.item
+    if (item == null) { // e.g. the app was restarted on this screen
+        LaunchedEffect(Unit) { onBack() }
+        return
+    }
     val ctx = LocalContext.current
     val g = ctx.graph
     val scope = rememberCoroutineScope()
@@ -88,6 +99,7 @@ fun MailMessageScreen(onBack: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     var askPassword by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(remote, attempt) {
         error = null
@@ -98,7 +110,10 @@ fun MailMessageScreen(onBack: () -> Unit) {
         scope.launch {
             try {
                 val r = g.mail.delete(listOf(item.account to item.id))
-                if (r.failed.isEmpty()) onBack() else snack.showSnackbar("Couldn't delete: ${r.failed.first().error}")
+                if (r.failed.isEmpty()) {
+                    MailSession.deleted += item.account to item.id
+                    onBack()
+                } else snack.showSnackbar("Couldn't delete: ${r.failed.first().error}")
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (e is HttpException && e.code == 409) askPassword = true else snack.showSnackbar(e.message ?: "Couldn't delete")
@@ -123,18 +138,19 @@ fun MailMessageScreen(onBack: () -> Unit) {
             when {
                 m == null && error != null -> ErrorState(error!!, { attempt++ })
                 m == null -> CenteredLoading()
-                else -> MessageBody(m, remote, onShowImages = { remote = true }, onAttachment = { a ->
+                else -> MessageBody(m, remote, downloading, onShowImages = { remote = true }, onAttachment = { a ->
+                    if (a.hash in downloading) return@MessageBody
                     scope.launch {
+                        downloading = downloading + a.hash
                         try {
                             val f = File(ctx.cacheDir, "mail/${a.hash}/${safeName(a.name ?: "attachment")}")
-                            if (!f.exists()) {
-                                snack.showSnackbar("Downloading ${a.name ?: "attachment"}…")
-                                g.mail.attachment(item.account, item.id, a.hash, f)
-                            }
+                            if (f.length() != a.size || a.size == 0L) g.mail.attachment(item.account, item.id, a.hash, f, a.size)
                             openLocalFile(ctx, f, a.type)
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             snack.showSnackbar(e.message ?: "Couldn't open the attachment")
+                        } finally {
+                            downloading = downloading - a.hash
                         }
                     }
                 })
@@ -166,7 +182,7 @@ fun MailMessageScreen(onBack: () -> Unit) {
 private fun safeName(name: String) = name.replace(Regex("[/\\\\:*?\"<>|]"), "_").take(120).ifBlank { "attachment" }
 
 @Composable
-private fun MessageBody(m: MailMessage, remote: Boolean, onShowImages: () -> Unit, onAttachment: (MailAttachment) -> Unit) {
+private fun MessageBody(m: MailMessage, remote: Boolean, downloading: Set<String>, onShowImages: () -> Unit, onAttachment: (MailAttachment) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SelectionContainer { Text(m.subject.ifBlank { "(no subject)" }, style = MaterialTheme.typography.titleLarge) }
@@ -179,10 +195,13 @@ private fun MessageBody(m: MailMessage, remote: Boolean, onShowImages: () -> Uni
                     }
                     Text(
                         "To " + (m.to + m.cc.orEmpty()).joinToString(", ").ifBlank { m.mailbox },
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(fullDate(m.date), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    mailDate(m.date), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics { contentDescription = fullDate(m.date) },
+                )
             }
             val files = m.attachmentList.filter { !it.inline }
             if (files.isNotEmpty()) {
@@ -191,7 +210,11 @@ private fun MessageBody(m: MailMessage, remote: Boolean, onShowImages: () -> Uni
                         AssistChip(
                             onClick = { onAttachment(a) },
                             label = { Text("${a.name ?: "attachment"} · ${formatBytes(a.size)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = { Icon(Icons.Outlined.AttachFile, null, Modifier.size(18.dp)) },
+                            leadingIcon = {
+                                if (a.hash in downloading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Outlined.AttachFile, null, Modifier.size(18.dp))
+                            },
+                            modifier = Modifier.widthIn(max = 280.dp),
                         )
                     }
                 }
@@ -235,16 +258,12 @@ private fun MailWebView(html: String, allowNetwork: Boolean, modifier: Modifier)
                 settings.useWideViewPort = true
                 settings.builtInZoomControls = true
                 settings.displayZoomControls = false
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, request.url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        return true
-                    }
-                }
+                webViewClient = MailWebClient()
             }
         },
         update = { w ->
             w.settings.blockNetworkLoads = !allowNetwork
+            (w.webViewClient as? MailWebClient)?.allowNetwork = allowNetwork
             val page = "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body style=\"margin:12px\">$html</body></html>"
             if (w.tag != page) {
                 w.tag = page
@@ -256,3 +275,24 @@ private fun MailWebView(html: String, allowNetwork: Boolean, modifier: Modifier)
 
 private fun fullDate(iso: String, zone: ZoneId = ZoneId.systemDefault()): String =
     runCatching { Instant.parse(iso).atZone(zone).format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)) }.getOrDefault("")
+
+/**
+ * Only a link the person tapped opens, and only to the web or to write an email: nothing in the mail itself (a
+ * refresh, a form) can start an app or reach a tracker. Images from the web load only once allowed.
+ */
+private class MailWebClient : WebViewClient() {
+    @Volatile var allowNetwork = false // read on WebView's own thread
+
+    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        if (request.hasGesture() && request.url.scheme?.lowercase() in setOf("http", "https", "mailto")) {
+            runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, request.url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+        return true
+    }
+
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        val web = request.url.scheme?.lowercase() in setOf("http", "https")
+        val ok = allowNetwork && request.method.equals("GET", ignoreCase = true)
+        return if (web && !ok) WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))) else null
+    }
+}

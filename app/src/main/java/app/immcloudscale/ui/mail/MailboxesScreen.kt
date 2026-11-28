@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Mail
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -45,8 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.mail.MailStatus
@@ -67,12 +71,10 @@ import java.time.Instant
 enum class MailProvider(val label: String, val domains: List<String>, val hint: String) {
     Gmail("Gmail", listOf("gmail.com", "googlemail.com"),
         "Use an app password, not your Google password: turn on 2-Step Verification, then create one at myaccount.google.com/apppasswords. Also check IMAP is on in Gmail's settings."),
-    Outlook("Outlook / Hotmail", listOf("outlook.com", "hotmail.com", "live.com", "msn.com"),
-        "Use an app password from account.microsoft.com (Security, Advanced security options)."),
     Yahoo("Yahoo", listOf("yahoo.com", "ymail.com"), "Use an app password from Yahoo's Account security page."),
     ICloud("iCloud", listOf("icloud.com", "me.com", "mac.com"), "Use an app-specific password from account.apple.com (Sign-In and Security)."),
     Other("Other (IMAP)", emptyList(),
-        "Your mail provider's help or settings page lists its incoming (IMAP) server, usually on port 993 with SSL. Use the mailbox's own password.");
+        "Your mail provider's help or settings page lists its incoming (IMAP) server, usually on port 993 with SSL. Use the mailbox's own password. (Outlook.com and Hotmail don't allow this any more.)");
 
     companion object {
         fun of(email: String): MailProvider = entries.firstOrNull { p -> p.domains.any { email.trim().lowercase().endsWith("@$it") } } ?: Other
@@ -162,7 +164,7 @@ fun MailboxesScreen(onBack: () -> Unit) {
                             )
                         }
                         items(s.unassigned, key = { "u" + it.id }) { m ->
-                            MailboxRow(m) { close -> DropdownMenuItem(text = { Text("Give to…") }, onClick = { close(); assigning = m }) }
+                            MailboxRow(m, action = { TextButton(onClick = { assigning = m }) { Text("Give to") } })
                         }
                     }
                     item { Box(Modifier.padding(48.dp)) }
@@ -180,7 +182,7 @@ fun MailboxesScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text("Remove ${m.email} from your NAS?") },
-            text = { Text("Copying stops and all ${m.count} archived emails are deleted from your NAS. Nothing changes in the mailbox itself.") },
+            text = { Text("Copying stops and all ${"%,d".format(m.count)} archived emails are deleted from your NAS. Nothing changes in the mailbox itself.") },
             confirmButton = { TextButton(onClick = { removing = null; act("Removed ${m.email}") { g.mail.remove(m.id) } }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } },
         )
@@ -210,7 +212,7 @@ fun MailboxesScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun MailboxRow(m: Mailbox, menu: @Composable (close: () -> Unit) -> Unit) {
+private fun MailboxRow(m: Mailbox, action: (@Composable () -> Unit)? = null, menu: @Composable (close: () -> Unit) -> Unit = {}) {
     var open by remember { mutableStateOf(false) }
     val last = m.lastSync?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
     ListItem(
@@ -219,7 +221,7 @@ private fun MailboxRow(m: Mailbox, menu: @Composable (close: () -> Unit) -> Unit
         supportingContent = {
             Text(
                 listOfNotNull(
-                    "${m.count} emails · ${formatBytes(m.bytes)}",
+                    "${"%,d".format(m.count)} email${if (m.count == 1) "" else "s"} · ${formatBytes(m.bytes)}",
                     when {
                         m.paused -> "paused"
                         m.syncing -> "copying now"
@@ -232,7 +234,8 @@ private fun MailboxRow(m: Mailbox, menu: @Composable (close: () -> Unit) -> Unit
             )
         },
         trailingContent = {
-            Box {
+            if (action != null) action()
+            else Box {
                 IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Options for ${m.email}") }
                 DropdownMenu(open, { open = false }) { menu { open = false } }
             }
@@ -252,6 +255,7 @@ internal fun AddMailboxDialog(people: List<String>, me: String, onDismiss: () ->
     var security by remember { mutableStateOf("ssl") }
     var login by remember { mutableStateOf("") }
     var forPerson by remember { mutableStateOf("") }
+    var showPass by remember { mutableStateOf(false) }
     val other = provider == MailProvider.Other
     val ok = email.contains("@") && pass.isNotBlank() && (!other || host.isNotBlank())
     AlertDialog(
@@ -262,12 +266,17 @@ internal fun AddMailboxDialog(people: List<String>, me: String, onDismiss: () ->
                 Picker("Provider", provider.label, MailProvider.entries.map { it.label }) { i -> provider = MailProvider.entries[i]; picked = true }
                 OutlinedTextField(
                     email, { email = it; if (!picked) provider = MailProvider.of(it) }, label = { Text("Email address") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     pass, { pass = it }, label = { Text(if (other) "Password" else "App password") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showPass = !showPass }) {
+                            Icon(if (showPass) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showPass) "Hide password" else "Show password")
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth(),
                 )
                 Text(provider.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (other) {

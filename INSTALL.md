@@ -407,8 +407,9 @@ your computers, and check everything arrived before deleting anything in Google.
 
 ## Email archive (optional)
 
-Keep a searchable copy of everyone's email on your server: Gmail, Outlook, Yahoo, iCloud or any mailbox with IMAP
-(for example one at your web host). Each person sees only their own mailboxes, in the app's **Mail** tab.
+Keep a searchable copy of everyone's email on your server: Gmail, Yahoo, iCloud or any mailbox with IMAP
+(for example one at your web host). Outlook.com and Hotmail no longer let other apps sign in with a password, so
+they can't be archived yet. Each person sees only their own mailboxes, in the app's **Mail** tab.
 The archive itself is [Bichon](https://github.com/rustmailer/bichon), which runs next to ImmCloudScale.
 
 **1. Install Bichon on the server (once).** With Docker already there (ImmCloudScale installed it):
@@ -426,7 +427,7 @@ on your network instead (`-p 15630:15630`) and open `http://<server>:15630` (use
 on a new install) and keeps only an access token. If Bichon still has that default password, it's replaced by a
 random one, shown once: save it.
 
-**3. Add mailboxes** in the app: **Mail → Mailboxes → Add a mailbox**. Gmail, Outlook, Yahoo and iCloud need an
+**3. Add mailboxes** in the app: **Mail → Mailboxes → Add a mailbox**. Gmail, Yahoo and iCloud need an
 **app password**, not the normal one (the app explains where to make one). Other providers list their incoming
 (IMAP) server in their help pages. Admins can add a mailbox for someone else, and give out mailboxes that were
 added in Bichon's own page (`sudo ics-server mail` lists them).

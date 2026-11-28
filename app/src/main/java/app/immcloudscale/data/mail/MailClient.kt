@@ -79,7 +79,7 @@ import java.io.File
 @Serializable data class MailDeleteFail(val account: String, val id: String, val error: String)
 @Serializable data class MailDeleteResult(val deleted: Int = 0, val failed: List<MailDeleteFail> = emptyList())
 
-/** A mailbox to start archiving; [host] can be left out for Gmail, Outlook, Yahoo and iCloud. */
+/** A mailbox to start archiving; [host] can be left out for Gmail, Yahoo and iCloud. */
 @Serializable data class NewMailbox(
     val email: String,
     val password: String,
@@ -124,15 +124,19 @@ class MailClient(private val http: OkHttpClient, private val settings: () -> App
     suspend fun message(account: String, id: String, remote: Boolean = false): MailMessage =
         parse(call("GET", "/api/v1/me/mail/messages/$account/${enc(id)}" + if (remote) "?remote=1" else ""))
 
-    /** Downloads an attachment into [into]. */
-    suspend fun attachment(account: String, id: String, hash: String, into: File) = withContext(Dispatchers.IO) {
+    /** Downloads an attachment into [into]; [size] (when known) catches a download that stopped early. */
+    suspend fun attachment(account: String, id: String, hash: String, into: File, size: Long = 0) = withContext(Dispatchers.IO) {
         val req = signed("/api/v1/me/mail/messages/$account/${enc(id)}/attachments/${enc(hash)}").get().build()
         http.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw HttpException(r.code, errorOf(r.body?.string().orEmpty(), r.code))
             into.parentFile?.mkdirs()
             val tmp = File(into.path + ".part")
             r.body!!.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
-            tmp.renameTo(into)
+            if (size > 0 && tmp.length() != size) {
+                tmp.delete()
+                throw java.io.IOException("The download stopped early: try again")
+            }
+            if (!tmp.renameTo(into)) throw java.io.IOException("Couldn't save the attachment")
         }
     }
 

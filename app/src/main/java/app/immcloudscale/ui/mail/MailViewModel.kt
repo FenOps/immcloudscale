@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.immcloudscale.AppGraph
 import app.immcloudscale.data.HttpException
+import app.immcloudscale.data.mail.MailDeleteResult
 import app.immcloudscale.data.mail.MailItem
 import app.immcloudscale.data.mail.MailQuery
 import app.immcloudscale.data.mail.MailStatus
@@ -36,13 +37,18 @@ class MailViewModel(private val g: AppGraph) : ViewModel() {
     val state: StateFlow<MailState> = _state
     private var job: Job? = null
 
-    /** Reloads the mailboxes and the first page of the current search. */
-    fun refresh() {
+    /**
+     * Brings the mailboxes up to date; the list is reloaded only when [full] (pull to refresh) or still empty, so
+     * coming back from a message keeps the place in a long list.
+     */
+    fun refresh(full: Boolean = false) {
         viewModelScope.launch {
+            MailSession.deleted.toList().forEach { (a, id) -> removed(a, id) }
+            MailSession.deleted.clear()
             val st = runCatching { g.mail.status() }
             st.onSuccess { s -> _state.update { it.copy(status = s, error = null) } }
                 .onFailure { e -> if (_state.value.status == null) _state.update { it.copy(error = e.message ?: "Couldn't reach your server") } }
-            if (st.getOrNull()?.accounts?.isNotEmpty() == true) load(reset = true)
+            if (st.getOrNull()?.accounts?.isNotEmpty() == true && (full || _state.value.items.isEmpty())) load(reset = true)
         }
     }
 
@@ -93,7 +99,12 @@ class MailViewModel(private val g: AppGraph) : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(deleting = true) }
             try {
-                val r = g.mail.delete(messages)
+                // In parts: the server takes up to 100 at a time, and each part is answered before the phone gives up.
+                var r = MailDeleteResult()
+                for (part in messages.chunked(50)) {
+                    val p = g.mail.delete(part)
+                    r = MailDeleteResult(r.deleted + p.deleted, r.failed + p.failed)
+                }
                 val failed = r.failed.mapTo(HashSet()) { "${it.account}/${it.id}" }
                 val gone = messages.map { "${it.first}/${it.second}" }.filterTo(HashSet()) { it !in failed }
                 _state.update { s ->
@@ -109,7 +120,10 @@ class MailViewModel(private val g: AppGraph) : ViewModel() {
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 // 409: a mailbox added in Bichon's own page, whose password the server doesn't have yet.
-                val needs = if (e is HttpException && e.code == 409) messages.first().first else null
+                val picked = messages.map { it.first }.toSet()
+                val needs = if (e is HttpException && e.code == 409) {
+                    _state.value.status?.accounts?.firstOrNull { it.id in picked && !it.deletesOnServer }?.id ?: messages.first().first
+                } else null
                 _state.update { it.copy(deleting = false, needPassword = needs, message = if (needs == null) e.message ?: "Couldn't delete" else null) }
             }
         }

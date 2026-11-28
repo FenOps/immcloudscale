@@ -87,7 +87,7 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 * The admin console and `ics-server iphone <person>` also set up Files (Nextcloud) with a QR code
 
 ### Mail
-* A searchable archive of your email on your own server (Gmail, Outlook, Yahoo, iCloud or any IMAP mailbox),
+* A searchable archive of your email on your own server (Gmail, Yahoo, iCloud or any IMAP mailbox),
   kept by Bichon; each family member sees only their own mailboxes
 * Read emails with tracking images blocked, open attachments, delete (from the server and the mailbox)
 

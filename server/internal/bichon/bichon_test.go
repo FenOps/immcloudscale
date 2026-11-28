@@ -76,7 +76,7 @@ func TestAgainstARealBichon(t *testing.T) {
 
 func TestBichonsErrorsAreShortened(t *testing.T) {
 	for in, want := range map[string]string{
-		`Internal Server Error: Generic { message: "Valid access token not found", location: Location { file: "x.rs" } }`: "Valid access token not found",
+		`Internal Server Error: Generic { message: "Valid access token not found", location: Location { file: "x.rs" } }`:                                                        "Valid access token not found",
 		`Internal Server Error: Generic { message: "Generic {\n    message: \"Invalid access token provided. Please check your credentials.\",\n    location: Location {` + "\n": "Invalid access token provided. Please check your credentials.",
 		"plain message\nmore": "plain message",
 	} {
