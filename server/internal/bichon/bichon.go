@@ -61,11 +61,28 @@ func (c *Client) request(ctx context.Context, cl *http.Client, method, path stri
 		if json.Unmarshal(data, &e) != nil || e.Message == "" {
 			e.Message = strings.TrimSpace(string(data))
 		}
-		// Bichon's messages carry a Rust debug dump; the first line is the useful part.
-		msg, _, _ := strings.Cut(e.Message, "\n")
-		return nil, &APIError{resp.StatusCode, strings.TrimSpace(msg)}
+		return nil, &APIError{resp.StatusCode, readable(e.Message)}
 	}
 	return resp, nil
+}
+
+// readable takes the useful part out of Bichon's messages, which carry a Rust debug dump
+// ("Internal Server Error: Generic { message: \"…\", location: … }").
+func readable(msg string) string {
+	if i := strings.LastIndex(msg, `message: \"`); i >= 0 {
+		rest := msg[i+len(`message: \"`):]
+		if j := strings.Index(rest, `\"`); j > 0 {
+			return strings.TrimSuffix(strings.TrimSpace(rest[:j]), "\\")
+		}
+	}
+	if i := strings.Index(msg, `message: "`); i >= 0 {
+		rest := msg[i+len(`message: "`):]
+		if j := strings.Index(rest, `"`); j > 0 {
+			return rest[:j]
+		}
+	}
+	first, _, _ := strings.Cut(msg, "\n")
+	return strings.TrimSpace(first)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

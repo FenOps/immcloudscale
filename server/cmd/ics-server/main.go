@@ -640,10 +640,10 @@ func mailCmd(ctx context.Context, s *core.Server, args []string) {
 			pass = string(p)
 		}
 		newPass, err := s.ConnectMail(ctx, *url, *token, *user, pass)
-		check(err)
-		if newPass != "" {
+		if newPass != "" { // shown even if connecting failed afterwards: the old password doesn't work any more
 			fmt.Printf("Bichon still had its default password, so it was changed. Its %s password is now:\n  %s\nSave it (a password manager is best): it isn't shown again.\n", *user, newPass)
 		}
+		check(err)
 		fmt.Println("Connected. In the app: Mail, then Add a mailbox. Mailboxes already in Bichon are listed for admins to give to someone.")
 		return
 	}
@@ -652,7 +652,7 @@ func mailCmd(ctx context.Context, s *core.Server, args []string) {
 		if err != nil {
 			fail("usage: ics-server mail assign <mailbox-id> <person>")
 		}
-		check(s.AssignMail(ctx, id, args[2]))
+		check(s.AssignMail(ctx, id, strings.ToLower(args[2])))
 		fmt.Printf("%s now sees mailbox %d in the app.\n", args[2], id)
 		return
 	}

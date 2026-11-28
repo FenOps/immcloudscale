@@ -63,15 +63,20 @@ func (s *Server) ConnectMail(ctx context.Context, url, token, user, password str
 			return "", err
 		}
 		b.Token = sess
-		if token, err = b.CreateToken(ctx, "ImmCloudScale server"); err != nil {
-			return "", fmt.Errorf("creating a Bichon API token: %w", err)
-		}
 		if password == bichon.DefaultPassword {
-			// Anyone who can reach Bichon knows the default: replace it now.
-			newPassword = state.Secret(18)
-			if err := b.ChangeMyPassword(ctx, newPassword); err != nil {
+			// Anyone who can reach Bichon knows the default: replace it first, then sign in again with the new one
+			// (so the token below can't be one the change cancels).
+			pw := state.Secret(18)
+			if err := b.ChangeMyPassword(ctx, pw); err != nil {
 				return "", fmt.Errorf("changing Bichon's default password: %w", err)
 			}
+			newPassword = pw
+			if b.Token, err = b.Login(ctx, user, pw); err != nil {
+				return newPassword, err
+			}
+		}
+		if token, err = b.CreateToken(ctx, "ImmCloudScale server"); err != nil {
+			return newPassword, fmt.Errorf("creating a Bichon API token: %w", err)
 		}
 	}
 	b.Token = token
@@ -237,6 +242,13 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 			return MailAccountStatus{}, fmt.Errorf("%s is already archived (for %s)", email, x.Person)
 		}
 	}
+	if all, err := s.bichon(st.Config).Accounts(ctx); err == nil {
+		for _, x := range all {
+			if strings.EqualFold(x.Email, email) {
+				return MailAccountStatus{}, fmt.Errorf("%s is already in the archive: an admin can give it to you (Mail, Mailboxes)", email)
+			}
+		}
+	}
 	// Signing in first gives a clear answer now, rather than an archive that silently stays empty.
 	acct := mailserver.Account{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password}
 	if err := s.checkMailbox(ctx, acct); err != nil {
@@ -247,10 +259,16 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 		return MailAccountStatus{}, fmt.Errorf("adding %s to the archive: %w", email, err)
 	}
 	if err := s.Store.Update(func(st *state.State) error {
+		for _, x := range st.Mail {
+			if strings.EqualFold(x.Email, email) {
+				return fmt.Errorf("%s is already archived (for %s)", email, x.Person) // added twice at once
+			}
+		}
 		st.Mail = append(st.Mail, state.MailAccount{ID: a.ID, Person: owner, Email: email, Added: s.Now(),
 			IMAPHost: m.Host, IMAPPort: m.Port, IMAPSecurity: m.Security, IMAPLogin: m.Login, IMAPPassword: m.Password})
 		return nil
 	}); err != nil {
+		_ = s.bichon(st.Config).DeleteAccount(context.WithoutCancel(ctx), a.ID)
 		return MailAccountStatus{}, err
 	}
 	s.Log.Printf("mail: archiving %s for %s", email, owner)
@@ -283,7 +301,8 @@ func (s *Server) chooseFolders(ctx context.Context, id uint64) {
 		case <-time.After(15 * time.Second):
 		}
 	}
-	s.Log.Printf("mail: account %d didn't list its folders; it keeps Bichon's default (INBOX) until added again", id)
+	s.markFoldersChosen(id) // don't keep trying: it keeps Bichon's default (INBOX), which Bichon's page can change
+	s.Log.Printf("mail: account %d didn't list its folders; it keeps Bichon's default folders (INBOX)", id)
 }
 
 func (s *Server) markFoldersChosen(id uint64) {
@@ -327,7 +346,7 @@ func keepFolders(boxes []bichon.Mailbox) []string {
 	return out
 }
 
-// mailOf is the archive's id for [person]'s mailbox [id], or ErrNotYourMail.
+// ownsMail is nil when mailbox [id] is [person]'s, else ErrNotYourMail.
 func (s *Server) ownsMail(person string, id uint64) error {
 	for _, m := range s.Store.Read().Mail {
 		if m.ID == id && m.Person == person {
@@ -522,6 +541,9 @@ func (s *Server) ReadMail(ctx context.Context, person string, account uint64, id
 	if err != nil {
 		return MailMessage{}, err
 	}
+	if e.AccountID != account {
+		return MailMessage{}, ErrNotYourMail // a message id from someone else's mailbox
+	}
 	c, err := b.Content(ctx, account, id, !remote)
 	if err != nil {
 		return MailMessage{}, err
@@ -541,7 +563,22 @@ func (s *Server) MailAttachment(ctx context.Context, person string, account uint
 	if err != nil {
 		return nil, 0, err
 	}
-	return b.Attachment(ctx, account, id, hash)
+	if e, err := b.Envelope(ctx, account, id); err != nil {
+		return nil, 0, err
+	} else if e.AccountID != account {
+		return nil, 0, ErrNotYourMail
+	}
+	c, err := b.Content(ctx, account, id, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	i := slices.IndexFunc(c.Attachments, func(a bichon.Attachment) bool { return a.Hash == hash })
+	if i < 0 {
+		return nil, 0, &bichon.APIError{Status: 404, Message: "no such attachment in this message"}
+	}
+	body, _, err := b.Attachment(ctx, account, id, hash)
+	// Bichon sends no length; with the real one, a download cut short shows as an error, not a shorter file.
+	return body, c.Attachments[i].Size, err
 }
 
 // SetMailPassword saves the password of [person]'s mailbox (one added in Bichon's own page), so deleting
@@ -582,6 +619,9 @@ func (s *Server) SetMailPassword(ctx context.Context, person string, id uint64, 
 	})
 }
 
+// MaxMailDelete is how many emails one request may delete (the app sends bigger selections in parts).
+const MaxMailDelete = 100
+
 // MailDeleteResult says what was deleted, and what couldn't be (still in both places).
 type MailDeleteResult struct {
 	Deleted int              `json:"deleted"`
@@ -599,6 +639,16 @@ type MailDeleteFail struct {
 // has it, so nothing is half-deleted.
 func (s *Server) DeleteMail(ctx context.Context, person string, ids map[uint64][]string) (MailDeleteResult, error) {
 	out := MailDeleteResult{Failed: []MailDeleteFail{}}
+	total := 0
+	for _, list := range ids {
+		total += len(list)
+	}
+	if total > MaxMailDelete {
+		return out, fmt.Errorf("delete at most %d emails at a time", MaxMailDelete)
+	}
+	// Finish even if the phone stops waiting: stopping half way would leave mail gone from the server but archived.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	defer cancel()
 	accounts := map[uint64]state.MailAccount{}
 	for _, m := range s.Store.Read().Mail {
 		accounts[m.ID] = m
@@ -631,6 +681,8 @@ func (s *Server) DeleteMail(ctx context.Context, person string, ids map[uint64][
 			case err != nil:
 				fail(id, err)
 				continue
+			case e.AccountID != account:
+				return out, ErrNotYourMail // a message id from someone else's mailbox
 			}
 			msgs = append(msgs, mailserver.Message{Folder: e.MailboxName, MessageID: e.MessageID})
 			found = append(found, id)

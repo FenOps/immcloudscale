@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,20 +44,21 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 		return nil, err
 	}
 	defer c.Logout()
-	trash := trashFolder(c)
+	trash, folders, err := trashFolder(c)
+	if err != nil {
+		// Not knowing whether there's a Trash must not turn "move to Trash" into deleting for good.
+		return nil, fmt.Errorf("listing the folders on the mail server: %w", err)
+	}
 	results := make([]error, len(msgs))
 	byFolder := map[string][]int{}
 	for i, m := range msgs {
-		if strings.TrimSpace(m.MessageID) == "" {
-			results[i] = ErrNoMessageID
+		if normID(m.MessageID) == "" || strings.HasSuffix(normID(m.MessageID), "@bichon") {
+			results[i] = ErrNoMessageID // none in the message (the archive made one up): it can't be found on the server
 			continue
 		}
 		byFolder[m.Folder] = append(byFolder[m.Folder], i)
 	}
 	for folder, idx := range byFolder {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 		if _, err := c.Select(folder, false); err != nil {
 			for _, i := range idx {
 				results[i] = fmt.Errorf("opening folder %q on the mail server: %w", folder, err)
@@ -64,10 +66,41 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 			continue
 		}
 		for _, i := range idx {
+			if ctx.Err() != nil {
+				results[i] = ctx.Err() // what was done so far still counts
+				continue
+			}
 			results[i] = deleteOne(c, msgs[i].MessageID, folder, trash)
 		}
 	}
+	// Not in the folder it was archived from: maybe moved since. Only "nowhere" counts as already deleted.
+	for i, m := range msgs {
+		if !errors.Is(results[i], errNotFound) {
+			continue
+		}
+		results[i] = nil
+		for _, f := range folders {
+			if f == m.Folder || f == trash || ctx.Err() != nil {
+				continue
+			}
+			if _, err := c.Select(f, false); err != nil {
+				continue
+			}
+			if err := deleteOne(c, m.MessageID, f, trash); !errors.Is(err, errNotFound) {
+				results[i] = err
+				break
+			}
+		}
+	}
 	return results, nil
+}
+
+// errNotFound: the message isn't in the selected folder.
+var errNotFound = errors.New("not in this folder")
+
+// normID is a Message-ID without its angle brackets and spaces, for comparing.
+func normID(id string) string {
+	return strings.Trim(strings.TrimSpace(id), "<>")
 }
 
 func connect(ctx context.Context, a Account) (*client.Client, error) {
@@ -99,68 +132,101 @@ func connect(ctx context.Context, a Account) (*client.Client, error) {
 }
 
 // trashFolder is the mailbox's Trash: the one marked \Trash (Gmail's "[Gmail]/Trash" in any language),
-// else one with a usual name. "" when there's none.
-func trashFolder(c *client.Client) string {
+// else a top-level folder with a usual name. "" when there's none; an error when the folders couldn't be listed.
+func trashFolder(c *client.Client) (string, []string, error) {
 	ch := make(chan *imap.MailboxInfo, 50)
 	done := make(chan error, 1)
 	go func() { done <- c.List("", "*", ch) }()
-	var named string
-	var marked string
+	var named, marked string
+	var all []string
 	for m := range ch {
+		if !slices.ContainsFunc(m.Attributes, func(a string) bool { return strings.EqualFold(a, imap.NoSelectAttr) }) {
+			all = append(all, m.Name)
+		}
 		for _, attr := range m.Attributes {
 			if strings.EqualFold(attr, imap.TrashAttr) && marked == "" {
 				marked = m.Name
 			}
 		}
 		n := strings.ToLower(m.Name)
-		if m.Delimiter != "" {
-			if i := strings.LastIndex(n, strings.ToLower(m.Delimiter)); i >= 0 {
-				n = n[i+len(m.Delimiter):]
-			}
+		if p := strings.ToLower(m.Delimiter); p != "" && strings.HasPrefix(n, "inbox"+p) {
+			n = strings.TrimPrefix(n, "inbox"+p) // INBOX.Trash counts as top level
 		}
 		if named == "" && (n == "trash" || n == "deleted items" || n == "deleted messages" || n == "bin") {
 			named = m.Name
 		}
 	}
-	if <-done != nil {
-		return ""
+	if err := <-done; err != nil {
+		return "", nil, err
 	}
 	if marked != "" {
-		return marked
+		return marked, all, nil
 	}
-	return named
+	return named, all, nil
+}
+
+// find is the UIDs in the selected folder whose Message-ID is exactly [messageID]. (SEARCH HEADER matches
+// parts of words, so its answer is checked against each message's own Message-ID.)
+func find(c *client.Client, messageID string) ([]uint32, error) {
+	want := normID(messageID)
+	crit := imap.NewSearchCriteria()
+	crit.Header.Add("Message-ID", "<"+want+">")
+	uids, err := c.UidSearch(crit)
+	if err != nil || len(uids) == 0 {
+		return nil, err
+	}
+	set := new(imap.SeqSet)
+	set.AddNum(uids...)
+	ch := make(chan *imap.Message, len(uids))
+	done := make(chan error, 1)
+	go func() { done <- c.UidFetch(set, []imap.FetchItem{imap.FetchUid, imap.FetchEnvelope}, ch) }()
+	var exact []uint32
+	for m := range ch {
+		if m.Envelope != nil && normID(m.Envelope.MessageId) == want {
+			exact = append(exact, m.Uid)
+		}
+	}
+	return exact, <-done
 }
 
 func deleteOne(c *client.Client, messageID, folder, trash string) error {
-	crit := imap.NewSearchCriteria()
-	crit.Header.Add("Message-ID", messageID)
-	uids, err := c.UidSearch(crit)
+	uids, err := find(c, messageID)
 	if err != nil {
 		return fmt.Errorf("finding it on the mail server: %w", err)
 	}
 	if len(uids) == 0 {
-		return nil // already gone from the server
+		return errNotFound
 	}
 	set := new(imap.SeqSet)
 	set.AddNum(uids...)
+	move, _ := c.Support("MOVE")
+	uidplus, _ := c.Support("UIDPLUS")
 	if trash != "" && !strings.EqualFold(folder, trash) {
-		if err := c.UidMove(set, trash); err != nil {
-			return fmt.Errorf("moving it to %s: %w", trash, err)
+		if move {
+			if err := c.UidMove(set, trash); err != nil {
+				return fmt.Errorf("moving it to %s: %w", trash, err)
+			}
+			return nil
 		}
-		return nil
+		if !uidplus {
+			return errors.New("this mail server can't move a single message to Trash safely: delete it in your webmail")
+		}
+		if err := c.UidCopy(set, trash); err != nil {
+			return fmt.Errorf("copying it to %s: %w", trash, err)
+		}
+	} else if !uidplus {
+		// Plain EXPUNGE would also remove every other message marked deleted in this folder.
+		return errors.New("this mail server can't delete a single message safely: delete it in your webmail")
 	}
-	// No Trash folder (or it's already in it): delete for good, touching only this message.
+	// Delete for good (after the copy to Trash, or when there's no Trash), touching only these messages.
 	if err := c.UidStore(set, imap.FormatFlagsOp(imap.AddFlags, true), []any{imap.DeletedFlag}, nil); err != nil {
 		return fmt.Errorf("deleting it: %w", err)
 	}
-	if ok, _ := c.Support("UIDPLUS"); ok {
-		status, err := c.Execute(&uidExpunge{set}, nil)
-		if err == nil {
-			err = status.Err()
-		}
-		return err
+	status, err := c.Execute(&uidExpunge{set}, nil)
+	if err == nil {
+		err = status.Err()
 	}
-	return c.Expunge(nil)
+	return err
 }
 
 // uidExpunge is UID EXPUNGE (RFC 4315): removes only the given messages, not others marked deleted elsewhere.

@@ -28,13 +28,15 @@ func TestDeleteOnARealServer(t *testing.T) {
 	if err := Check(ctx, a); err != nil {
 		t.Fatal(err)
 	}
+	// ICS_IMAP_DELETE is a Message-ID in INBOX; ICS_IMAP_KEEP one that contains it (it must survive).
 	id := os.Getenv("ICS_IMAP_DELETE")
 	before := count(t, a)
-	res, err := Delete(ctx, a, []Message{{Folder: "INBOX", MessageID: id}, {Folder: "INBOX", MessageID: "<not-there@example>"}, {Folder: "INBOX"}})
+	res, err := Delete(ctx, a, []Message{{Folder: "INBOX", MessageID: id}, {Folder: "INBOX", MessageID: "<not-there@example>"}, {Folder: "INBOX"},
+		{Folder: "INBOX", MessageID: "<0008d1c156142de4.1795847262099.7@bichon>"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res[0] != nil || res[1] != nil || res[2] != ErrNoMessageID {
+	if res[0] != nil || res[1] != nil || res[2] != ErrNoMessageID || res[3] != ErrNoMessageID {
 		t.Fatalf("%v", res)
 	}
 	if after := count(t, a); after != before-1 {

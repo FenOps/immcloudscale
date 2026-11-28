@@ -18,15 +18,16 @@ import (
 
 // fakeBichon mimics the parts of Bichon's API the server uses.
 type fakeBichon struct {
-	mu       sync.Mutex
-	nextID   uint64
-	accounts map[uint64]map[string]any // id -> account as created
-	folders  map[uint64][]string       // id -> sync_folders set
-	enabled  map[uint64]bool
-	messages map[uint64][]string // account -> message ids
-	searched [][]uint64          // account_ids of each search
-	deleted  map[uint64][]string
-	token    string
+	mu        sync.Mutex
+	nextID    uint64
+	accounts  map[uint64]map[string]any // id -> account as created
+	folders   map[uint64][]string       // id -> sync_folders set
+	enabled   map[uint64]bool
+	messages  map[uint64][]string // account -> message ids
+	searched  [][]uint64          // account_ids of each search
+	deleted   map[uint64][]string
+	token     string
+	adminPass string
 	// The mail servers: who signed in, what was deleted there, and which messages they refuse.
 	signedIn   []mailserver.Account
 	onServer   []mailserver.Message
@@ -37,7 +38,7 @@ type fakeBichon struct {
 func withBichon(t *testing.T, s *Server) *fakeBichon {
 	t.Helper()
 	f := &fakeBichon{nextID: 1000, accounts: map[uint64]map[string]any{}, folders: map[uint64][]string{}, enabled: map[uint64]bool{},
-		messages: map[uint64][]string{}, deleted: map[uint64][]string{}, token: "api-token", refuse: map[string]bool{}}
+		messages: map[uint64][]string{}, deleted: map[uint64][]string{}, token: "api-token", refuse: map[string]bool{}, adminPass: "bichon-pass"}
 	s.MailCheck = func(_ context.Context, a mailserver.Account) error {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -78,14 +79,22 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		var in map[string]string
 		json.NewDecoder(r.Body).Decode(&in)
-		if in["password"] != "bichon-pass" {
+		f.mu.Lock()
+		pass := f.adminPass
+		f.mu.Unlock()
+		if in["password"] != pass {
 			io.WriteString(w, `{"success":false,"error_message":"Invalid username or password"}`)
 			return
 		}
 		io.WriteString(w, `{"success":true,"access_token":"session","mfa_required":false}`)
 	})
 	mux.HandleFunc("POST /api/v1/access-token", authed(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, f.token) }))
-	mux.HandleFunc("GET /api/v1/current-user", authed(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{}`) }))
+	mux.HandleFunc("GET /api/v1/current-user", authed(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"id":1}`) }))
+	mux.HandleFunc("POST /api/v1/users/1", authed(func(w http.ResponseWriter, r *http.Request) {
+		var in map[string]string
+		json.NewDecoder(r.Body).Decode(&in)
+		f.adminPass = in["password"]
+	}))
 	mux.HandleFunc("GET /api/v1/accounts", authed(func(w http.ResponseWriter, r *http.Request) {
 		items := []map[string]any{}
 		for id, a := range f.accounts {
@@ -159,6 +168,9 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	}))
 	mux.HandleFunc("GET /api/v1/envelope/{account}/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		a, _ := strconv.ParseUint(r.PathValue("account"), 10, 64)
+		if strings.HasPrefix(r.PathValue("id"), "other-") {
+			a = 999 // a message that belongs to another mailbox
+		}
 		json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "account_id": a, "subject": "About " + r.PathValue("id"), "date": 1795847255000,
 			"message_id": "<" + r.PathValue("id") + "@mail.example>", "mailbox_name": "[Gmail]/All Mail"})
 	}))
@@ -456,4 +468,58 @@ func TestMailIsOffUntilConnected(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = state.MailAccount{}
+}
+
+func TestAMessageFromSomeoneElsesMailboxIsRefused(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	f := withBichon(t, s)
+	ctx := context.Background()
+	a, _ := s.AddMail(ctx, "camille", NewMailbox{Email: "camille@gmail.com", Password: "pw"})
+	if _, err := s.ReadMail(ctx, "camille", a.ID, "other-1", false); !errors.Is(err, ErrNotYourMail) {
+		t.Fatal(err)
+	}
+	if _, _, err := s.MailAttachment(ctx, "camille", a.ID, "other-1", "h1"); !errors.Is(err, ErrNotYourMail) {
+		t.Fatal(err)
+	}
+	if _, _, err := s.MailAttachment(ctx, "camille", a.ID, "m1", "not-in-this-message"); err == nil {
+		t.Fatal("an attachment hash from elsewhere was served")
+	}
+	if _, err := s.DeleteMail(ctx, "camille", map[uint64][]string{a.ID: {"other-1"}}); !errors.Is(err, ErrNotYourMail) {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.deleted) != 0 || len(f.onServer) != 0 {
+		t.Fatal("deleted someone else's message")
+	}
+}
+
+func TestBichonsDefaultPasswordIsReplaced(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	f := withBichon(t, s)
+	f.mu.Lock()
+	f.adminPass = "admin@bichon"
+	f.mu.Unlock()
+	pw, err := s.ConnectMail(context.Background(), s.Store.Read().Config.MailURL, "", "admin", "admin@bichon")
+	if err != nil || len(pw) < 16 {
+		t.Fatal(pw, err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.adminPass != pw {
+		t.Fatal("the new password wasn't set")
+	}
+}
+
+func TestDeletingIsLimitedPerRequest(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	withBichon(t, s)
+	a, _ := s.AddMail(context.Background(), "camille", NewMailbox{Email: "camille@gmail.com", Password: "pw"})
+	ids := make([]string, MaxMailDelete+1)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i)
+	}
+	if _, err := s.DeleteMail(context.Background(), "camille", map[uint64][]string{a.ID: ids}); err == nil {
+		t.Fatal("no limit")
+	}
 }

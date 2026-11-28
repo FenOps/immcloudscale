@@ -253,6 +253,7 @@ func (h *Handler) Routes() http.Handler {
 		}
 		defer body.Close()
 		w.Header().Set("Content-Type", "application/octet-stream")
+		// With Content-Length set, a stream that stops early fails on the phone instead of looking complete.
 		if size > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		}
@@ -631,9 +632,17 @@ func writeMailErr(w http.ResponseWriter, err error) {
 		writeErr(w, 404, errors.New("that message isn't in the archive any more"))
 	case errors.As(err, &be):
 		writeErr(w, 502, err) // Bichon refused or failed
+	case errors.Is(err, context.DeadlineExceeded), isNetErr(err):
+		writeErr(w, 503, errors.New("can't reach the email archive (Bichon) on the server: check it's running"))
 	default:
 		writeErr(w, 400, err)
 	}
+}
+
+func isNetErr(err error) bool {
+	var ne net.Error
+	var oe *net.OpError
+	return errors.As(err, &ne) || errors.As(err, &oe)
 }
 
 // sameOriginOnly blocks cross-site requests: browsers resend Basic auth automatically, so without this
