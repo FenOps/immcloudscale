@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,18 +20,24 @@ import (
 
 	"github.com/FenOps/immcloudscale/server/internal/google"
 	"github.com/FenOps/immcloudscale/server/internal/immich"
+	"github.com/FenOps/immcloudscale/server/internal/mailserver"
 	"github.com/FenOps/immcloudscale/server/internal/nextcloud"
 	"github.com/FenOps/immcloudscale/server/internal/stack"
 	"github.com/FenOps/immcloudscale/server/internal/state"
 	"github.com/FenOps/immcloudscale/server/internal/wg"
 )
 
-const Version = "0.4.3"
+const Version = "0.5.0"
 
 const ncAdmin = "ics-admin"
 
 type Server struct {
-	iphoneMu sync.Mutex // see InviteToIPhone
+	iphoneMu sync.Mutex     // see InviteToIPhone
+	bg       sync.WaitGroup // work started in the background (Wait lets tests finish cleanly)
+
+	// Signing in to people's own mailboxes (nil: over IMAP; tests replace them).
+	MailCheck  func(context.Context, mailserver.Account) error
+	MailDelete func(context.Context, mailserver.Account, []mailserver.Message) ([]error, error)
 
 	Store  *state.Store
 	Docker stack.Runner
@@ -460,6 +467,8 @@ func (s *Server) RemoveUser(ctx context.Context, name string) error {
 			}
 		}
 		st.Users = users
+		// Their archived mail stays in Bichon, given to nobody: an admin decides what happens to it.
+		st.Mail = slices.DeleteFunc(st.Mail, func(m state.MailAccount) bool { return m.Person == name })
 		devs := st.Devices[:0]
 		for _, d := range st.Devices {
 			if d.User != name {

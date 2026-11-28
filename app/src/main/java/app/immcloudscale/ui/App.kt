@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Mail
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.AlertDialog
@@ -48,14 +50,14 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.immcloudscale.data.backup.PhoneCopies
 import app.immcloudscale.data.immich.AssetQuery
-import app.immcloudscale.graph
 import app.immcloudscale.data.pairing.PairLink
+import app.immcloudscale.graph
 import app.immcloudscale.ui.account.AccountDialog
+import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.FreeUpPrompt
 import app.immcloudscale.ui.account.GoogleImportScreen
 import app.immcloudscale.ui.account.MembersScreen
 import app.immcloudscale.ui.account.PairLinkDialog
-import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.ServersScreen
 import app.immcloudscale.ui.collections.CollectionDetailScreen
 import app.immcloudscale.ui.collections.CollectionTarget
@@ -67,9 +69,15 @@ import app.immcloudscale.ui.collections.SearchScreen
 import app.immcloudscale.ui.files.FilePreviewScreen
 import app.immcloudscale.ui.files.FilePreviewSession
 import app.immcloudscale.ui.files.FilesScreen
+import app.immcloudscale.ui.mail.MailMessageScreen
+import app.immcloudscale.ui.mail.MailScreen
+import app.immcloudscale.ui.mail.MailSession
+import app.immcloudscale.ui.mail.MailboxesScreen
 import app.immcloudscale.ui.network.NetworkScreen
 import app.immcloudscale.ui.photos.EditorScreen
 import app.immcloudscale.ui.photos.EditorSession
+import app.immcloudscale.ui.photos.LocalViewerScreen
+import app.immcloudscale.ui.photos.PhoneOnlyScreen
 import app.immcloudscale.ui.photos.PhotosScreen
 import app.immcloudscale.ui.photos.ViewerScreen
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +88,7 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
     Photos("Photos", Icons.Outlined.Photo, Icons.Filled.Photo),
     Collections("Collections", Icons.Outlined.PhotoLibrary, Icons.Filled.PhotoLibrary),
     Files("Files", Icons.Outlined.Folder, Icons.Filled.Folder),
+    Mail("Mail", Icons.Outlined.Mail, Icons.Filled.Mail),
     Network("Network", Icons.Outlined.Hub, Icons.Filled.Hub),
 }
 
@@ -91,7 +100,8 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
                 selected = t == current,
                 onClick = { onSelect(t) },
                 icon = { Icon(if (t == current) t.selectedIcon else t.icon, null) },
-                label = { Text(t.label) },
+                // Five tabs: one line each, slightly smaller, so "Collections" doesn't wrap on narrow phones.
+                label = { Text(t.label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelSmall) },
                 colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.secondaryContainer),
             )
         }
@@ -102,6 +112,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
     when (t) {
         CollectionTarget.Duplicates -> return navigate("duplicates")
         CollectionTarget.LockedFolder -> return navigate("locked")
+        CollectionTarget.PhoneOnly -> return navigate("phoneonly")
         else -> Unit
     }
     val (kind, id, title) = when (t) {
@@ -112,7 +123,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
         is CollectionTarget.Album -> Triple("album", t.album.id, t.album.albumName)
         is CollectionTarget.Person -> Triple("person", t.person.id, t.person.name.ifBlank { "Unnamed person" })
         is CollectionTarget.Place -> Triple("place", t.city, t.city)
-        CollectionTarget.Duplicates, CollectionTarget.LockedFolder -> return
+        CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly -> return
     }
     navigate("collection/$kind?id=${Uri.encode(id)}&title=${Uri.encode(title)}")
 }
@@ -160,6 +171,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                         onSetup = { nav.navigate("servers") },
                         onOpenNetwork = { tab = Tab.Network },
                         bottomPadding = bottom,
+                        onOpenLocal = { nav.navigate("localviewer") },
                     )
                     Tab.Collections -> CollectionsScreen(
                         onOpen = { nav.openCollection(it) },
@@ -173,6 +185,13 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                         onPreview = { FilePreviewSession.file = it; nav.navigate("file") },
                         onAccount = { account = true },
                         onSetup = { nav.navigate("servers") },
+                        bottomPadding = bottom,
+                    )
+                    Tab.Mail -> MailScreen(
+                        onOpen = { MailSession.item = it; nav.navigate("mailmessage") },
+                        onMailboxes = { nav.navigate("mailboxes") },
+                        onAccount = { account = true },
+                        accountName = name,
                         bottomPadding = bottom,
                     )
                     Tab.Network -> NetworkScreen(onAccount = { account = true }, bottomPadding = bottom)
@@ -206,6 +225,10 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
+        composable("phoneonly") { PhoneOnlyScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("localviewer") }) }
+        composable("localviewer") { LocalViewerScreen(onBack = { nav.popBackStack() }) }
+        composable("mailmessage") { MailMessageScreen(onBack = { nav.popBackStack() }) }
+        composable("mailboxes") { MailboxesScreen(onBack = { nav.popBackStack() }) }
         composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }, onOpenBackup = { nav.navigate("backup") }) }
         composable("duplicates") { DuplicatesScreen(onBack = { nav.popBackStack() }) }
         composable("locked") { LockedFolderScreen(onBack = { nav.popBackStack() }) }

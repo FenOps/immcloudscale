@@ -405,6 +405,37 @@ Files → **Google Takeout**.)
 reminds you every few days): turn off **Google Photos backup** on every phone, stop **Google Drive for desktop** on
 your computers, and check everything arrived before deleting anything in Google.
 
+## Email archive (optional)
+
+Keep a searchable copy of everyone's email on your server: Gmail, Yahoo, iCloud or any mailbox with IMAP
+(for example one at your web host). Outlook.com and Hotmail no longer let other apps sign in with a password, so
+they can't be archived yet. Each person sees only their own mailboxes, in the app's **Mail** tab.
+The archive itself is [Bichon](https://github.com/rustmailer/bichon), which runs next to ImmCloudScale.
+
+**1. Install Bichon on the server (once).** With Docker already there (ImmCloudScale installed it):
+```bash
+sudo mkdir -p /opt/bichon /srv/bichon && sudo chown 1000:1000 /srv/bichon
+echo "BICHON_ENCRYPT_PASSWORD=$(openssl rand -base64 24)" | sudo tee /opt/bichon/.env >/dev/null
+sudo chmod 600 /opt/bichon/.env
+sudo docker run -d --name bichon --restart unless-stopped --user 1000:1000 -p 127.0.0.1:15630:15630 \
+  -v /srv/bichon:/data -e BICHON_ROOT_DIR=/data --env-file /opt/bichon/.env rustmailer/bichon:2.4.4
+```
+Only the server itself can reach it this way (`127.0.0.1`). To use Bichon's own web page too, publish the port
+on your network instead (`-p 15630:15630`) and open `http://<server>:15630` (user `admin`).
+
+**2. Connect ImmCloudScale to it:** `sudo ics-server mail connect`. It asks for Bichon's admin password (`admin@bichon`
+on a new install) and keeps only an access token. If Bichon still has that default password, it's replaced by a
+random one, shown once: save it.
+
+**3. Add mailboxes** in the app: **Mail → Mailboxes → Add a mailbox**. Gmail, Yahoo and iCloud need an
+**app password**, not the normal one (the app explains where to make one). Other providers list their incoming
+(IMAP) server in their help pages. Admins can add a mailbox for someone else, and give out mailboxes that were
+added in Bichon's own page (`sudo ics-server mail` lists them).
+
+**Deleting** an email in the app deletes it from the server and from the mailbox it came from (into the provider's
+Trash where there is one: Gmail keeps it there for 30 days). That's why the server keeps each mailbox's password, in
+`/var/lib/immcloudscale/state.json` (readable only by root).
+
 ## Troubleshooting
 
 | Problem | What to do |

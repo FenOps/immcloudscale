@@ -106,6 +106,25 @@ type Config struct {
 	// The person's own Google API key (a "Desktop app" OAuth client), needed to read Google Drive.
 	GoogleClientID     string `json:"googleClientId,omitempty"`
 	GoogleClientSecret string `json:"googleClientSecret,omitempty"`
+
+	// The Bichon email archive next to this server (see core.ConnectMail) and the API token it gave the server.
+	MailURL   string `json:"mailUrl,omitempty"`
+	MailToken string `json:"mailToken,omitempty"`
+}
+
+// MailAccount is a mailbox archived in Bichon and whose it is; only that person sees it.
+type MailAccount struct {
+	ID            uint64    `json:"id"`
+	Person        string    `json:"person"`
+	Email         string    `json:"email"`
+	Added         time.Time `json:"added"`
+	FoldersChosen bool      `json:"foldersChosen,omitempty"`
+	// How the server signs in to the mailbox itself, to delete there what's deleted in the app.
+	IMAPHost     string `json:"imapHost,omitempty"`
+	IMAPPort     int    `json:"imapPort,omitempty"`
+	IMAPSecurity string `json:"imapSecurity,omitempty"`
+	IMAPLogin    string `json:"imapLogin,omitempty"`
+	IMAPPassword string `json:"imapPassword,omitempty"`
 }
 
 // GoogleAccount is a Google account whose Drive is copied into a person's files.
@@ -143,6 +162,7 @@ type State struct {
 	Requests []JoinRequest   `json:"joinRequests,omitempty"`
 	Google   []GoogleAccount `json:"google,omitempty"`
 	Imports  []TakeoutImport `json:"takeoutImports,omitempty"`
+	Mail     []MailAccount   `json:"mail,omitempty"`
 }
 
 // Store serialises access to the state file.

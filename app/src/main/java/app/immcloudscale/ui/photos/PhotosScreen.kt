@@ -140,6 +140,7 @@ fun PhotosScreen(
     onSetup: () -> Unit,
     bottomPadding: PaddingValues,
     onOpenNetwork: () -> Unit = {},
+    onOpenLocal: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val g = ctx.graph
@@ -203,6 +204,7 @@ fun PhotosScreen(
         onOpenViewer = onOpenViewer,
         topBar = topBar,
         bottomPadding = bottomPadding,
+        onOpenLocal = onOpenLocal,
         header = if (st.memories.isEmpty()) null else ({
             item(key = "memories", span = { GridItemSpan(maxLineSpan) }) {
                 MemoriesRow(st.memories, { g.immich.thumbnailUrl(it, preview = true) }) { m ->

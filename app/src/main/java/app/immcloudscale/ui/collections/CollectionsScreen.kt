@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PeopleOutline
 import androidx.compose.material.icons.outlined.PhotoAlbum
 import androidx.compose.material.icons.outlined.VideoLibrary
@@ -121,6 +122,7 @@ sealed interface CollectionTarget {
     data object Videos : CollectionTarget
     data object Duplicates : CollectionTarget
     data object LockedFolder : CollectionTarget
+    data object PhoneOnly : CollectionTarget
     data class Album(val album: AlbumDto) : CollectionTarget
     data class Person(val person: PersonDto) : CollectionTarget
     data class Place(val city: String) : CollectionTarget
@@ -193,6 +195,7 @@ fun CollectionsContent(
                     Triple(Icons.Outlined.DeleteOutline, "Trash", CollectionTarget.Trash),
                     Triple(Icons.Outlined.ContentCopy, "Duplicates", CollectionTarget.Duplicates),
                     Triple(Icons.Outlined.Lock, "Locked folder", CollectionTarget.LockedFolder),
+                    Triple(Icons.Outlined.PhoneAndroid, "On this phone only", CollectionTarget.PhoneOnly),
                 )
                 items(quick, key = { it.second }) { (icon, label, target) -> QuickTile(icon, label) { onOpen(target) } }
 

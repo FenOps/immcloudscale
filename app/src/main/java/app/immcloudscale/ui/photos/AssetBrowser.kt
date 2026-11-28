@@ -54,6 +54,7 @@ fun AssetBrowser(
     emptyBody: String = "Photos and videos you back up will show up here",
     header: (LazyGridScope.() -> Unit)? = null,
     bottomPadding: PaddingValues = PaddingValues(0.dp),
+    onOpenLocal: (() -> Unit)? = null, // opens LocalViewerScreen; else the phone's gallery shows photos not backed up
 ) {
     val ctx = LocalContext.current
     val g = ctx.graph
@@ -116,7 +117,12 @@ fun AssetBrowser(
                     selected = st.selected,
                     thumbUrl = { it.localUri ?: g.immich.thumbnailUrl(it.id) },
                     onOpen = { a: AssetDto ->
-                        if (a.isLocal) {
+                        if (a.isLocal && onOpenLocal != null) {
+                            val local = st.assets.filter { it.isLocal }
+                            LocalViewerSession.items = local
+                            LocalViewerSession.start = local.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                            onOpenLocal()
+                        } else if (a.isLocal) {
                             // Only on this phone so far: the phone's own viewer shows it.
                             if (!explainedLocal) {
                                 explainedLocal = true

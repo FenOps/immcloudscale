@@ -14,12 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"golang.org/x/term"
 
 	"github.com/FenOps/immcloudscale/server/internal/core"
 	"github.com/FenOps/immcloudscale/server/internal/netinfo"
@@ -47,6 +49,8 @@ Usage: ics-server <command> [options]
   tailscale             remote access through Tailscale: show it, or store a key so the app
                         joins without signing in            [--auth-key --control-url --remove-key]
   iphone <person>       how to set up an iPhone or iPad (the Immich, Nextcloud and Tailscale apps)
+  mail                  the email archive (Bichon): show it, or connect this server to it
+                        [connect --url --user | --token] [assign <mailbox-id> <person>]
   google-key            store the Google API key that Import from Google uses
                                                             [--client-id --client-secret]
   admin-password        print the admin console password
@@ -169,6 +173,8 @@ func main() {
 		tailscaleCmd(s, args[1:])
 	case "google-key":
 		googleKeyCmd(s, args[1:])
+	case "mail":
+		mailCmd(ctx, s, args[1:])
 	case "iphone":
 		if len(args) < 2 {
 			fail("usage: ics-server iphone <person>")
@@ -484,6 +490,7 @@ func serve(ctx context.Context, s *core.Server, args []string) {
 	srv := &http.Server{Addr: *addr, Handler: web.New(s).Routes(), ReadHeaderTimeout: 10 * time.Second}
 	go s.GoogleWorker(ctx)
 	go s.IPhoneInviteWorker(ctx)
+	go s.MailWorker(ctx)
 	go func() {
 		<-ctx.Done()
 		sctx, c := context.WithTimeout(context.Background(), 5*time.Second)
@@ -614,6 +621,64 @@ func googleKeyCmd(s *core.Server, args []string) {
 	}
 	check(s.SetGoogleKey(*id, *secret))
 	fmt.Println("Saved. In the app: Account, Import from Google, Connect a Google account.")
+}
+
+// mailCmd shows the email archive, connects the server to Bichon, or gives a mailbox to someone.
+func mailCmd(ctx context.Context, s *core.Server, args []string) {
+	if len(args) > 0 && args[0] == "connect" {
+		fs := flag.NewFlagSet("mail connect", flag.ExitOnError)
+		url := fs.String("url", core.DefaultMailURL, "where Bichon answers")
+		user := fs.String("user", "admin", "a Bichon administrator to sign in as (asks for the password)")
+		token := fs.String("token", "", "a Bichon API token to use instead of signing in")
+		check(fs.Parse(args[1:]))
+		pass := ""
+		if *token == "" {
+			fmt.Printf("Bichon password for %s: ", *user)
+			p, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Println()
+			check(err)
+			pass = string(p)
+		}
+		newPass, err := s.ConnectMail(ctx, *url, *token, *user, pass)
+		if newPass != "" { // shown even if connecting failed afterwards: the old password doesn't work any more
+			fmt.Printf("Bichon still had its default password, so it was changed. Its %s password is now:\n  %s\nSave it (a password manager is best): it isn't shown again.\n", *user, newPass)
+		}
+		check(err)
+		fmt.Println("Connected. In the app: Mail, then Add a mailbox. Mailboxes already in Bichon are listed for admins to give to someone.")
+		return
+	}
+	if len(args) == 3 && args[0] == "assign" {
+		id, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			fail("usage: ics-server mail assign <mailbox-id> <person>")
+		}
+		check(s.AssignMail(ctx, id, strings.ToLower(args[2])))
+		fmt.Printf("%s now sees mailbox %d in the app.\n", args[2], id)
+		return
+	}
+	if len(args) > 0 {
+		fail("usage: ics-server mail [connect --url --user | --token] [assign <mailbox-id> <person>]")
+	}
+	st := s.Store.Read()
+	if st.Config.MailToken == "" {
+		fmt.Println("Not connected to an email archive. Install Bichon (INSTALL.md, Email archive), then run:")
+		fmt.Println("  sudo ics-server mail connect")
+		return
+	}
+	m := s.MailStatus(ctx, "", true)
+	if !m.Reachable {
+		fmt.Printf("Bichon at %s doesn't answer (or the token stopped working; run `sudo ics-server mail connect` again).\n", st.Config.MailURL)
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tMAILBOX\tPERSON\tMESSAGES")
+	for _, x := range st.Mail {
+		fmt.Fprintf(w, "%d\t%s\t%s\t\n", x.ID, x.Email, x.Person)
+	}
+	for _, x := range m.Unassigned {
+		fmt.Fprintf(w, "%d\t%s\t(nobody: ics-server mail assign %d <person>)\t%d\n", x.ID, x.Email, x.ID, x.Count)
+	}
+	w.Flush()
 }
 
 // tailscaleCmd shows remote access through Tailscale and stores the key phones join with.

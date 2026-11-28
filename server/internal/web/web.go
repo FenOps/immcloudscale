@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/FenOps/immcloudscale/server/internal/bichon"
 	"github.com/FenOps/immcloudscale/server/internal/core"
 	"github.com/FenOps/immcloudscale/server/internal/state"
 )
@@ -157,6 +159,126 @@ func (h *Handler) Routes() http.Handler {
 			return
 		}
 		w.WriteHeader(204)
+	}))
+	// Email archive: each person sees and searches only their own mailboxes (kept in Bichon on this NAS).
+	mux.Handle("GET /api/v1/me/mail", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		writeJSON(w, 200, h.S.MailStatus(r.Context(), u.Name, u.IsAdmin))
+	}))
+	mux.Handle("POST /api/v1/me/mail/accounts", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in core.NewMailbox
+		if !readJSON(w, r, &in) {
+			return
+		}
+		owner := strings.ToLower(strings.TrimSpace(in.For))
+		if owner == "" {
+			owner = u.Name
+		}
+		if owner != u.Name && !u.IsAdmin {
+			writeErr(w, 403, core.ErrNotAdmin)
+			return
+		}
+		a, err := h.S.AddMail(r.Context(), owner, in)
+		if err != nil {
+			writeMailErr(w, err)
+			return
+		}
+		writeJSON(w, 201, a)
+	}))
+	mux.Handle("POST /api/v1/me/mail/accounts/{id}/pause", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ Paused bool }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		id, ok := mailID(w, r.PathValue("id"))
+		if ok {
+			writeMailErr(w, h.S.PauseMail(r.Context(), u.Name, id, in.Paused))
+		}
+	}))
+	mux.Handle("POST /api/v1/me/mail/accounts/{id}/password", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ Password string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if id, ok := mailID(w, r.PathValue("id")); ok {
+			writeMailErr(w, h.S.SetMailPassword(r.Context(), u.Name, id, in.Password))
+		}
+	}))
+	mux.Handle("DELETE /api/v1/me/mail/accounts/{id}", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		if id, ok := mailID(w, r.PathValue("id")); ok {
+			writeMailErr(w, h.S.RemoveMail(r.Context(), u.Name, id))
+		}
+	}))
+	mux.Handle("POST /api/v1/manage/mail/accounts/{id}/assign", h.deviceAuth(true, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct{ Person string }
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if id, ok := mailID(w, r.PathValue("id")); ok {
+			writeMailErr(w, h.S.AssignMail(r.Context(), id, strings.ToLower(strings.TrimSpace(in.Person))))
+		}
+	}))
+	mux.Handle("POST /api/v1/me/mail/search", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var q core.MailQuery
+		if !readJSON(w, r, &q) {
+			return
+		}
+		p, err := h.S.SearchMail(r.Context(), u.Name, q)
+		if err != nil {
+			writeMailErr(w, err)
+			return
+		}
+		writeJSON(w, 200, p)
+	}))
+	mux.Handle("GET /api/v1/me/mail/messages/{account}/{id}", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		account, ok := mailID(w, r.PathValue("account"))
+		if !ok {
+			return
+		}
+		m, err := h.S.ReadMail(r.Context(), u.Name, account, r.PathValue("id"), r.URL.Query().Get("remote") == "1")
+		if err != nil {
+			writeMailErr(w, err)
+			return
+		}
+		writeJSON(w, 200, m)
+	}))
+	mux.Handle("GET /api/v1/me/mail/messages/{account}/{id}/attachments/{hash}", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		account, ok := mailID(w, r.PathValue("account"))
+		if !ok {
+			return
+		}
+		body, size, err := h.S.MailAttachment(r.Context(), u.Name, account, r.PathValue("id"), r.PathValue("hash"))
+		if err != nil {
+			writeMailErr(w, err)
+			return
+		}
+		defer body.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		// With Content-Length set, a stream that stops early fails on the phone instead of looking complete.
+		if size > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		}
+		_, _ = io.Copy(w, body)
+	}))
+	mux.Handle("POST /api/v1/me/mail/delete", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
+		var in struct {
+			Messages []struct {
+				Account uint64 `json:"account,string"`
+				ID      string `json:"id"`
+			} `json:"messages"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		ids := map[uint64][]string{}
+		for _, m := range in.Messages {
+			ids[m.Account] = append(ids[m.Account], m.ID)
+		}
+		res, err := h.S.DeleteMail(r.Context(), u.Name, ids)
+		if err != nil {
+			writeMailErr(w, err)
+			return
+		}
+		writeJSON(w, 200, res)
 	}))
 	// Moving away from Google: each person connects their own accounts; admins add the Google API key.
 	mux.Handle("GET /api/v1/me/google", h.deviceAuth(false, func(w http.ResponseWriter, r *http.Request, u state.User) {
@@ -481,6 +603,40 @@ func (h *Handler) deviceAuth(adminOnly bool, next func(http.ResponseWriter, *htt
 		}
 		next(w, r, u)
 	})
+}
+
+func mailID(w http.ResponseWriter, s string) (uint64, bool) {
+	id, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		writeErr(w, 400, errors.New("bad mailbox id"))
+		return 0, false
+	}
+	return id, true
+}
+
+// writeMailErr answers 204 for nil, else a status that says whose fault it was.
+func writeMailErr(w http.ResponseWriter, err error) {
+	var be *bichon.APIError
+	switch {
+	case err == nil:
+		w.WriteHeader(204)
+	case errors.Is(err, core.ErrNotYourMail):
+		writeErr(w, 404, err) // the same as a mailbox that doesn't exist: nothing to learn about others'
+	case errors.Is(err, core.ErrNoPerson):
+		writeErr(w, 404, err)
+	case errors.Is(err, core.ErrMailNotSetUp):
+		writeErr(w, 503, err)
+	case errors.Is(err, core.ErrNeedMailPassword):
+		writeErr(w, 409, err)
+	case errors.As(err, &be) && be.Status == 404:
+		writeErr(w, 404, errors.New("that message isn't in the archive any more"))
+	case errors.As(err, &be):
+		writeErr(w, 502, err) // Bichon refused or failed
+	case errors.As(err, new(*bichon.UnreachableError)):
+		writeErr(w, 503, errors.New("can't reach the email archive (Bichon) on the server: check it's running"))
+	default:
+		writeErr(w, 400, err) // includes the mailbox's own server not answering (a typo in its address, say)
+	}
 }
 
 // sameOriginOnly blocks cross-site requests: browsers resend Basic auth automatically, so without this

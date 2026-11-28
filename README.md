@@ -47,6 +47,7 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 ### Photos (Immich)
 * Google Photos-style timeline: day headers with place names, square tiles, video durations, favourite hearts, infinite scroll, pull to refresh
 * A scroll handle for dragging through the library, showing the month passed
+* "On this phone only": every photo and video not backed up yet, from any folder, to view or back up now
 * Pinch the grid to change the number of columns (2–7)
 * **Memories** ("1 year ago…") carousel at the top
 * Long-press to select, tap a date to select the whole day; then share, create a public link, add to an album (or a new one), favourite, archive or move to trash
@@ -84,6 +85,11 @@ All 14 screens are in [docs/screenshots](docs/screenshots). They are rendered fr
 * Admins send an invite from Members: the Immich app, the server address and a temporary password that works for
   15 minutes; Immich then asks for a permanent one
 * The admin console and `ics-server iphone <person>` also set up Files (Nextcloud) with a QR code
+
+### Mail
+* A searchable archive of your email on your own server (Gmail, Yahoo, iCloud or any IMAP mailbox),
+  kept by Bichon; each family member sees only their own mailboxes
+* Read emails with tracking images blocked, open attachments, delete (from the server and the mailbox)
 
 ### Across the app
 * Google-style account card: who you are on each server, backup status, photo and file storage bars, remote access
