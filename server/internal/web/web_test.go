@@ -373,3 +373,36 @@ func TestIPhoneInvitesComeFromAnAdminPhone(t *testing.T) {
 		t.Fatalf("Photos down: %d", c)
 	}
 }
+
+func TestMailNeedsAPhoneAndSaysWhenItIsntSetUp(t *testing.T) {
+	s, h := newServerAndHandler(t)
+	s.Store.Update(func(st *state.State) error {
+		st.Devices = []state.Device{{ID: "dev_a", User: "camille", TokenHash: hashForTest("secret")}}
+		return nil
+	})
+	call := func(method, path, body, secret string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Device dev_a:"+secret)
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+	if c := call("GET", "/api/v1/me/mail", "", "wrong").Code; c != 401 {
+		t.Fatalf("no phone login: %d", c)
+	}
+	if rec := call("GET", "/api/v1/me/mail", "", "secret"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"configured":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if c := call("POST", "/api/v1/me/mail/search", `{"text":"tax"}`, "secret").Code; c != 503 {
+		t.Fatalf("search before Bichon is connected: %d", c)
+	}
+	if c := call("GET", "/api/v1/me/mail/messages/12/abc", "", "secret").Code; c != 404 {
+		t.Fatalf("someone else's (or no) mailbox: %d", c)
+	}
+	if c := call("POST", "/api/v1/manage/mail/accounts/12/assign", `{"person":"camille"}`, "secret").Code; c != 403 {
+		t.Fatalf("a member gave out a mailbox: %d", c)
+	}
+}

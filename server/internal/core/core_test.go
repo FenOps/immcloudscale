@@ -269,6 +269,7 @@ func newTestServer(t *testing.T) (*Server, *fakeServices, *fakeWG) {
 		NextcloudURL: func(state.Config) string { return nc.URL },
 		Now:          time.Now, Log: log.New(io.Discard, "", 0), WaitTimeout: 5 * time.Second,
 	}
+	t.Cleanup(s.bg.Wait) // runs before the temporary folder is removed
 	err = s.Setup(context.Background(), SetupOptions{
 		DataDir: filepath.Join(dir, "data"), StackDir: filepath.Join(dir, "stack"), LANAddress: "192.168.1.50",
 		LANSubnet: "192.168.1.0/24", EgressIface: "eth0", Endpoint: "home.example.org", FirstUser: "camille", FirstEmail: "camille@example.com",
