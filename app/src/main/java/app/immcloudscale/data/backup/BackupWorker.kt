@@ -30,6 +30,7 @@ import app.immcloudscale.MainActivity
 import app.immcloudscale.data.AppSettings
 import app.immcloudscale.data.HttpException
 import app.immcloudscale.data.immich.BulkCheckItem
+import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.ui.components.formatBytes
 import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -158,7 +159,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         try {
             for (batch in media.chunked(30)) {
                 // Files that can't be read (deleted meanwhile, no permission) are skipped, not fatal.
-                val sums = batch.mapNotNull { m -> runCatching { m to sha1(m) }.onFailure { if (!permanent(it)) throw it }.getOrNull() }.toMap()
+                val sums = batch.mapNotNull { m -> runCatching { m to PhoneUpload.sha1(applicationContext, m) }.onFailure { if (!PhoneUpload.permanent(it)) throw it }.getOrNull() }.toMap()
                 skipped += batch.size - sums.size
                 val results = if (sums.isEmpty()) emptyMap() else
                     app.graph.immich.bulkUploadCheck(sums.map { (m, sum) -> BulkCheckItem(m.id.toString(), sum) }).associateBy { it.id }
@@ -168,13 +169,13 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     if (sum != null && results[m.id.toString()]?.action != "reject") {
                         try {
                             app.graph.immich.upload(
-                                file = contentBody(m), fileName = uploadName(m), deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
+                                file = PhoneUpload.contentBody(applicationContext, m), fileName = PhoneUpload.uploadName(m), deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
                                 createdAt = Instant.ofEpochMilli(m.dateTaken), modifiedAt = Instant.ofEpochMilli(m.dateModified.takeIf { it > 0 } ?: m.dateTaken),
                                 checksum = sum,
                             )
                             uploaded++
                         } catch (e: Exception) {
-                            if (!permanent(e)) throw e // network trouble or server error: retry later from here
+                            if (!PhoneUpload.permanent(e)) throw e // network trouble or server error: retry later from here
                             skipped++ // unsupported/unreadable file: skip it so it can't block every later backup
                         }
                     }
@@ -241,40 +242,6 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .setAutoCancel(true)
             .build()
         runCatching { nm.notify(id, n) }
-    }
-
-    /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
-    private fun permanent(e: Throwable): Boolean = when (e) {
-        is FileNotFoundException, is SecurityException -> true
-        is HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
-        else -> false
-    }
-
-    /** MediaStore names sometimes lack an extension, which Immich needs to know the file type. */
-    private fun uploadName(m: LocalMedia): String {
-        if ('.' in m.name.substringAfterLast('/')) return m.name
-        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(m.mime)
-        return if (ext != null) "${m.name}.$ext" else m.name
-    }
-
-    private fun sha1(m: LocalMedia): String {
-        val md = MessageDigest.getInstance("SHA-1")
-        val stream = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
-        stream.use { input ->
-            val buf = ByteArray(256 * 1024)
-            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
-        }
-        return md.digest().joinToString("") { "%02x".format(it) }
-    }
-
-    private fun contentBody(m: LocalMedia) = object : RequestBody() {
-        override fun contentType() = m.mime.toMediaTypeOrNull()
-        // Unknown length (chunked): MediaStore's SIZE can be stale, and a mismatch fails the upload.
-        override fun contentLength() = -1L
-        override fun writeTo(sink: BufferedSink) {
-            val input = applicationContext.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
-            input.source().use { sink.writeAll(it) }
-        }
     }
 
     private fun foreground(done: Int, total: Int): ForegroundInfo {
@@ -353,6 +320,55 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 OneTimeWorkRequestBuilder<BackupWorker>()
                     .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build(),
             )
+        }
+    }
+}
+
+/** Uploading one phone photo or video to Immich, the way backup does it (also for "Back up now" on chosen ones). */
+object PhoneUpload {
+    /** Uploads [m] unless the server already has it; false when it was already there. */
+    suspend fun upload(context: Context, immich: ImmichClient, m: LocalMedia, deviceId: String): Boolean {
+        val sum = sha1(context, m)
+        if (immich.bulkUploadCheck(listOf(BulkCheckItem(m.id.toString(), sum))).firstOrNull()?.action == "reject") return false
+        immich.upload(
+            file = contentBody(context, m), fileName = uploadName(m), deviceAssetId = "${m.id}-${m.size}", deviceId = deviceId,
+            createdAt = Instant.ofEpochMilli(m.dateTaken), modifiedAt = Instant.ofEpochMilli(m.dateModified.takeIf { it > 0 } ?: m.dateTaken),
+            checksum = sum,
+        )
+        return true
+    }
+
+    /** True for problems retrying won't fix: the file is gone or unreadable, or the server refuses it (4xx except auth). */
+    fun permanent(e: Throwable): Boolean = when (e) {
+        is FileNotFoundException, is SecurityException -> true
+        is HttpException -> e.code in 400..499 && e.code != 401 && e.code != 403 && e.code != 408 && e.code != 429
+        else -> false
+    }
+
+    /** MediaStore names sometimes lack an extension, which Immich needs to know the file type. */
+    fun uploadName(m: LocalMedia): String {
+        if ('.' in m.name.substringAfterLast('/')) return m.name
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(m.mime)
+        return if (ext != null) "${m.name}.$ext" else m.name
+    }
+
+    fun sha1(context: Context, m: LocalMedia): String {
+        val md = MessageDigest.getInstance("SHA-1")
+        val stream = context.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
+        stream.use { input ->
+            val buf = ByteArray(256 * 1024)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun contentBody(context: Context, m: LocalMedia) = object : RequestBody() {
+        override fun contentType() = m.mime.toMediaTypeOrNull()
+        // Unknown length (chunked): MediaStore's SIZE can be stale, and a mismatch fails the upload.
+        override fun contentLength() = -1L
+        override fun writeTo(sink: BufferedSink) {
+            val input = context.contentResolver.openInputStream(m.uri) ?: throw FileNotFoundException("${m.uri}")
+            input.source().use { sink.writeAll(it) }
         }
     }
 }

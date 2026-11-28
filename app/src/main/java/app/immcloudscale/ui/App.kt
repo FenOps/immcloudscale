@@ -76,6 +76,8 @@ import app.immcloudscale.ui.mail.MailboxesScreen
 import app.immcloudscale.ui.network.NetworkScreen
 import app.immcloudscale.ui.photos.EditorScreen
 import app.immcloudscale.ui.photos.EditorSession
+import app.immcloudscale.ui.photos.LocalViewerScreen
+import app.immcloudscale.ui.photos.PhoneOnlyScreen
 import app.immcloudscale.ui.photos.PhotosScreen
 import app.immcloudscale.ui.photos.ViewerScreen
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +100,8 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
                 selected = t == current,
                 onClick = { onSelect(t) },
                 icon = { Icon(if (t == current) t.selectedIcon else t.icon, null) },
-                label = { Text(t.label) },
+                // Five tabs: one line each, slightly smaller, so "Collections" doesn't wrap on narrow phones.
+                label = { Text(t.label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelSmall) },
                 colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.secondaryContainer),
             )
         }
@@ -109,6 +112,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
     when (t) {
         CollectionTarget.Duplicates -> return navigate("duplicates")
         CollectionTarget.LockedFolder -> return navigate("locked")
+        CollectionTarget.PhoneOnly -> return navigate("phoneonly")
         else -> Unit
     }
     val (kind, id, title) = when (t) {
@@ -119,7 +123,7 @@ private fun NavHostController.openCollection(t: CollectionTarget) {
         is CollectionTarget.Album -> Triple("album", t.album.id, t.album.albumName)
         is CollectionTarget.Person -> Triple("person", t.person.id, t.person.name.ifBlank { "Unnamed person" })
         is CollectionTarget.Place -> Triple("place", t.city, t.city)
-        CollectionTarget.Duplicates, CollectionTarget.LockedFolder -> return
+        CollectionTarget.Duplicates, CollectionTarget.LockedFolder, CollectionTarget.PhoneOnly -> return
     }
     navigate("collection/$kind?id=${Uri.encode(id)}&title=${Uri.encode(title)}")
 }
@@ -167,6 +171,7 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                         onSetup = { nav.navigate("servers") },
                         onOpenNetwork = { tab = Tab.Network },
                         bottomPadding = bottom,
+                        onOpenLocal = { nav.navigate("localviewer") },
                     )
                     Tab.Collections -> CollectionsScreen(
                         onOpen = { nav.openCollection(it) },
@@ -220,6 +225,8 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
+        composable("phoneonly") { PhoneOnlyScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("localviewer") }) }
+        composable("localviewer") { LocalViewerScreen(onBack = { nav.popBackStack() }) }
         composable("mailmessage") { MailMessageScreen(onBack = { nav.popBackStack() }) }
         composable("mailboxes") { MailboxesScreen(onBack = { nav.popBackStack() }) }
         composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }, onOpenBackup = { nav.navigate("backup") }) }

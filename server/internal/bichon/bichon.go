@@ -115,6 +115,20 @@ func (c *Client) CreateToken(ctx context.Context, name string) (string, error) {
 	return strings.Trim(tok, `"`), err
 }
 
+// DefaultPassword is the admin password Bichon starts with.
+const DefaultPassword = "admin@bichon"
+
+// ChangeMyPassword sets a new password for the signed-in user.
+func (c *Client) ChangeMyPassword(ctx context.Context, password string) error {
+	var me struct {
+		ID uint64 `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/current-user", nil, &me); err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/users/%d", me.ID), map[string]string{"password": password}, nil)
+}
+
 // Check is nil when the token works.
 func (c *Client) Check(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/api/v1/current-user", nil, nil)

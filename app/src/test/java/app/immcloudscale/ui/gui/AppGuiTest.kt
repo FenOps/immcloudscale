@@ -268,7 +268,34 @@ class AppGuiTest {
             compose.onNodeWithContentDescription("Clear selection").performClick()
             settle(800)
 
+            tab("Mail")
+            settle(1500)
+            shot("35-mail")
+            compose.onNodeWithText("Your tax return documents").performClick()
+            settle(1500)
+            shot("36-mail-message")
+            compose.onNodeWithContentDescription("Back").performClick()
+            settle(800)
+            compose.onNodeWithText("Weekly offers").performTouchInput { longClick() }
+            compose.onNodeWithText("1 selected").assertExists()
+            compose.onNodeWithContentDescription("Delete").performClick()
+            compose.onNodeWithText("Delete 1 email?").assertExists()
+            compose.onNodeWithText("They're deleted from your NAS and from camille.martin@gmail.com. Gmail keeps them in its Trash for 30 days.").assertExists()
+            shot("37-mail-delete")
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithContentDescription("Clear selection").performClick()
+            compose.onNodeWithContentDescription("Mailboxes").performClick()
+            settle(1500)
+            shot("38-mailboxes")
+            pressBack()
+            settle(800)
+
             tab("Collections")
+            compose.onNodeWithText("On this phone only").performClick()
+            settle(1500)
+            shot("41-phone-only")
+            pressBack()
+            settle(800)
             compose.onNodeWithText("Duplicates").performClick()
             shot("23-duplicates")
             pressBack()
@@ -295,6 +322,16 @@ class AppGuiTest {
             tab("Collections")
             compose.onNodeWithText("Duplicates").performClick()
             shot("31-duplicates-dark")
+            pressBack()
+            settle(800)
+            // Last: with this dialog open the test harness never reports idle, so the shot is taken without waiting.
+            tab("Mail")
+            settle(1500)
+            compose.onNodeWithContentDescription("Mailboxes").performClick()
+            settle(1500)
+            compose.onNodeWithText("Add a mailbox", useUnmergedTree = true).performClick()
+            repeat(20) { shadowOf(Looper.getMainLooper()).idle(); compose.mainClock.advanceTimeBy(100); Thread.sleep(50) }
+            captureScreenRoboImage("$out/39-add-mailbox.png", RoborazziOptions(taskType = RoborazziTaskType.Record))
         }
     }
 

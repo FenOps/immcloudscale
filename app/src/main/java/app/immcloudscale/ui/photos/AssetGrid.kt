@@ -89,6 +89,7 @@ fun AssetGrid(
     state: LazyGridState = rememberLazyGridState(),
     contentPadding: PaddingValues = PaddingValues(0.dp),
     header: (LazyGridScope.() -> Unit)? = null,
+    selectLocal: Boolean = false, // photos only on the phone can be picked too (to back them up)
 ) {
     val selecting = selected.isNotEmpty()
     val currentColumns by rememberUpdatedState(columns)
@@ -153,7 +154,7 @@ fun AssetGrid(
             header?.invoke(this)
             sections.forEach { section ->
                 item(key = "h-${section.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
-                    DayHeader(section, selecting, section.assets.filter { !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
+                    DayHeader(section, selecting, section.assets.filter { selectLocal || !it.isLocal }.let { r -> r.isNotEmpty() && r.all { it.id in selected } }) { onSelectDay(section) }
                 }
                 items(section.assets, key = { it.id }, contentType = { "tile" }) { a ->
                     AssetTile(
@@ -162,6 +163,7 @@ fun AssetGrid(
                         selecting = selecting,
                         selected = a.id in selected,
                         small = columns >= 6,
+                        selectLocal = selectLocal,
                         modifier = Modifier.animateItem().combinedClickable(
                             onClick = { if (selecting) onToggle(a) else onOpen(a) },
                             onLongClick = { onToggle(a) },
@@ -229,6 +231,7 @@ fun AssetTile(
     selected: Boolean,
     modifier: Modifier = Modifier,
     small: Boolean = false,
+    selectLocal: Boolean = false,
 ) {
     val inset by animateDpAsState(if (selected) 14.dp else 0.dp, label = "inset")
     val label = (if (asset.isVideo) "Video" else "Photo") + ", " + asset.localDate() +
@@ -244,7 +247,7 @@ fun AssetTile(
             thumbhash = asset.thumbhash,
         )
         if (asset.isLocal) {
-            if (selecting) Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.5f))) // can't be selected
+            if (selecting && !selectLocal) Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.5f))) // can't be selected
             Icon(
                 Icons.Outlined.CloudOff, null, tint = Color.White,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(if (small) 3.dp else 6.dp).size(if (small) 14.dp else 20.dp)
@@ -265,7 +268,7 @@ fun AssetTile(
                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp + inset).size(16.dp),
             )
         }
-        if (selecting && !asset.isLocal) {
+        if (selecting && (!asset.isLocal || selectLocal)) {
             Box(Modifier.align(Alignment.TopStart).padding(6.dp)) {
                 if (selected) SelectCircle(true, Modifier.size(22.dp))
                 else Box(Modifier.size(22.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).background(Color(0x33000000)))

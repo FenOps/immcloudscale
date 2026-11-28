@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Mail
@@ -22,14 +23,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -243,9 +241,8 @@ private fun MailboxRow(m: Mailbox, menu: @Composable (close: () -> Unit) -> Unit
 }
 
 /** Adds a mailbox: the provider fills in its server; any other provider needs its IMAP server. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddMailboxDialog(people: List<String>, me: String, onDismiss: () -> Unit, onAdd: (NewMailbox) -> Unit) {
+internal fun AddMailboxDialog(people: List<String>, me: String, onDismiss: () -> Unit, onAdd: (NewMailbox) -> Unit) {
     var email by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
     var provider by remember { mutableStateOf(MailProvider.Gmail) }
@@ -307,17 +304,19 @@ private fun AddMailboxDialog(people: List<String>, me: String, onDismiss: () -> 
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** A read-only field that opens a list to pick from. */
 @Composable
 private fun Picker(label: String, value: String, options: List<String>, onPick: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(open, { open = it }) {
+    Box {
         OutlinedTextField(
             value, {}, readOnly = true, label = { Text(label) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+            modifier = Modifier.fillMaxWidth(),
         )
-        ExposedDropdownMenu(open, { open = false }) {
+        // Over the field, so a tap anywhere on it opens the list.
+        Box(Modifier.matchParentSize().clickable(onClickLabel = "Choose $label") { open = true })
+        DropdownMenu(open, { open = false }) {
             options.forEachIndexed { i, o -> DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onPick(i) }) }
         }
     }

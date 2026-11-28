@@ -57,6 +57,20 @@ class FakeHomeServer {
 
     fun shutdown() = server.shutdown()
 
+    private data class Mail(val id: String, val account: String, val mailbox: String, val subject: String, val preview: String,
+                            val from: String, val fromName: String, val hoursAgo: Long, val attachments: Int = 0) {
+        val date: String get() = Instant.now().minusSeconds(hoursAgo * 3600).toString()
+        fun json() = """{"id":"$id","account":"$account","mailbox":"$mailbox","subject":"$subject","preview":"$preview","from":"$from","fromName":"$fromName","date":"$date","attachments":$attachments}"""
+    }
+    private val mails = listOf(
+        Mail("m1", "101", "camille.martin@gmail.com", "Your tax return documents", "Here are the papers for 2025, ready to sign.", "nina@accounting.example", "Nina Duval", 2, 1),
+        Mail("m2", "102", "camille@martin-family.com", "Sunday lunch at Mamie's", "Everyone is coming at noon, bring dessert!", "lea@martin-family.com", "Léa", 5),
+        Mail("m3", "101", "camille.martin@gmail.com", "Flight confirmation: Lisbon", "Your booking is confirmed. Departure Friday 08:40.", "booking@airline.example", "TAP Air", 30, 1),
+        Mail("m4", "101", "camille.martin@gmail.com", "Photos from the beach", "I put the best ones in our shared album.", "hugo@martin-family.com", "Hugo", 52),
+        Mail("m5", "102", "camille@martin-family.com", "Electricity bill for November", "Your bill of 64.20 EUR is available.", "billing@energy.example", "Energy Co", 120, 1),
+        Mail("m6", "101", "camille.martin@gmail.com", "Weekly offers", "Up to 40% off this week only.", "news@shop.example", "Shop", 200),
+    )
+
     private fun json(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
     private fun render(key: String, w: Int, h: Int, draw: (Painter) -> Unit) {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -141,6 +155,24 @@ class FakeHomeServer {
                 {"name":"camille","email":"camille@example.com","isAdmin":true,"devices":2},
                 {"name":"tom","email":"tom@example.com","isAdmin":false,"devices":1},
                 {"name":"mamie","email":"mamie@example.com","isAdmin":false,"devices":1}]""")
+            path == "/api/v1/me/mail" -> json("""{"configured":true,"reachable":true,"accounts":[
+                {"id":"101","email":"camille.martin@gmail.com","person":"camille","count":18234,"bytes":5368709120,"lastSync":"${Instant.now().minusSeconds(600)}","deletesOnServer":true},
+                {"id":"102","email":"camille@martin-family.com","person":"camille","count":2410,"bytes":734003200,"syncing":true,"deletesOnServer":true}],
+                "unassigned":[{"id":"103","email":"hugo@martin-family.com","count":512,"bytes":104857600}]}""")
+            path == "/api/v1/me/mail/search" -> {
+                val q = r.body.readUtf8()
+                json("""{"items":[""" + mails.filter { m -> "\"text\":\"\"" in q || m.subject.contains("tax", true) }
+                    .filter { m -> "\"hasAttachment\":true" !in q || m.attachments > 0 }
+                    .joinToString(",") { it.json() } + """],"total":${mails.size},"page":1,"more":false}""")
+            }
+            path.startsWith("/api/v1/me/mail/messages/") -> {
+                val m = mails.first { it.id == path.split("/")[7] }
+                json("""{"id":"${m.id}","account":"${m.account}","mailbox":"${m.mailbox}","subject":"${m.subject}","from":"${m.from}","fromName":"${m.fromName}",
+                    "to":["camille.martin@gmail.com"],"date":"${m.date}","hasRemote":true,
+                    "html":"<h2 style='font-family:sans-serif'>${m.subject}</h2><p style='font-family:sans-serif;font-size:16px'>${m.preview}</p><p style='font-family:sans-serif;font-size:16px'>Best,<br>${m.fromName}</p>",
+                    "attachmentList":[${if (m.attachments > 0) """{"filename":"tax-return-2025.pdf","file_type":"application/pdf","size":1204000,"content_hash":"h1","inline":false}""" else ""}]}""")
+            }
+            path == "/api/v1/me/mail/delete" -> json("""{"deleted":1,"failed":[]}""")
             path == "/api/v1/manage/features" -> json("""{"machineLearning":true,"memoryGB":3.2,"applying":false}""")
             path == "/api/v1/manage/invites" -> json("""[{"name":"nina","code":"Q4TR-7KXD","expires":"${Instant.now().plusSeconds(11 * 60)}","createdBy":"camille"}]""")
             path.startsWith("/api/v1/manage/users/") && path.endsWith("/pair") -> {

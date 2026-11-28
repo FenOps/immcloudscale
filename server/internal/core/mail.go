@@ -49,8 +49,9 @@ const DefaultMailURL = "http://127.0.0.1:15630"
 func (s *Server) bichon(c state.Config) *bichon.Client { return bichon.New(c.MailURL, c.MailToken) }
 
 // ConnectMail saves how to reach Bichon. With a user and password it signs in and makes an API token for
-// the server (the password itself isn't kept); with a token it uses that.
-func (s *Server) ConnectMail(ctx context.Context, url, token, user, password string) error {
+// the server (the password itself isn't kept); with a token it uses that. If the password was Bichon's
+// default, it's replaced by a random one, returned so it can be shown once.
+func (s *Server) ConnectMail(ctx context.Context, url, token, user, password string) (newPassword string, err error) {
 	url = strings.TrimRight(strings.TrimSpace(url), "/")
 	if url == "" {
 		url = DefaultMailURL
@@ -59,18 +60,25 @@ func (s *Server) ConnectMail(ctx context.Context, url, token, user, password str
 	if token == "" {
 		sess, err := b.Login(ctx, user, password)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b.Token = sess
 		if token, err = b.CreateToken(ctx, "ImmCloudScale server"); err != nil {
-			return fmt.Errorf("creating a Bichon API token: %w", err)
+			return "", fmt.Errorf("creating a Bichon API token: %w", err)
+		}
+		if password == bichon.DefaultPassword {
+			// Anyone who can reach Bichon knows the default: replace it now.
+			newPassword = state.Secret(18)
+			if err := b.ChangeMyPassword(ctx, newPassword); err != nil {
+				return "", fmt.Errorf("changing Bichon's default password: %w", err)
+			}
 		}
 	}
 	b.Token = token
 	if err := b.Check(ctx); err != nil {
-		return fmt.Errorf("Bichon at %s doesn't accept the token: %w", url, err)
+		return newPassword, fmt.Errorf("Bichon at %s doesn't accept the token: %w", url, err)
 	}
-	return s.Store.Update(func(st *state.State) error {
+	return newPassword, s.Store.Update(func(st *state.State) error {
 		st.Config.MailURL, st.Config.MailToken = url, token
 		return nil
 	})

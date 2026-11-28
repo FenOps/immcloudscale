@@ -638,11 +638,12 @@ func mailCmd(ctx context.Context, s *core.Server, args []string) {
 			fmt.Println()
 			check(err)
 			pass = string(p)
-			if pass == "admin@bichon" {
-				fail("that's Bichon's default password: change it in Bichon's web page first (anyone on your network could use it)")
-			}
 		}
-		check(s.ConnectMail(ctx, *url, *token, *user, pass))
+		newPass, err := s.ConnectMail(ctx, *url, *token, *user, pass)
+		check(err)
+		if newPass != "" {
+			fmt.Printf("Bichon still had its default password, so it was changed. Its %s password is now:\n  %s\nSave it (a password manager is best): it isn't shown again.\n", *user, newPass)
+		}
 		fmt.Println("Connected. In the app: Mail, then Add a mailbox. Mailboxes already in Bichon are listed for admins to give to someone.")
 		return
 	}

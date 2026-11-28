@@ -184,7 +184,7 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	t.Cleanup(s.bg.Wait) // background folder setup finishes before the fake goes away
-	if err := s.ConnectMail(context.Background(), srv.URL, "", "admin", "bichon-pass"); err != nil {
+	if _, err := s.ConnectMail(context.Background(), srv.URL, "", "admin", "bichon-pass"); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -204,7 +204,7 @@ func TestConnectingKeepsATokenNotThePassword(t *testing.T) {
 	if c.MailToken != f.token || strings.Contains(fmtState(t, s), "bichon-pass") {
 		t.Fatalf("token %q", c.MailToken)
 	}
-	if err := s.ConnectMail(context.Background(), c.MailURL, "", "admin", "wrong"); err == nil {
+	if _, err := s.ConnectMail(context.Background(), c.MailURL, "", "admin", "wrong"); err == nil {
 		t.Fatal("a wrong password connected")
 	}
 }
