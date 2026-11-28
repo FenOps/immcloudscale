@@ -3,6 +3,9 @@ package app.immcloudscale.ui.photos
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -35,16 +38,16 @@ class PhoneTrashTest {
         compose.setContent { ConfirmDeleteForever(2, onDismiss = {}) { confirmed = true } }
         compose.onNodeWithText("Delete 2 items for good?").assertExists()
         compose.onNodeWithText("They're removed from your phone now and can't be restored. Anything that isn't backed up is gone for good.").assertExists()
-        org.junit.Assert.assertFalse(confirmed) // nothing happens before the button
+        assertFalse(confirmed) // nothing happens before the button
         compose.onNodeWithText("Delete for good").performClick()
         assertTrue(confirmed)
     }
 
     @Test fun daysLeftRoundUp() {
         val now = 1_800_000_000_000L
-        org.junit.Assert.assertEquals(1L, daysLeft(now / 1000 + 3600, now)) // an hour left: "1 day"
-        org.junit.Assert.assertEquals(30L, daysLeft(now / 1000 + 29 * 86400 + 60, now))
-        org.junit.Assert.assertEquals(null, daysLeft(0, now)) // unknown
+        assertEquals(1L, daysLeft(now / 1000 + 3600, now)) // an hour left: "1 day"
+        assertEquals(30L, daysLeft(now / 1000 + 29 * 86400 + 60, now))
+        assertNull(daysLeft(0, now)) // unknown
     }
 
     @Test fun trashedPhotosAreRememberedForEveryScreen() {
