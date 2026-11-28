@@ -3,7 +3,9 @@ package bichon
 import (
 	"context"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"testing"
 )
 
@@ -74,6 +76,16 @@ func TestAgainstARealBichon(t *testing.T) {
 	}
 }
 
+func TestSyncProblemsAreShort(t *testing.T) {
+	gmail := `Failed to connect to or list the IMAP server's mailboxes: Generic { message: "No(\n \"code: None, info: Some(\\\"[AUTHENTICATIONFAILED] Invalid credentials (Failure)\\\")\",\n)", code: ImapAuthenticationFailed }`
+	if got := syncProblem(gmail); got != "the mail server refused the password (Gmail, Yahoo and iCloud need an app password)" {
+		t.Fatal(got)
+	}
+	if got := syncProblem("plain"); got != "plain" {
+		t.Fatal(got)
+	}
+}
+
 func TestBichonsErrorsAreShortened(t *testing.T) {
 	for in, want := range map[string]string{
 		`Internal Server Error: Generic { message: "Valid access token not found", location: Location { file: "x.rs" } }`:                                                        "Valid access token not found",
@@ -83,5 +95,36 @@ func TestBichonsErrorsAreShortened(t *testing.T) {
 		if got := readable(in); got != want {
 			t.Errorf("%q: got %q", in, got)
 		}
+	}
+}
+
+// Adds, changes and removes a mailbox on a real Bichon, with a test IMAP server:
+// also set ICS_BICHON_IMAP=host:port ICS_BICHON_IMAP_USER=... ICS_BICHON_IMAP_PASS=...
+func TestAddingAMailboxOnARealBichon(t *testing.T) {
+	url, imapAddr := os.Getenv("ICS_BICHON_TEST"), os.Getenv("ICS_BICHON_IMAP")
+	if url == "" || imapAddr == "" {
+		t.Skip("set ICS_BICHON_TEST and ICS_BICHON_IMAP to run against a real Bichon")
+	}
+	ctx := context.Background()
+	c := New(url, "")
+	sess, err := c.Login(ctx, os.Getenv("ICS_BICHON_USER"), os.Getenv("ICS_BICHON_PASS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Token = sess
+	host, port, _ := net.SplitHostPort(imapAddr)
+	p, _ := strconv.Atoi(port)
+	m := IMAP{Host: host, Port: p, Security: "None", Login: os.Getenv("ICS_BICHON_IMAP_USER"), Password: os.Getenv("ICS_BICHON_IMAP_PASS")}
+	a, err := c.AddAccount(ctx, "added-by-test@example.org", "test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.DeleteAccount(context.Background(), a.ID)
+	m.Password += "-changed"
+	if err := c.SetPassword(ctx, a.ID, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetFolders(ctx, a.ID, []string{"INBOX"}); err != nil {
+		t.Fatal(err)
 	}
 }

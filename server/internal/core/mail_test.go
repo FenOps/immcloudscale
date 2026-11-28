@@ -105,6 +105,10 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	mux.HandleFunc("POST /api/v1/account", authed(func(w http.ResponseWriter, r *http.Request) {
 		var a map[string]any
 		json.NewDecoder(r.Body).Decode(&a)
+		if a["account_type"] == "IMAP" && a["download_interval_min"] == nil && a["download_schedule"] == nil {
+			http.Error(w, `{"code":10000,"message":"`+"`sync_interval_min` or `download_schedule` is required for IMAP account type"+`"}`, 400)
+			return
+		}
 		f.nextID++
 		f.accounts[f.nextID] = a
 		f.enabled[f.nextID] = true
@@ -116,6 +120,9 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 		json.NewDecoder(r.Body).Decode(&a)
 		if v, ok := a["enabled"].(bool); ok {
 			f.enabled[id] = v
+		}
+		if v, ok := a["imap"].(map[string]any); ok {
+			f.accounts[id]["imap"] = v
 		}
 		if v, ok := a["sync_folders"].([]any); ok {
 			f.folders[id] = nil
@@ -438,6 +445,12 @@ func TestAdminsGiveOutMailboxesAddedInBichon(t *testing.T) {
 	}
 	if err := s.SetMailPassword(ctx, "nina", 77, "right"); err != nil {
 		t.Fatal(err)
+	}
+	f.mu.Lock()
+	gotPass := f.accounts[77]["imap"].(map[string]any)["auth"].(map[string]any)["password"]
+	f.mu.Unlock()
+	if gotPass != "right" {
+		t.Fatalf("Bichon still copies with the old password: %v", gotPass)
 	}
 	if st := s.MailStatus(ctx, "nina", false); !st.Accounts[0].DeletesOnServer {
 		t.Fatalf("%+v", st)

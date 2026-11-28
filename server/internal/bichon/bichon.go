@@ -208,12 +208,26 @@ func (c *Client) AddAccount(ctx context.Context, email, name string, m IMAP) (Ac
 	err := c.do(ctx, http.MethodPost, "/api/v1/account", map[string]any{
 		"email": email, "login_name": m.Login, "account_name": name, "enabled": true, "account_type": "IMAP",
 		"use_dangerous": false, "auto_download_new_mailboxes": true,
+		"download_interval_min": CheckEveryMinutes, // Bichon refuses an IMAP mailbox without it
 		"imap": map[string]any{
 			"host": m.Host, "port": m.Port, "encryption": m.Security,
 			"auth": map[string]any{"auth_type": "Password", "password": m.Password},
 		},
 	}, &a)
 	return a, err
+}
+
+// CheckEveryMinutes is how often Bichon looks for new mail in each mailbox.
+const CheckEveryMinutes = 15
+
+// SetPassword changes the password Bichon signs in to the mailbox with.
+func (c *Client) SetPassword(ctx context.Context, id uint64, m IMAP) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/account/%d", id), map[string]any{
+		"imap": map[string]any{
+			"host": m.Host, "port": m.Port, "encryption": m.Security,
+			"auth": map[string]any{"auth_type": "Password", "password": m.Password},
+		},
+	}, nil)
 }
 
 // SetEnabled pauses or resumes downloading a mailbox (its archive stays).
@@ -289,15 +303,34 @@ func (c *Client) Stats(ctx context.Context, id uint64) (Stats, error) {
 		last := dl.History[n-1]
 		out.LastSync = time.UnixMilli(last.End)
 		if last.Status != "Success" {
-			out.LastError = last.Status
+			msg := last.Status
 			if last.Message != nil && *last.Message != "" {
-				out.LastError = *last.Message
+				msg = *last.Message
 			} else if len(last.Errors) > 0 {
-				out.LastError = fmt.Sprint(last.Errors[0])
+				msg = fmt.Sprint(last.Errors[0])
 			}
+			out.LastError = syncProblem(msg)
 		}
 	}
 	return out, nil
+}
+
+// syncProblem says in a few words why a mailbox couldn't be copied (Bichon's own messages are Rust debug dumps).
+func syncProblem(msg string) string {
+	m := strings.ToLower(msg)
+	switch {
+	case strings.Contains(m, "authenticationfailed") || strings.Contains(m, "invalid credentials") || strings.Contains(m, "login failed"):
+		return "the mail server refused the password (Gmail, Yahoo and iCloud need an app password)"
+	case strings.Contains(m, "timed out") || strings.Contains(m, "timeout"):
+		return "the mail server didn't answer in time"
+	case strings.Contains(m, "dns") || strings.Contains(m, "lookup") || strings.Contains(m, "connection refused"):
+		return "couldn't reach the mail server: check its address"
+	}
+	short := readable(msg)
+	if len(short) > 160 {
+		short = short[:160] + "…"
+	}
+	return short
 }
 
 // Search is what to look for; zero fields don't filter.

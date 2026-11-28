@@ -586,8 +586,8 @@ func (s *Server) MailAttachment(ctx context.Context, person string, account uint
 	return body, n, err
 }
 
-// SetMailPassword saves the password of [person]'s mailbox (one added in Bichon's own page), so deleting
-// in the app deletes on the mail server too. The rest of the settings come from Bichon.
+// SetMailPassword saves a new password for [person]'s mailbox, both for copying (in Bichon) and for deleting on
+// the mail server (here). The rest of the settings come from Bichon.
 func (s *Server) SetMailPassword(ctx context.Context, person string, id uint64, password string) error {
 	if err := s.ownsMail(person, id); err != nil {
 		return err
@@ -612,6 +612,10 @@ func (s *Server) SetMailPassword(ctx context.Context, person string, id uint64, 
 	}
 	if err := s.checkMailbox(ctx, m); err != nil {
 		return err
+	}
+	// Bichon copies the mail with it too: a new app password fixes copying as well as deleting.
+	if err := b.SetPassword(ctx, id, bichon.IMAP{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password}); err != nil {
+		return fmt.Errorf("saving the password in the archive: %w", err)
 	}
 	return s.Store.Update(func(st *state.State) error {
 		for i := range st.Mail {
