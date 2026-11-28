@@ -53,8 +53,8 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 	byFolder := map[string][]int{}
 	for i, m := range msgs {
 		// Bichon makes up "…@bichon" ids for messages that have none.
-		if normID(m.MessageID) == "" || strings.HasSuffix(normID(m.MessageID), "@bichon") {
-			results[i] = ErrNoMessageID // none in the message (the archive made one up): it can't be found on the server
+		if id := normID(m.MessageID); id == "" || strings.HasSuffix(id, "@bichon") {
+			results[i] = ErrNoMessageID
 			continue
 		}
 		byFolder[m.Folder] = append(byFolder[m.Folder], i)

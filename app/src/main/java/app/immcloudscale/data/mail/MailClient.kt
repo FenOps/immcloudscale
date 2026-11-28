@@ -15,6 +15,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 @Serializable data class Mailbox(
@@ -137,9 +139,9 @@ class MailClient(private val http: OkHttpClient, private val settings: () -> App
             r.body!!.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
             if (size > 0 && tmp.length() != size) {
                 tmp.delete()
-                throw java.io.IOException("The download stopped early: try again")
+                throw IOException("The download stopped early: try again")
             }
-            if (!tmp.renameTo(into)) throw java.io.IOException("Couldn't save the attachment")
+            if (!tmp.renameTo(into)) throw IOException("Couldn't save the attachment")
         }
     }
 
@@ -149,7 +151,7 @@ class MailClient(private val http: OkHttpClient, private val settings: () -> App
         return parse(call("POST", "/api/v1/me/mail/delete", body, slow))
     }
 
-    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
     private fun signed(path: String): Request.Builder {
         val s = settings()
