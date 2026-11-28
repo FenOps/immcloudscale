@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.immcloudscale.AppGraph
 import app.immcloudscale.data.HttpException
+import app.immcloudscale.data.mail.MailDeleteFail
 import app.immcloudscale.data.mail.MailDeleteResult
 import app.immcloudscale.data.mail.MailItem
 import app.immcloudscale.data.mail.MailQuery
@@ -98,25 +99,25 @@ class MailViewModel(private val g: AppGraph) : ViewModel() {
         if (messages.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(deleting = true) }
+            var deleted = 0
+            val failed = mutableListOf<MailDeleteFail>()
+            // Each part's result is shown as it comes, so a later part failing doesn't hide what was done.
+            fun apply(part: List<Pair<String, String>>, r: MailDeleteResult) {
+                val bad = r.failed.mapTo(HashSet()) { "${it.account}/${it.id}" }
+                val gone = part.map { "${it.first}/${it.second}" }.filterTo(HashSet()) { it !in bad }
+                deleted += r.deleted
+                failed += r.failed
+                _state.update { s -> s.copy(items = s.items.filter { it.key() !in gone }, selected = s.selected - gone) }
+            }
+            fun summary() = when {
+                failed.isEmpty() -> if (deleted == 1) "Email deleted" else "$deleted emails deleted"
+                deleted == 0 -> "Couldn't delete: ${failed.first().error}"
+                else -> "$deleted deleted, ${failed.size} couldn't be: ${failed.first().error}"
+            }
             try {
-                // In parts: the server takes up to 100 at a time, and each part is answered before the phone gives up.
-                var r = MailDeleteResult()
-                for (part in messages.chunked(50)) {
-                    val p = g.mail.delete(part)
-                    r = MailDeleteResult(r.deleted + p.deleted, r.failed + p.failed)
-                }
-                val failed = r.failed.mapTo(HashSet()) { "${it.account}/${it.id}" }
-                val gone = messages.map { "${it.first}/${it.second}" }.filterTo(HashSet()) { it !in failed }
-                _state.update { s ->
-                    s.copy(
-                        items = s.items.filter { it.key() !in gone }, selected = s.selected - gone, deleting = false,
-                        message = when {
-                            r.failed.isEmpty() -> if (r.deleted == 1) "Email deleted" else "${r.deleted} emails deleted"
-                            r.deleted == 0 -> "Couldn't delete: ${r.failed.first().error}"
-                            else -> "${r.deleted} deleted, ${r.failed.size} couldn't be: ${r.failed.first().error}"
-                        },
-                    )
-                }
+                // In parts: the server takes up to 100 at a time.
+                for (part in messages.chunked(50)) apply(part, g.mail.delete(part))
+                _state.update { it.copy(deleting = false, message = summary()) }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 // 409: a mailbox added in Bichon's own page, whose password the server doesn't have yet.
@@ -124,7 +125,8 @@ class MailViewModel(private val g: AppGraph) : ViewModel() {
                 val needs = if (e is HttpException && e.code == 409) {
                     _state.value.status?.accounts?.firstOrNull { it.id in picked && !it.deletesOnServer }?.id ?: messages.first().first
                 } else null
-                _state.update { it.copy(deleting = false, needPassword = needs, message = if (needs == null) e.message ?: "Couldn't delete" else null) }
+                val done = if (deleted > 0) "${summary()}. " else ""
+                _state.update { it.copy(deleting = false, needPassword = needs, message = if (needs == null) done + (e.message ?: "Couldn't delete") else done.ifBlank { null }) }
             }
         }
     }

@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -220,11 +221,13 @@ fun PhoneOnlyScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     val perms = mediaPermissions()
     fun granted(p: String) = ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
     var allowed by remember { mutableStateOf(perms.any(::granted)) }
-    var denied by remember { mutableStateOf(false) } // refused for good: only Settings can change it
+    var denied by rememberSaveable { mutableStateOf(false) } // refused for good: only Settings can change it
     var confirmAll by remember { mutableStateOf(false) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
         allowed = r.values.any { it }
-        denied = !allowed
+        // Android asks again after a first "Don't allow"; once it stops showing a reason, it won't ask any more.
+        val activity = ctx.findActivity()
+        denied = !allowed && activity != null && perms.none { activity.shouldShowRequestPermissionRationale(it) }
     }
     // Back from Settings with access given (or taken away).
     LifecycleResumeEffect(Unit) {
@@ -350,6 +353,15 @@ private fun ConfirmBackUp(n: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) 
         confirmButton = { TextButton(onClick = onConfirm) { Text("Back up") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var c = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 private fun mediaPermissions(): Array<String> = when {

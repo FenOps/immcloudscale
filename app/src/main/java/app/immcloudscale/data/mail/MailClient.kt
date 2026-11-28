@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 @Serializable data class Mailbox(
     val id: String,
@@ -99,6 +100,8 @@ data class MailQuery(val text: String = "", val account: String? = null, val has
  */
 class MailClient(private val http: OkHttpClient, private val settings: () -> AppSettings) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
+    // Deleting signs in to the mail server and looks through its folders: give it as long as the server allows.
+    private val slow by lazy { http.newBuilder().readTimeout(10, TimeUnit.MINUTES).build() }
 
     suspend fun status(): MailStatus = parse(call("GET", "/api/v1/me/mail"))
     suspend fun add(m: NewMailbox): Mailbox = parse(call("POST", "/api/v1/me/mail/accounts", json.encodeToString(NewMailbox.serializer(), m)))
@@ -143,7 +146,7 @@ class MailClient(private val http: OkHttpClient, private val settings: () -> App
     /** Deletes from the mail server (to its Trash where it has one) and then from the archive. */
     suspend fun delete(messages: List<Pair<String, String>>): MailDeleteResult {
         val body = messages.joinToString(",", """{"messages":[""", "]}") { (a, id) -> """{"account":"$a","id":${json.encodeToString(id)}}""" }
-        return parse(call("POST", "/api/v1/me/mail/delete", body))
+        return parse(call("POST", "/api/v1/me/mail/delete", body, slow))
     }
 
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
@@ -156,9 +159,9 @@ class MailClient(private val http: OkHttpClient, private val settings: () -> App
         return Request.Builder().url(s.pairedServer.trimEnd('/') + path).header("Authorization", "Device ${s.pairedDeviceId}:${s.deviceToken}")
     }
 
-    private suspend fun call(method: String, path: String, body: String? = null): String = withContext(Dispatchers.IO) {
+    private suspend fun call(method: String, path: String, body: String? = null, client: OkHttpClient = http): String = withContext(Dispatchers.IO) {
         val req = signed(path).method(method, (body ?: if (method == "POST") "{}" else null)?.toRequestBody("application/json".toMediaType())).build()
-        http.newCall(req).execute().use { r ->
+        client.newCall(req).execute().use { r ->
             val text = r.body?.string().orEmpty()
             if (!r.isSuccessful) throw HttpException(r.code, errorOf(text, r.code))
             text
