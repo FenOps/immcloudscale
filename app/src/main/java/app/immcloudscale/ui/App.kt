@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Mail
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.AlertDialog
@@ -48,14 +50,14 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.immcloudscale.data.backup.PhoneCopies
 import app.immcloudscale.data.immich.AssetQuery
-import app.immcloudscale.graph
 import app.immcloudscale.data.pairing.PairLink
+import app.immcloudscale.graph
 import app.immcloudscale.ui.account.AccountDialog
+import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.FreeUpPrompt
 import app.immcloudscale.ui.account.GoogleImportScreen
 import app.immcloudscale.ui.account.MembersScreen
 import app.immcloudscale.ui.account.PairLinkDialog
-import app.immcloudscale.ui.account.BackupScreen
 import app.immcloudscale.ui.account.ServersScreen
 import app.immcloudscale.ui.collections.CollectionDetailScreen
 import app.immcloudscale.ui.collections.CollectionTarget
@@ -67,6 +69,10 @@ import app.immcloudscale.ui.collections.SearchScreen
 import app.immcloudscale.ui.files.FilePreviewScreen
 import app.immcloudscale.ui.files.FilePreviewSession
 import app.immcloudscale.ui.files.FilesScreen
+import app.immcloudscale.ui.mail.MailMessageScreen
+import app.immcloudscale.ui.mail.MailScreen
+import app.immcloudscale.ui.mail.MailSession
+import app.immcloudscale.ui.mail.MailboxesScreen
 import app.immcloudscale.ui.network.NetworkScreen
 import app.immcloudscale.ui.photos.EditorScreen
 import app.immcloudscale.ui.photos.EditorSession
@@ -80,6 +86,7 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
     Photos("Photos", Icons.Outlined.Photo, Icons.Filled.Photo),
     Collections("Collections", Icons.Outlined.PhotoLibrary, Icons.Filled.PhotoLibrary),
     Files("Files", Icons.Outlined.Folder, Icons.Filled.Folder),
+    Mail("Mail", Icons.Outlined.Mail, Icons.Filled.Mail),
     Network("Network", Icons.Outlined.Hub, Icons.Filled.Hub),
 }
 
@@ -175,6 +182,13 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
                         onSetup = { nav.navigate("servers") },
                         bottomPadding = bottom,
                     )
+                    Tab.Mail -> MailScreen(
+                        onOpen = { MailSession.item = it; nav.navigate("mailmessage") },
+                        onMailboxes = { nav.navigate("mailboxes") },
+                        onAccount = { account = true },
+                        accountName = name,
+                        bottomPadding = bottom,
+                    )
                     Tab.Network -> NetworkScreen(onAccount = { account = true }, bottomPadding = bottom)
                 }
             }
@@ -206,6 +220,8 @@ fun App(sharedUris: List<Uri>, onSharedHandled: () -> Unit, pairLink: PairLink? 
         }
         composable("file") { FilePreviewScreen(onBack = { nav.popBackStack() }) }
         composable("members") { MembersScreen(onBack = { nav.popBackStack() }) }
+        composable("mailmessage") { MailMessageScreen(onBack = { nav.popBackStack() }) }
+        composable("mailboxes") { MailboxesScreen(onBack = { nav.popBackStack() }) }
         composable("google") { GoogleImportScreen(onBack = { nav.popBackStack() }, onOpenBackup = { nav.navigate("backup") }) }
         composable("duplicates") { DuplicatesScreen(onBack = { nav.popBackStack() }) }
         composable("locked") { LockedFolderScreen(onBack = { nav.popBackStack() }) }

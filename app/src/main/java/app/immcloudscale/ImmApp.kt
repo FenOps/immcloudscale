@@ -18,6 +18,7 @@ import app.immcloudscale.data.buildHttpClient
 import app.immcloudscale.data.immich.ImmichClient
 import app.immcloudscale.data.immich.TimelineCache
 import app.immcloudscale.data.nextcloud.NextcloudClient
+import app.immcloudscale.data.mail.MailClient
 import app.immcloudscale.data.pairing.MembersClient
 import app.immcloudscale.data.pairing.PairLink
 import app.immcloudscale.data.pairing.Pairing
@@ -88,6 +89,7 @@ class AppGraph(val context: Context) {
         withContext(Dispatchers.IO) { loader.diskCache?.clear() }
     }
     val members = MembersClient(http) { settingsState.value }
+    val mail = MailClient(http) { settingsState.value }
 
     /** Pairs with an ImmCloudScale server, which answers with Immich, Nextcloud and remote access settings for this phone. */
     suspend fun pairWithServer(server: String, code: String) {
