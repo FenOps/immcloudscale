@@ -68,7 +68,8 @@ func (s *Server) ConnectMail(ctx context.Context, url, token, user, password str
 			// (so the token below can't be one the change cancels).
 			pw := state.Secret(18)
 			if err := b.ChangeMyPassword(ctx, pw); err != nil {
-				return "", fmt.Errorf("changing Bichon's default password: %w", err)
+				// The change may have gone through even so: show the new password in case it did.
+				return pw, fmt.Errorf("changing Bichon's default password (it may have changed to the one shown; if not, the old one still works): %w", err)
 			}
 			newPassword = pw
 			if b.Token, err = b.Login(ctx, user, pw); err != nil {
@@ -214,7 +215,7 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 		return MailAccountStatus{}, errors.New("the password (or app password) is missing")
 	}
 	m := bichon.IMAP{Host: strings.TrimSpace(in.Host), Port: in.Port, Login: strings.TrimSpace(in.Login), Password: in.Password}
-	if _, d, _ := strings.Cut(email, "@"); slices.Contains([]string{"outlook.com", "hotmail.com", "live.com", "msn.com"}, d) {
+	if _, d, _ := strings.Cut(email, "@"); d == "msn.com" || strings.HasPrefix(d, "outlook.") || strings.HasPrefix(d, "hotmail.") || strings.HasPrefix(d, "live.") {
 		return MailAccountStatus{}, errors.New("Outlook.com and Hotmail no longer let other apps sign in with a password, so they can't be archived yet")
 	}
 	if m.Host == "" {
@@ -577,9 +578,12 @@ func (s *Server) MailAttachment(ctx context.Context, person string, account uint
 	if i < 0 {
 		return nil, 0, &bichon.APIError{Status: 404, Message: "no such attachment in this message"}
 	}
-	body, _, err := b.Attachment(ctx, account, id, hash)
-	// Bichon sends no length; with the real one, a download cut short shows as an error, not a shorter file.
-	return body, c.Attachments[i].Size, err
+	body, n, err := b.Attachment(ctx, account, id, hash)
+	if n <= 0 {
+		// Bichon usually sends no length; with the real one, a download cut short shows as an error, not a shorter file.
+		n = c.Attachments[i].Size
+	}
+	return body, n, err
 }
 
 // SetMailPassword saves the password of [person]'s mailbox (one added in Bichon's own page), so deleting
@@ -666,13 +670,14 @@ func (s *Server) DeleteMail(ctx context.Context, person string, ids map[uint64][
 	if err != nil {
 		return out, err
 	}
-	gone := map[uint64][]string{}
+	// First every message's archive entry (checking it's in that mailbox), so nothing is deleted anywhere
+	// before the whole request is known to be the person's own.
+	type entry struct {
+		id  string
+		msg mailserver.Message
+	}
+	entries := map[uint64][]entry{}
 	for account, list := range ids {
-		fail := func(id string, err error) {
-			out.Failed = append(out.Failed, MailDeleteFail{account, id, err.Error()})
-		}
-		var msgs []mailserver.Message
-		var found []string
 		for _, id := range list {
 			e, err := b.Envelope(ctx, account, id)
 			var ae *bichon.APIError
@@ -680,13 +685,24 @@ func (s *Server) DeleteMail(ctx context.Context, person string, ids map[uint64][
 			case errors.As(err, &ae) && ae.Status == 404:
 				continue // not in the archive any more
 			case err != nil:
-				fail(id, err)
+				out.Failed = append(out.Failed, MailDeleteFail{account, id, err.Error()})
 				continue
 			case e.AccountID != account:
 				return out, ErrNotYourMail // a message id from someone else's mailbox
 			}
-			msgs = append(msgs, mailserver.Message{Folder: e.MailboxName, MessageID: e.MessageID})
-			found = append(found, id)
+			entries[account] = append(entries[account], entry{id, mailserver.Message{Folder: e.MailboxName, MessageID: e.MessageID}})
+		}
+	}
+	gone := map[uint64][]string{}
+	for account, list := range entries {
+		fail := func(id string, err error) {
+			out.Failed = append(out.Failed, MailDeleteFail{account, id, err.Error()})
+		}
+		var msgs []mailserver.Message
+		var found []string
+		for _, x := range list {
+			msgs = append(msgs, x.msg)
+			found = append(found, x.id)
 		}
 		if len(msgs) == 0 {
 			continue

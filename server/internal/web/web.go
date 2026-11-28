@@ -632,17 +632,11 @@ func writeMailErr(w http.ResponseWriter, err error) {
 		writeErr(w, 404, errors.New("that message isn't in the archive any more"))
 	case errors.As(err, &be):
 		writeErr(w, 502, err) // Bichon refused or failed
-	case errors.Is(err, context.DeadlineExceeded), isNetErr(err):
+	case errors.As(err, new(*bichon.UnreachableError)):
 		writeErr(w, 503, errors.New("can't reach the email archive (Bichon) on the server: check it's running"))
 	default:
-		writeErr(w, 400, err)
+		writeErr(w, 400, err) // includes the mailbox's own server not answering (a typo in its address, say)
 	}
-}
-
-func isNetErr(err error) bool {
-	var ne net.Error
-	var oe *net.OpError
-	return errors.As(err, &ne) || errors.As(err, &oe)
 }
 
 // sameOriginOnly blocks cross-site requests: browsers resend Basic auth automatically, so without this

@@ -52,6 +52,7 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 	results := make([]error, len(msgs))
 	byFolder := map[string][]int{}
 	for i, m := range msgs {
+		// Bichon makes up "…@bichon" ids for messages that have none.
 		if normID(m.MessageID) == "" || strings.HasSuffix(normID(m.MessageID), "@bichon") {
 			results[i] = ErrNoMessageID // none in the message (the archive made one up): it can't be found on the server
 			continue
@@ -61,7 +62,7 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 	for folder, idx := range byFolder {
 		if _, err := c.Select(folder, false); err != nil {
 			for _, i := range idx {
-				results[i] = fmt.Errorf("opening folder %q on the mail server: %w", folder, err)
+				results[i] = errNotFound // renamed or gone: look for it in the other folders below
 			}
 			continue
 		}
@@ -73,26 +74,60 @@ func Delete(ctx context.Context, a Account, msgs []Message) ([]error, error) {
 			results[i] = deleteOne(c, msgs[i].MessageID, folder, trash)
 		}
 	}
-	// Not in the folder it was archived from: maybe moved since. Only "nowhere" counts as already deleted.
-	for i, m := range msgs {
-		if !errors.Is(results[i], errNotFound) {
-			continue
-		}
-		results[i] = nil
-		for _, f := range folders {
-			if f == m.Folder || f == trash || ctx.Err() != nil {
-				continue
-			}
-			if _, err := c.Select(f, false); err != nil {
-				continue
-			}
-			if err := deleteOne(c, m.MessageID, f, trash); !errors.Is(err, errNotFound) {
-				results[i] = err
-				break
-			}
+	findMoved(ctx, c, msgs, results, folders, trash)
+	return results, nil
+}
+
+// findMoved looks through the other folders for messages that weren't where they were archived (moved since).
+// Each folder is opened once. Only a message that's in none of them counts as already deleted: one in a folder
+// that couldn't be opened, or not looked for before time ran out, stays an error.
+func findMoved(ctx context.Context, c *client.Client, msgs []Message, results []error, folders []string, trash string) {
+	var missing []int
+	for i := range msgs {
+		if errors.Is(results[i], errNotFound) {
+			missing = append(missing, i)
 		}
 	}
-	return results, nil
+	var unreadable []string
+	for _, f := range folders {
+		if len(missing) == 0 {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if strings.EqualFold(f, trash) {
+			continue
+		}
+		if _, err := c.Select(f, false); err != nil {
+			unreadable = append(unreadable, f)
+			continue
+		}
+		still := missing[:0:0]
+		for _, i := range missing {
+			if ctx.Err() != nil {
+				still = append(still, i)
+				continue
+			}
+			err := deleteOne(c, msgs[i].MessageID, f, trash)
+			if errors.Is(err, errNotFound) {
+				still = append(still, i)
+			} else {
+				results[i] = err // found here: deleted, or the error doing it
+			}
+		}
+		missing = still
+	}
+	for _, i := range missing {
+		switch {
+		case ctx.Err() != nil:
+			results[i] = fmt.Errorf("not every folder could be checked in time: %w", ctx.Err())
+		case len(unreadable) > 0:
+			results[i] = fmt.Errorf("couldn't check the folder %q on the mail server", unreadable[0])
+		default:
+			results[i] = nil // in no folder: already deleted on the server
+		}
+	}
 }
 
 // errNotFound: the message isn't in the selected folder.

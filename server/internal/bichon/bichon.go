@@ -32,6 +32,12 @@ type APIError struct {
 
 func (e *APIError) Error() string { return fmt.Sprintf("bichon: HTTP %d: %s", e.Status, e.Message) }
 
+// UnreachableError is Bichon not answering at all (not running, wrong address).
+type UnreachableError struct{ Err error }
+
+func (e *UnreachableError) Error() string { return "can't reach Bichon: " + e.Err.Error() }
+func (e *UnreachableError) Unwrap() error { return e.Err }
+
 func (c *Client) request(ctx context.Context, cl *http.Client, method, path string, body any) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {
@@ -50,7 +56,7 @@ func (c *Client) request(ctx context.Context, cl *http.Client, method, path stri
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &UnreachableError{err}
 	}
 	if resp.StatusCode >= 300 {
 		defer resp.Body.Close()
