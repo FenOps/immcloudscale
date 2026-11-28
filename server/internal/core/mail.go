@@ -287,6 +287,9 @@ func (s *Server) AddMail(ctx context.Context, owner string, in NewMailbox) (Mail
 func (s *Server) chooseFolders(ctx context.Context, id uint64) {
 	b := s.bichon(s.Store.Read().Config)
 	for range 20 {
+		if !slices.ContainsFunc(s.Store.Read().Mail, func(m state.MailAccount) bool { return m.ID == id }) {
+			return // removed meanwhile
+		}
 		boxes, err := b.Mailboxes(ctx, id)
 		if err == nil && len(boxes) > 0 {
 			if folders := keepFolders(boxes); len(folders) > 0 {
@@ -613,9 +616,13 @@ func (s *Server) SetMailPassword(ctx context.Context, person string, id uint64, 
 	if err := s.checkMailbox(ctx, m); err != nil {
 		return err
 	}
-	// Bichon copies the mail with it too: a new app password fixes copying as well as deleting.
-	if err := b.SetPassword(ctx, id, bichon.IMAP{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password}); err != nil {
-		return fmt.Errorf("saving the password in the archive: %w", err)
+	// Bichon copies the mail with it too: a new app password fixes copying as well as deleting. (A mailbox that
+	// Bichon reaches with OAuth keeps that; the password is then only for deleting.)
+	if a.Imap.Auth.Type == "" || a.Imap.Auth.Type == "Password" {
+		if err := b.SetPassword(ctx, id, bichon.IMAP{Host: m.Host, Port: m.Port, Security: m.Security, Login: m.Login, Password: m.Password, UseProxy: a.Imap.UseProxy}); err != nil {
+			return fmt.Errorf("saving the password in the archive: %w", err)
+		}
+		_ = b.SyncNow(ctx, id) // copy now rather than at the next check, so the old error goes away
 	}
 	return s.Store.Update(func(st *state.State) error {
 		for i := range st.Mail {

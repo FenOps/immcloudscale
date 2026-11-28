@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -81,8 +82,16 @@ func TestSyncProblemsAreShort(t *testing.T) {
 	if got := syncProblem(gmail); got != "the mail server refused the password (Gmail, Yahoo and iCloud need an app password)" {
 		t.Fatal(got)
 	}
-	if got := syncProblem("plain"); got != "plain" {
-		t.Fatal(got)
+	for in, want := range map[string]string{
+		"plain": "plain",
+		"dns error: failed to lookup address information": "couldn't find the mail server: check its address",
+		"Connection refused (os error 111)":               "the mail server refused the connection: check its address and port",
+		"index lookup failed":                             "index lookup failed",
+		strings.Repeat("é", 200):                          strings.Repeat("é", 160) + "…",
+	} {
+		if got := syncProblem(in); got != want {
+			t.Errorf("%q: got %q", in, got)
+		}
 	}
 }
 
@@ -125,6 +134,9 @@ func TestAddingAMailboxOnARealBichon(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := c.SetFolders(ctx, a.ID, []string{"INBOX"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SyncNow(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
 }

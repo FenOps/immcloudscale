@@ -28,6 +28,7 @@ type fakeBichon struct {
 	deleted   map[uint64][]string
 	token     string
 	adminPass string
+	synced    []uint64 // mailboxes asked to sync now
 	// The mail servers: who signed in, what was deleted there, and which messages they refuse.
 	signedIn   []mailserver.Account
 	onServer   []mailserver.Message
@@ -135,7 +136,12 @@ func withBichon(t *testing.T, s *Server) *fakeBichon {
 	mux.HandleFunc("GET /api/v1/account/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
 		json.NewEncoder(w).Encode(map[string]any{"id": id, "email": f.accounts[id]["email"], "login_name": "",
-			"imap": map[string]any{"host": "mail.family.example", "port": 993, "encryption": "Ssl"}})
+			"imap": map[string]any{"host": "mail.family.example", "port": 993, "encryption": "Ssl", "use_proxy": 3,
+				"auth": map[string]any{"auth_type": "Password"}}})
+	}))
+	mux.HandleFunc("POST /api/v1/accounts/{id}/start-download", authed(func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
+		f.synced = append(f.synced, id)
 	}))
 	mux.HandleFunc("DELETE /api/v1/account/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
@@ -447,10 +453,11 @@ func TestAdminsGiveOutMailboxesAddedInBichon(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
-	gotPass := f.accounts[77]["imap"].(map[string]any)["auth"].(map[string]any)["password"]
+	imap := f.accounts[77]["imap"].(map[string]any)
+	gotPass, proxy, synced := imap["auth"].(map[string]any)["password"], imap["use_proxy"], len(f.synced)
 	f.mu.Unlock()
-	if gotPass != "right" {
-		t.Fatalf("Bichon still copies with the old password: %v", gotPass)
+	if gotPass != "right" || proxy != float64(3) || synced != 1 {
+		t.Fatalf("Bichon: password %v, proxy %v, synced %d times", gotPass, proxy, synced)
 	}
 	if st := s.MailStatus(ctx, "nina", false); !st.Accounts[0].DeletesOnServer {
 		t.Fatalf("%+v", st)

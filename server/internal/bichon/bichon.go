@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -164,9 +165,13 @@ type Account struct {
 	Login   string `json:"login_name,omitempty"`
 	Enabled bool   `json:"enabled"`
 	Imap    *struct {
-		Host       string `json:"host"`
-		Port       int    `json:"port"`
-		Encryption string `json:"encryption"`
+		Host       string  `json:"host"`
+		Port       int     `json:"port"`
+		Encryption string  `json:"encryption"`
+		UseProxy   *uint64 `json:"use_proxy,omitempty"`
+		Auth       struct {
+			Type string `json:"auth_type"`
+		} `json:"auth"`
 	} `json:"imap,omitempty"`
 }
 
@@ -198,8 +203,9 @@ type IMAP struct {
 	Host     string
 	Port     int
 	Security string // "Ssl", "StartTls" or "None"
-	Login    string
+	Login    string // sent as the account's login_name (it's not part of Bichon's IMAP settings)
 	Password string
+	UseProxy *uint64 // a proxy set up in Bichon's own page, kept as it was
 }
 
 // AddAccount adds an IMAP mailbox to the archive; Bichon starts downloading it.
@@ -222,12 +228,24 @@ const CheckEveryMinutes = 15
 
 // SetPassword changes the password Bichon signs in to the mailbox with.
 func (c *Client) SetPassword(ctx context.Context, id uint64, m IMAP) error {
-	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/account/%d", id), map[string]any{
-		"imap": map[string]any{
-			"host": m.Host, "port": m.Port, "encryption": m.Security,
-			"auth": map[string]any{"auth_type": "Password", "password": m.Password},
-		},
-	}, nil)
+	imap := map[string]any{
+		"host": m.Host, "port": m.Port, "encryption": m.Security,
+		"auth": map[string]any{"auth_type": "Password", "password": m.Password},
+	}
+	if m.UseProxy != nil {
+		imap["use_proxy"] = *m.UseProxy // Bichon replaces its IMAP settings as a whole
+	}
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/account/%d", id), map[string]any{"imap": imap}, nil)
+}
+
+// SyncNow starts downloading a mailbox now instead of at its next check.
+func (c *Client) SyncNow(ctx context.Context, id uint64) error {
+	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/accounts/%d/start-download", id), map[string]bool{"run_gap_fill": false}, nil)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == 403 && strings.Contains(ae.Message, "currently active") {
+		return nil // already copying
+	}
+	return err
 }
 
 // SetEnabled pauses or resumes downloading a mailbox (its archive stays).
@@ -323,14 +341,16 @@ func syncProblem(msg string) string {
 		return "the mail server refused the password (Gmail, Yahoo and iCloud need an app password)"
 	case strings.Contains(m, "timed out") || strings.Contains(m, "timeout"):
 		return "the mail server didn't answer in time"
-	case strings.Contains(m, "dns") || strings.Contains(m, "lookup") || strings.Contains(m, "connection refused"):
-		return "couldn't reach the mail server: check its address"
+	case strings.Contains(m, "failed to lookup address") || strings.Contains(m, "no such host") || strings.Contains(m, "dns error"):
+		return "couldn't find the mail server: check its address"
+	case strings.Contains(m, "connection refused"):
+		return "the mail server refused the connection: check its address and port"
 	}
-	short := readable(msg)
+	short := []rune(readable(msg))
 	if len(short) > 160 {
-		short = short[:160] + "…"
+		return string(short[:160]) + "…"
 	}
-	return short
+	return string(short)
 }
 
 // Search is what to look for; zero fields don't filter.
