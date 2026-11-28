@@ -1,6 +1,10 @@
 package app.immcloudscale.ui.photos
 
 import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -11,9 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.immcloudscale.data.backup.LocalMedia
@@ -50,9 +55,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Whole days until [expires] (epoch seconds), rounded up: "1 day" until the very end. Null when unknown. */
+fun daysLeft(expires: Long, now: Long = System.currentTimeMillis()): Long? =
+    if (expires <= 0) null else ((expires * 1000 - now + 86_399_999L) / 86_400_000L).coerceAtLeast(1)
+
 /**
- * The phone's own trash (Android 11+): photos and videos moved there, by this app or any other, until Android
- * deletes them for good after 30 days. They can be restored, or deleted for good now.
+ * The phone's own trash (Android 11+): photos and videos moved there, by this app or any other that uses Android's
+ * trash, until Android deletes them for good after 30 days. They can be restored, or deleted for good now.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,32 +75,62 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     var selected by rememberSaveable { mutableStateOf(setOf<String>()) }
     var confirmForever by remember { mutableStateOf(false) }
     var pending by rememberSaveable { mutableStateOf<Pair<String, List<String>>?>(null) } // "restore" | "delete", keys
-    fun load() = scope.launch { items = withContext(Dispatchers.IO) { runCatching { LocalMediaSource.trashed(ctx) }.getOrDefault(emptyList()) } }
+
+    // Without access to photos, Android only lists this app's own items: the trash would look empty when it isn't.
+    val perms = mediaPermissions()
+    fun granted(p: String) = ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
+    var allowed by remember { mutableStateOf(perms.any(::granted)) }
+    var denied by rememberSaveable { mutableStateOf(false) }
+    val askAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        allowed = r.values.any { it }
+        val activity = ctx.findActivity()
+        denied = !allowed && activity != null && perms.none { activity.shouldShowRequestPermissionRationale(it) }
+    }
+
+    fun load() = scope.launch {
+        val found = withContext(Dispatchers.IO) { runCatching { LocalMediaSource.trashed(ctx) }.getOrDefault(emptyList()) }
+        val keys = found.mapTo(HashSet()) { it.first.key() }
+        items = found
+        selected = selected intersect keys
+        // Restored in another app, or gone for good: nothing to hide any more on the other screens.
+        PhoneTrashed.ids.update { it intersect keys }
+    }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         val p = pending
         pending = null
         if (r.resultCode == Activity.RESULT_OK && p != null) {
             selected = emptySet()
             if (p.first == "restore") PhoneTrashed.ids.update { it - p.second.toSet() } // back on the phone: shown again elsewhere
-            scope.launch { snack.showSnackbar(if (p.first == "restore") "Restored to your phone" else "Deleted for good") }
+            val n = p.second.size
+            scope.launch {
+                snack.showSnackbar(
+                    if (p.first == "restore") (if (n == 1) "Restored to your phone" else "$n restored to your phone")
+                    else (if (n == 1) "Deleted for good" else "$n deleted for good"),
+                )
+            }
         }
         load()
     }
-    fun ask(kind: String, chosen: List<LocalMedia>) = scope.launch {
-        val uris = chosen.map { it.uri }
-        val sender = withContext(Dispatchers.IO) {
-            runCatching { if (kind == "restore") PhoneCopies.restoreRequest(ctx, uris) else PhoneCopies.deleteRequest(ctx, uris) }.getOrNull()
-        }
-        if (sender == null) snack.showSnackbar("Couldn't do that on this phone")
-        else {
-            pending = kind to chosen.map { it.key() }
-            launcher.launch(IntentSenderRequest.Builder(sender).build())
+    fun ask(kind: String, chosen: List<LocalMedia>) {
+        if (chosen.isEmpty() || pending != null) return // nothing picked, or already asking
+        pending = kind to chosen.map { it.key() }
+        scope.launch {
+            val uris = chosen.map { it.uri }
+            val sender = withContext(Dispatchers.IO) {
+                runCatching { if (kind == "restore") PhoneCopies.restoreRequest(ctx, uris) else PhoneCopies.deleteRequest(ctx, uris) }.getOrNull()
+            }
+            if (sender == null) {
+                pending = null
+                snack.showSnackbar("Couldn't do that on this phone")
+            } else launcher.launch(IntentSenderRequest.Builder(sender).build())
         }
     }
     LifecycleResumeEffect(Unit) {
-        load()
+        allowed = perms.any(::granted)
+        if (allowed) load()
         onPauseOrDispose {}
     }
+    LaunchedEffect(allowed) { if (allowed) load() }
     BackHandler(selected.isNotEmpty()) { selected = emptySet() }
 
     val list = items
@@ -101,15 +140,20 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (selected.isEmpty()) "Phone trash" else "${selected.size} selected") },
+                title = { Text(if (chosen.isEmpty()) "Phone trash" else "${chosen.size} selected") },
                 navigationIcon = {
-                    if (selected.isEmpty()) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                    if (chosen.isEmpty()) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                     else IconButton(onClick = { selected = emptySet() }) { Icon(Icons.Filled.Close, "Clear selection") }
                 },
                 actions = {
-                    if (selected.isNotEmpty()) {
-                        IconButton(onClick = { ask("restore", chosen) }) { Icon(Icons.Outlined.RestoreFromTrash, "Restore") }
-                        IconButton(onClick = { confirmForever = true }) { Icon(Icons.Outlined.DeleteForever, "Delete for good") }
+                    when {
+                        chosen.isNotEmpty() -> {
+                            TextButton(onClick = { ask("restore", chosen) }) { Text("Restore") }
+                            TextButton(onClick = { confirmForever = true }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                                Text("Delete")
+                            }
+                        }
+                        !list.isNullOrEmpty() -> TextButton(onClick = { selected = list.mapTo(HashSet()) { it.first.key() } }) { Text("Select all") }
                     }
                 },
             )
@@ -119,14 +163,23 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
         Column(Modifier.fillMaxSize().padding(pad)) {
             when {
                 !canTrashOnPhone -> EmptyState(Icons.Outlined.DeleteOutline, "No trash on this phone", "Phones with Android 11 or newer keep deleted photos in a trash for 30 days.")
+                !allowed -> EmptyState(
+                    Icons.Outlined.PhotoLibrary, "Allow access to your photos",
+                    "To show what's in your phone's trash, the app needs to see the photos and videos on this phone." +
+                        if (denied) " Android won't ask again: allow it in Settings, Permissions, Photos and videos." else "",
+                    action = if (denied) "Open settings" else "Allow",
+                    onAction = {
+                        if (denied) runCatching { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", ctx.packageName, null))) }
+                        else askAccess.launch(perms)
+                    },
+                )
                 list == null -> CenteredLoading()
-                list.isEmpty() -> EmptyState(Icons.Outlined.DeleteOutline, "The phone's trash is empty", "Photos and videos deleted on this phone stay here for 30 days.")
+                list.isEmpty() -> EmptyState(Icons.Outlined.DeleteOutline, "Phone trash is empty", "Photos and videos moved to Android's trash stay here for 30 days.")
                 else -> {
-                    val soonest = list.first().second
-                    val days = ((soonest * 1000 - System.currentTimeMillis()) / 86_400_000L).coerceAtLeast(0)
+                    val next = list.firstNotNullOfOrNull { daysLeft(it.second) }
                     Text(
-                        "Android deletes each item for good 30 days after it was put here (the first one in $days day${if (days == 1L) "" else "s"}). " +
-                            "Long-press to restore or delete.",
+                        "Items are deleted for good 30 days after they're moved here." +
+                            (next?.let { " The next one goes in $it day${if (it == 1L) "" else "s"}." } ?: ""),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
@@ -138,8 +191,9 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                         onOpen = { a ->
                             if (selected.isNotEmpty()) selected = if (a.id in selected) selected - a.id else selected + a.id
                             else {
-                                LocalViewerSession.items = assets
-                                LocalViewerSession.start = assets.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
+                                val inOrder = sections.flatMap { it.assets } // swipes the way the grid reads
+                                LocalViewerSession.items = inOrder
+                                LocalViewerSession.start = inOrder.indexOfFirst { it.id == a.id }.coerceAtLeast(0)
                                 LocalViewerSession.inTrash = true
                                 onOpen()
                             }
@@ -157,17 +211,23 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
         }
     }
     if (confirmForever) {
-        val n = chosen.size
-        AlertDialog(
-            onDismissRequest = { confirmForever = false },
-            title = { Text(if (n == 1) "Delete for good?" else "Delete $n items for good?") },
-            text = { Text("They're removed from your phone now and can't be restored. Anything not backed up is gone for good.") },
-            confirmButton = {
-                TextButton(onClick = { confirmForever = false; ask("delete", chosen) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-                    Text("Delete for good")
-                }
-            },
-            dismissButton = { TextButton(onClick = { confirmForever = false }) { Text("Cancel") } },
-        )
+        ConfirmDeleteForever(chosen.size, onDismiss = { confirmForever = false }) {
+            confirmForever = false
+            ask("delete", chosen)
+        }
     }
+}
+
+/** Deleting from the phone's trash can't be undone: asks in plain words first. */
+@Composable
+fun ConfirmDeleteForever(n: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (n == 1) "Delete for good?" else "Delete $n items for good?") },
+        text = { Text("${if (n == 1) "It's" else "They're"} removed from your phone now and can't be restored. Anything that isn't backed up is gone for good.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Delete for good") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

@@ -30,6 +30,23 @@ class PhoneTrashTest {
         compose.onNodeWithText("It isn't backed up, so this is the only copy. It goes to your phone's trash, where Android keeps it for 30 days, then deletes it for good.").assertExists()
     }
 
+    @Test fun deletingForGoodAsksFirstAndSaysItCantBeUndone() {
+        var confirmed = false
+        compose.setContent { ConfirmDeleteForever(2, onDismiss = {}) { confirmed = true } }
+        compose.onNodeWithText("Delete 2 items for good?").assertExists()
+        compose.onNodeWithText("They're removed from your phone now and can't be restored. Anything that isn't backed up is gone for good.").assertExists()
+        org.junit.Assert.assertFalse(confirmed) // nothing happens before the button
+        compose.onNodeWithText("Delete for good").performClick()
+        assertTrue(confirmed)
+    }
+
+    @Test fun daysLeftRoundUp() {
+        val now = 1_800_000_000_000L
+        org.junit.Assert.assertEquals(1L, daysLeft(now / 1000 + 3600, now)) // an hour left: "1 day"
+        org.junit.Assert.assertEquals(30L, daysLeft(now / 1000 + 29 * 86400 + 60, now))
+        org.junit.Assert.assertEquals(null, daysLeft(0, now)) // unknown
+    }
+
     @Test fun trashedPhotosAreRememberedForEveryScreen() {
         PhoneTrashed.add(listOf("local:7"))
         PhoneTrashed.add(listOf("local:9"))

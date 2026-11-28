@@ -29,10 +29,10 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.PhoneAndroid
-import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.PeopleOutline
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PhotoAlbum
+import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,6 +69,7 @@ import app.immcloudscale.ui.components.LetterAvatar
 import app.immcloudscale.ui.components.RemoteImage
 import app.immcloudscale.ui.components.SectionHeader
 import app.immcloudscale.ui.components.graphViewModel
+import app.immcloudscale.ui.photos.canTrashOnPhone
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -195,11 +196,11 @@ fun CollectionsContent(
                     Triple(Icons.Outlined.VideoLibrary, "Videos", CollectionTarget.Videos),
                     Triple(Icons.Outlined.Archive, "Archive", CollectionTarget.Archive),
                     Triple(Icons.Outlined.DeleteOutline, "Trash", CollectionTarget.Trash),
+                    Triple(Icons.Outlined.RestoreFromTrash, "Phone trash", CollectionTarget.PhoneTrash),
                     Triple(Icons.Outlined.ContentCopy, "Duplicates", CollectionTarget.Duplicates),
                     Triple(Icons.Outlined.Lock, "Locked folder", CollectionTarget.LockedFolder),
                     Triple(Icons.Outlined.PhoneAndroid, "On this phone only", CollectionTarget.PhoneOnly),
-                    Triple(Icons.Outlined.RestoreFromTrash, "Phone trash", CollectionTarget.PhoneTrash),
-                )
+                ).filter { it.third != CollectionTarget.PhoneTrash || canTrashOnPhone } // older phones have no trash
                 items(quick, key = { it.second }) { (icon, label, target) -> QuickTile(icon, label) { onOpen(target) } }
 
                 if (st.people.isNotEmpty()) {

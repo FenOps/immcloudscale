@@ -94,8 +94,8 @@ object LocalMediaSource {
     }
 
     /**
-     * What's in the phone's trash (Android 11+), newest first, with when Android deletes each for good (epoch
-     * seconds). Empty on older phones, which have no trash.
+     * What's in the phone's trash (Android 11+), the soonest to be deleted for good first, with when that happens
+     * (epoch seconds; 0 when Android doesn't say). Empty on older phones, which have no trash.
      */
     @SuppressLint("InlinedApi")
     fun trashed(context: Context): List<Pair<LocalMedia, Long>> {
@@ -123,7 +123,7 @@ object LocalMediaSource {
                 }
             }
         }
-        return out.sortedBy { it.second } // soonest gone first
+        return out.sortedBy { if (it.second > 0) it.second else Long.MAX_VALUE } // soonest gone first, unknown last
     }
 
     fun folders(context: Context): List<String> {

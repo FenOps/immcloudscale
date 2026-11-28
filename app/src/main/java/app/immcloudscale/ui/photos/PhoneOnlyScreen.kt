@@ -446,7 +446,7 @@ private fun ConfirmBackUp(n: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) 
     )
 }
 
-private fun android.content.Context.findActivity(): android.app.Activity? {
+internal fun android.content.Context.findActivity(): android.app.Activity? {
     var c = this
     while (c is android.content.ContextWrapper) {
         if (c is android.app.Activity) return c
@@ -455,7 +455,7 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
     return null
 }
 
-private fun mediaPermissions(): Array<String> = when {
+internal fun mediaPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
     Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -474,11 +474,35 @@ fun LocalViewerScreen(onBack: () -> Unit) {
     // Without what was trashed already (also after a rotation, when this is built again).
     val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
     val inTrash = LocalViewerSession.inTrash
-    val list = if (inTrash) items else items.filter { it.id !in trashed }
+    var failed by remember { mutableStateOf(false) }
+    // From the phone's trash: those restored or deleted for good here leave the pager.
+    var done by rememberSaveable { mutableStateOf(setOf<String>()) }
+    val list = if (inTrash) items.filter { it.id !in done } else items.filter { it.id !in trashed }
+    var trashAction by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) } // "restore" | "delete", id
+    var confirmForever by remember { mutableStateOf<AssetDto?>(null) }
+    val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        val act = trashAction
+        trashAction = null
+        if (r.resultCode == android.app.Activity.RESULT_OK && act != null) {
+            done = done + act.second
+            if (act.first == "restore") PhoneTrashed.ids.update { it - act.second }
+        }
+    }
+    val scope = rememberCoroutineScope()
+    fun trashRequest(kind: String, a: AssetDto) {
+        val uri = a.localUri ?: return
+        if (trashAction != null) return
+        trashAction = kind to a.id
+        scope.launch {
+            val sender = withContext(Dispatchers.IO) {
+                runCatching { if (kind == "restore") PhoneCopies.restoreRequest(ctx, listOf(Uri.parse(uri))) else PhoneCopies.deleteRequest(ctx, listOf(Uri.parse(uri))) }.getOrNull()
+            }
+            if (sender == null) { trashAction = null; failed = true } else trashLauncher.launch(IntentSenderRequest.Builder(sender).build())
+        }
+    }
     val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, maxOf(items.lastIndex, 0))) { list.size }
     var confirm by remember { mutableStateOf<AssetDto?>(null) } // the photo whose bin was tapped
     var trashing by rememberSaveable { mutableStateOf<String?>(null) }
-    var failed by remember { mutableStateOf(false) }
     val trash = rememberPhoneOnlyTrash { result ->
         val id = trashing
         trashing = null
@@ -519,6 +543,11 @@ fun LocalViewerScreen(onBack: () -> Unit) {
                     color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall,
                 )
             }
+            if (inTrash && canTrashOnPhone) {
+                val a = list[pager.currentPage.coerceIn(0, list.lastIndex)]
+                TextButton(onClick = { trashRequest("restore", a) }, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) { Text("Restore") }
+                TextButton(onClick = { confirmForever = a }, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) { Text("Delete") }
+            }
             if (canTrashOnPhone && !inTrash) IconButton(onClick = { confirm = list[pager.currentPage.coerceIn(0, list.lastIndex)] }) {
                 Icon(Icons.Outlined.Delete, "Delete from phone", tint = Color.White)
             }
@@ -529,6 +558,12 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             confirm = null
             val uri = a.localUri
             if (uri == null) failed = true else { trashing = a.id; trash(listOf(uri)) }
+        }
+    }
+    confirmForever?.let { a ->
+        ConfirmDeleteForever(1, onDismiss = { confirmForever = null }) {
+            confirmForever = null
+            trashRequest("delete", a)
         }
     }
     if (failed) AlertDialog(
