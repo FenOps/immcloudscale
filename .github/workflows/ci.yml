@@ -11,12 +11,63 @@ on:
       version:
         description: "Release version, e.g. 0.1.0 (leave empty to only build and test)"
         required: false
+      snapshots:
+        description: "Record new screenshot references and commit them (after a deliberate UI change)"
+        type: boolean
+        default: false
 
 jobs:
+  # Run by hand with "Record new screenshot references": re-records the Paparazzi images and commits them to the branch.
+  snapshots:
+    if: github.event_name == 'workflow_dispatch' && inputs.snapshots && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse a release in the same run
+        if: inputs.version != ''
+        run: |
+          echo "::error::Record the screenshots first, then run the workflow again with the version."
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/tailscale/go.mod
+          cache-dependency-path: app/tailscale/go.sum
+      - name: Android NDK
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+      - name: Record and commit screenshot references
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          ./gradlew :app:recordPaparazziDebug
+          git add app/src/test/snapshots/images
+          if git diff --cached --quiet; then
+            echo "Screenshot references are already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update screenshot references"
+          git push "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY" "HEAD:refs/heads/$BRANCH"
+
   android:
+    needs: snapshots
+    # Also runs when snapshots is skipped (every normal run); after recording it tests the new commit.
+    if: ${{ !cancelled() && needs.snapshots.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.snapshots.result == 'success' && github.ref || '' }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -82,7 +133,7 @@ jobs:
 
   release:
     # Tag v<version> (e.g. v0.1.0), or run the workflow by hand with a version, to publish the APK and server packages.
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
+    if: ${{ !cancelled() && needs.android.result == 'success' && needs.server.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')) }}
     needs: [android, server]
     runs-on: ubuntu-latest
     permissions:
