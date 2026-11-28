@@ -65,6 +65,7 @@ fun AssetBrowser(
     val scope = rememberCoroutineScope()
     var albumPicker by remember { mutableStateOf(false) }
     LifecycleResumeEffect(vm) {
+        if (LocalViewerSession.deleted.isNotEmpty()) vm.dropLocal(LocalViewerSession.deleted.toSet())
         vm.refreshIfStale()
         onPauseOrDispose {}
     }

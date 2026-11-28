@@ -272,6 +272,13 @@ class AssetListViewModel(private val graph: AppGraph, val query: AssetQuery) : V
             .onFailure { e -> _state.update { it.copy(message = e.message) } }
     }
 
+    /** Photos only on the phone that were moved to its trash: out of the timeline straight away. */
+    fun dropLocal(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        pending = pending.filter { it.id !in ids }
+        _state.update { s -> s.copy(assets = s.assets.filter { it.id !in ids }) }
+    }
+
     /** Keeps the list in sync after the viewer changed or removed an asset. */
     fun applyEdit(updated: AssetDto?, removedId: String?) {
         removedId?.let { removedMeanwhile += it }
