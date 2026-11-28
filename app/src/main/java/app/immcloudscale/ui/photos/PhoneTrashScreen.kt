@@ -73,7 +73,8 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     val snack = remember { SnackbarHostState() }
     var items by remember { mutableStateOf<List<Pair<LocalMedia, Long>>?>(null) }
     var selected by rememberSaveable { mutableStateOf(setOf<String>()) }
-    var confirmForever by remember { mutableStateOf(false) }
+    var confirmForever by remember { mutableStateOf<List<LocalMedia>?>(null) } // what the dialog is about, fixed when it opened
+    var loadFailed by remember { mutableStateOf(false) }
     var pending by rememberSaveable { mutableStateOf<Pair<String, List<String>>?>(null) } // "restore" | "delete", keys
 
     // Without access to photos, Android only lists this app's own items: the trash would look empty when it isn't.
@@ -88,7 +89,9 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
     }
 
     fun load() = scope.launch {
-        val found = withContext(Dispatchers.IO) { runCatching { LocalMediaSource.trashed(ctx) }.getOrDefault(emptyList()) }
+        val found = withContext(Dispatchers.IO) { runCatching { LocalMediaSource.trashed(ctx) }.getOrNull() }
+        loadFailed = found == null
+        if (found == null) return@launch // not knowing isn't the same as empty: keep what's shown
         val keys = found.mapTo(HashSet()) { it.first.key() }
         items = found
         selected = selected intersect keys
@@ -100,7 +103,7 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
         pending = null
         if (r.resultCode == Activity.RESULT_OK && p != null) {
             selected = emptySet()
-            if (p.first == "restore") PhoneTrashed.ids.update { it - p.second.toSet() } // back on the phone: shown again elsewhere
+            if (p.first == "restore") PhoneTrashed.restore(p.second) // back on the phone: shown again elsewhere
             val n = p.second.size
             scope.launch {
                 snack.showSnackbar(
@@ -149,7 +152,7 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                     when {
                         chosen.isNotEmpty() -> {
                             TextButton(onClick = { ask("restore", chosen) }) { Text("Restore") }
-                            TextButton(onClick = { confirmForever = true }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                            TextButton(onClick = { confirmForever = chosen }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                                 Text("Delete")
                             }
                         }
@@ -173,6 +176,7 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
                         else askAccess.launch(perms)
                     },
                 )
+                list == null && loadFailed -> EmptyState(Icons.Outlined.DeleteOutline, "Couldn't open the phone's trash", "Android didn't answer. Go back and try again.")
                 list == null -> CenteredLoading()
                 list.isEmpty() -> EmptyState(Icons.Outlined.DeleteOutline, "Phone trash is empty", "Photos and videos moved to Android's trash stay here for 30 days.")
                 else -> {
@@ -210,10 +214,10 @@ fun PhoneTrashScreen(onBack: () -> Unit, onOpen: () -> Unit) {
             }
         }
     }
-    if (confirmForever) {
-        ConfirmDeleteForever(chosen.size, onDismiss = { confirmForever = false }) {
-            confirmForever = false
-            ask("delete", chosen)
+    confirmForever?.let { these ->
+        ConfirmDeleteForever(these.size, onDismiss = { confirmForever = null }) {
+            confirmForever = null
+            ask("delete", these)
         }
     }
 }

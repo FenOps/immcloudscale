@@ -224,7 +224,13 @@ object LocalViewerSession {
 /** Phone-only photos moved to the phone's trash this session ("local:<id>"), for every screen showing them. */
 object PhoneTrashed {
     val ids = MutableStateFlow<Set<String>>(emptySet())
+    /** Goes up each time photos are restored from the phone's trash, so screens showing phone photos look again. */
+    val restored = MutableStateFlow(0)
     fun add(keys: Collection<String>) = ids.update { it + keys }
+    fun restore(keys: Collection<String>) {
+        ids.update { it - keys.toSet() }
+        restored.update { it + 1 }
+    }
 }
 
 enum class TrashResult { Trashed, Cancelled, Failed }
@@ -474,7 +480,7 @@ fun LocalViewerScreen(onBack: () -> Unit) {
     // Without what was trashed already (also after a rotation, when this is built again).
     val trashed by PhoneTrashed.ids.collectAsStateWithLifecycle()
     val inTrash = LocalViewerSession.inTrash
-    var failed by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf<String?>(null) } // what couldn't be done
     // From the phone's trash: those restored or deleted for good here leave the pager.
     var done by rememberSaveable { mutableStateOf(setOf<String>()) }
     val list = if (inTrash) items.filter { it.id !in done } else items.filter { it.id !in trashed }
@@ -485,7 +491,7 @@ fun LocalViewerScreen(onBack: () -> Unit) {
         trashAction = null
         if (r.resultCode == android.app.Activity.RESULT_OK && act != null) {
             done = done + act.second
-            if (act.first == "restore") PhoneTrashed.ids.update { it - act.second }
+            if (act.first == "restore") PhoneTrashed.restore(listOf(act.second))
         }
     }
     val scope = rememberCoroutineScope()
@@ -497,7 +503,10 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             val sender = withContext(Dispatchers.IO) {
                 runCatching { if (kind == "restore") PhoneCopies.restoreRequest(ctx, listOf(Uri.parse(uri))) else PhoneCopies.deleteRequest(ctx, listOf(Uri.parse(uri))) }.getOrNull()
             }
-            if (sender == null) { trashAction = null; failed = true } else trashLauncher.launch(IntentSenderRequest.Builder(sender).build())
+            if (sender == null) {
+                trashAction = null
+                failed = if (kind == "restore") "Couldn't restore it" else "Couldn't delete it"
+            } else trashLauncher.launch(IntentSenderRequest.Builder(sender).build())
         }
     }
     val pager = rememberPagerState(LocalViewerSession.start.coerceIn(0, maxOf(items.lastIndex, 0))) { list.size }
@@ -508,7 +517,7 @@ fun LocalViewerScreen(onBack: () -> Unit) {
         trashing = null
         when (result) {
             TrashResult.Trashed -> if (id != null) PhoneTrashed.add(listOf(id))
-            TrashResult.Failed -> failed = true
+            TrashResult.Failed -> failed = "Couldn't move to your phone's trash"
             TrashResult.Cancelled -> Unit
         }
     }
@@ -557,7 +566,7 @@ fun LocalViewerScreen(onBack: () -> Unit) {
         ConfirmPhoneTrash(1, video = a.isVideo, onDismiss = { confirm = null }) {
             confirm = null
             val uri = a.localUri
-            if (uri == null) failed = true else { trashing = a.id; trash(listOf(uri)) }
+            if (uri == null) failed = "Couldn't move to your phone's trash" else { trashing = a.id; trash(listOf(uri)) }
         }
     }
     confirmForever?.let { a ->
@@ -566,10 +575,12 @@ fun LocalViewerScreen(onBack: () -> Unit) {
             trashRequest("delete", a)
         }
     }
-    if (failed) AlertDialog(
-        onDismissRequest = { failed = false },
-        title = { Text("Couldn't move to your phone's trash") },
-        text = { Text("It's still on your phone. Try again, or delete it in your phone's gallery.") },
-        confirmButton = { TextButton(onClick = { failed = false }) { Text("OK") } },
-    )
+    failed?.let { what ->
+        AlertDialog(
+            onDismissRequest = { failed = null },
+            title = { Text(what) },
+            text = { Text("Nothing was changed. Try again, or do it in your phone's gallery app.") },
+            confirmButton = { TextButton(onClick = { failed = null }) { Text("OK") } },
+        )
+    }
 }
